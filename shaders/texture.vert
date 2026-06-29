@@ -8,11 +8,13 @@ layout(std140) uniform Matrices {
 };
 
 uniform mat4 uModel;
+uniform vec2 uUVOffset;
+uniform float uUVScale;
 
 out vec2 vUV;
 
 void main()
 {
-    vUV = aUV;
+    vUV = uUVOffset + aUV * uUVScale;
     gl_Position = uProjection * uView * uModel * vec4(aPos, 0.0, 1.0);
 }

@@ -3,81 +3,8 @@
 #include <QDebug>
 #include <QSurfaceFormat>
 
-// raster data
-RasterData::RasterData()
-{
-    localX = 0;
-    localY = 0;
-    width = 0;
-    height = 0;
-    texID = 0;
-}
-RasterData::~RasterData()
-{
-    if(texID){
-        glDeleteTextures(1, &texID);
-        texID = 0;
-    }
-}
-
-void RasterData::setPixel(int x, int y, RGBA color)
-{
-    m_pixels[key(x, y)] = color;
-}
-void RasterData::removePixel(int x, int y)
-{
-    m_pixels.erase(key(x,y));
-}
-void RasterData::buildTexture()
-{
-    if(m_pixels.empty()) return;
-
-    // bounding box
-    int minX = INT_MAX, minY = INT_MAX;
-    int maxX = INT_MIN, maxY = INT_MIN;
-
-    for(auto& [k, rgba] : m_pixels)
-    {
-        // key = k; rgba = value
-        int x = (int32_t)(k >> 32); // upper 32 bits
-        int y = (int32_t)(k & 0xFFFFFFFF); // bottom 32 bits
-        minX = std::min(minX, x);
-        minY = std::min(minY, y);
-        maxX = std::max(maxX, x);
-        maxY = std::max(maxY, y);
-    }
-
-    // update local pos+size
-    localX = minX;
-    localY = minY;
-    width  = maxX - minX + 1;
-    height = maxY - minY + 1;
-
-    // build pixel buffer
-    std::vector<uint8_t> buf(width * height * 4, 0);
-    for(auto& [k, rgba] : m_pixels)
-    {
-        int x = (int32_t)(k >> 32);
-        int y = (int32_t)(k & 0xFFFFFFFF);
-        int i = ((y - minY) * width + (x - minX)) * 4;
-        buf[i+0] = rgba.r;
-        buf[i+1] = rgba.g;
-        buf[i+2] = rgba.b;
-        buf[i+3] = rgba.a;
-    }
-
-    // upload to GL
-    if(!texID) glGenTextures(1, &texID);
-    glBindTexture(GL_TEXTURE_2D, texID);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0,
-                 GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
-    glBindTexture(GL_TEXTURE_2D, 0);
-}
-
-// math shit
-void ortho(float left, float right, float bottom, float top, float* m)
+// math
+void makeProj(float left, float right, float bottom, float top, float* m)
 {
     for (int i = 0; i < 16; i++) m[i] = 0.0f; // clean slate
 
@@ -126,6 +53,9 @@ CanvasWindow::CanvasWindow(QWindow *parent)
     fmt.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
     setFormat(fmt);
 
+    m_area.screenW = 800;
+    m_area.screenH = 600;
+
     m_context = new QOpenGLContext(this);
     m_context->setFormat(fmt);
     m_context->create();
@@ -150,16 +80,16 @@ void CanvasWindow::exposeEvent(QExposeEvent *)
 }
 void CanvasWindow::resizeEvent(QResizeEvent *e)
 {
-    m_area.globalW = e->size().width();
-    m_area.globalH = e->size().height();
+    m_area.screenW = e->size().width();
+    m_area.screenH = e->size().height();
 
     if(m_initialized && isExposed())
     {
         m_context->makeCurrent(this);
 
         // recalc projections
-        glViewport(0, 0, m_area.globalW, m_area.globalH);
-        ortho(0.0f, m_area.globalW, m_area.globalH, 0.0f, m_projection);
+        glViewport(0, 0, m_area.screenW, m_area.screenH);
+        makeProj(0.0f, m_area.screenW, m_area.screenH, 0.0f, m_projection);
 
         glBindBuffer(GL_UNIFORM_BUFFER, m_UBOmx);
         glBufferSubData(GL_UNIFORM_BUFFER, 0, 16 * sizeof(float), m_projection);
@@ -172,8 +102,8 @@ void CanvasWindow::resizeEvent(QResizeEvent *e)
 void CanvasWindow::mouseMoveEvent(QMouseEvent *e)
 {
     QPointF pos = e->position();
-    float dx = pos.x() - m_mouse.globalPos.x;
-    float dy = pos.y() - m_mouse.globalPos.y;
+    float dx = pos.x() - m_mouse.screenPos.x;
+    float dy = pos.y() - m_mouse.screenPos.y;
 
     if(m_mouse.middleButtonON)
     {
@@ -181,29 +111,21 @@ void CanvasWindow::mouseMoveEvent(QMouseEvent *e)
         m_area.pan.y += dy;
     }
 
-    m_mouse.globalPos.x = pos.x();
-    m_mouse.globalPos.y = pos.y();
-    m_mouse.localPos = m_area.globalToLocal(m_mouse.globalPos.x, m_mouse.globalPos.y);
+    // mouse physical position
+    m_mouse.screenPos.x = pos.x();
+    m_mouse.screenPos.y = pos.y();
+    m_mouse.worldPos = m_area.screenToWorld(m_mouse.screenPos.x, m_mouse.screenPos.y);
+    m_area.updateHovered(m_mouse.worldPos.x, m_mouse.worldPos.y);
 
     // track mouse move state
     m_mouse.isMoving = true;
     m_mouse.stopTimer->start(32);
-
+    
     // draw/remove pixels
     if(m_mouse.leftButtonON)
-    {
-        int px = (int)std::floor(m_mouse.localPos.x);
-        int py = (int)std::floor(m_mouse.localPos.y);
-        m_raster.setPixel(px, py, {255, 255, 255, 255});
-        m_rasterDirty = true;
-    }
+        m_raster.setPixel(m_area.hoveredWorldX, m_area.hoveredWorldY, {255, 255, 255, 255});
     else if(m_mouse.rightButtonON)
-    {
-        int px = (int)std::floor(m_mouse.localPos.x);
-        int py = (int)std::floor(m_mouse.localPos.y);
-        m_raster.removePixel(px, py);
-        m_rasterDirty = true;
-    }
+        m_raster.erasePixel(m_area.hoveredWorldX, m_area.hoveredWorldY);
 }
 void CanvasWindow::mousePressEvent(QMouseEvent *e)
 {
@@ -274,6 +196,7 @@ void CanvasWindow::initializeGL()
     // init
     initializeOpenGLFunctions();
     m_initialized = true;
+
     // glEnable(GL_BLEND);
     // glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -353,6 +276,8 @@ void CanvasWindow::initializeGL()
     m_texShader = new Shader("shaders/texture.vert", "shaders/texture.frag");
     m_uTexModel     = glGetUniformLocation(m_texShader->ID, "uModel");
     m_uTexture      = glGetUniformLocation(m_texShader->ID, "uTexture");
+    m_uUVOffset = glGetUniformLocation(m_texShader->ID, "uUVOffset");
+    m_uUVScale  = glGetUniformLocation(m_texShader->ID, "uUVScale");
 
     GLuint Block0 = glGetUniformBlockIndex(m_colShader->ID, "Matrices");
     glUniformBlockBinding(m_colShader->ID, Block0, 0);
@@ -360,78 +285,97 @@ void CanvasWindow::initializeGL()
     glUniformBlockBinding(m_texShader->ID, Block1, 0);
 
     // --- projection ---
-    ortho(0.0f, m_area.globalW, m_area.globalH, 0.0f, m_projection);
+    makeProj(0.0f, m_area.screenW, m_area.screenH, 0.0f, m_projection);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, 16 * sizeof(float), m_projection);
 
-    // --- raster ---
-    m_raster.setPixel(0,  0,  {255, 0,   0,   255}); // red
-    m_raster.setPixel(20, 20, {0,   255, 0,   255}); // green
-    m_raster.setPixel(10, 5,  {0,   0,   255, 255}); // blue
-    m_raster.buildTexture();
+    makeView(0.0f, 0.0f, 1.0f, m_screenView);
+
+    qDebug("uUVOffset=%d uUVScale=%d", m_uUVOffset, m_uUVScale);
 }
 
 void CanvasWindow::renderFrame()
 {
     // checks
     if(!isExposed()) return;
+    if(m_area.screenW == 0 || m_area.screenH == 0) return;
+
     m_context->makeCurrent(this);
     if(!m_initialized) initializeGL();
 
-    if(m_rasterDirty)
-    {
-        m_raster.buildTexture();
-        m_rasterDirty = false;
-    }
-
     // viewport + bg color
-    glViewport(0, 0, m_area.globalW, m_area.globalH);
+    glViewport(0, 0, m_area.screenW, m_area.screenH);
     glClearColor(0.15f, 0.15f, 0.15f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     // view
-    makeView(m_area.pan.x, m_area.pan.y, m_area.zoom, m_view);
+    makeView(m_area.pan.x, m_area.pan.y, m_area.zoom, m_worldView);
     glBindBuffer(GL_UNIFORM_BUFFER, m_UBOmx);
-    glBufferSubData(GL_UNIFORM_BUFFER, 16 * sizeof(float), 16 * sizeof(float), m_view);
+    glBufferSubData(GL_UNIFORM_BUFFER, 16 * sizeof(float), 16 * sizeof(float), m_worldView);
 
-    /*
-    // uColor shape (0, 0)
-    m_colShader->Activate();
-    glBindVertexArray(m_colVAO);
-
-    makeModel(m_area.localOrigin.x, m_area.localOrigin.y, 200.0f, 150.0f, m_model);
-    glUniformMatrix4fv(m_uColModel, 1, GL_FALSE, m_model);
-
-    glUniform3f(m_uColor, 1.0f, 0.5f, 0.0f);
-
-    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-
-    glBindVertexArray(0);
-    */
-
-    // uTexture shape (220, 0)
+    // flush dirty chunks to GPU
+    m_raster.flushDirty();
+    // draw all atlas pages
     m_texShader->Activate();
     glBindVertexArray(m_texVAO);
 
-    makeModel((float)m_raster.localX, (float)m_raster.localY,
-            (float)m_raster.width,  (float)m_raster.height, m_model);
-    glUniformMatrix4fv(m_uTexModel, 1, GL_FALSE, m_model);
+    for(auto& [key, chunk] : m_raster.m_chunks) // go through each chunk
+    {
+        Atlas& atlas = m_raster.getAtlasForChunk(chunk);
 
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, m_raster.texID);
-    glUniform1i(m_uTexture, 0);
+        // world position of this chunk
+        float wx = chunk.cPosX * Chunk::SIZE;
+        float wy = chunk.cPosY * Chunk::SIZE;
 
-    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+        makeModel(wx, wy, Chunk::SIZE, Chunk::SIZE, m_model);
+        glUniformMatrix4fv(m_uTexModel, 1, GL_FALSE, m_model);
+
+        float uvOffsetX = (float)chunk.atlasSlotX / Atlas::SLOTS_PER_ROW;
+        float uvOffsetY = (float)chunk.atlasSlotY / Atlas::SLOTS_PER_ROW;
+        float uvScale   = 1.0f / Atlas::SLOTS_PER_ROW;
+
+        glUniform2f(m_uUVOffset, uvOffsetX, uvOffsetY);
+        glUniform1f(m_uUVScale, uvScale);
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, atlas.texID);
+        glUniform1i(m_uTexture, 0);
+
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    }
+
     glBindVertexArray(0);
 
-    qDebug("GLOBAL: %.1f, %.1f", m_mouse.globalPos.x, m_mouse.globalPos.y);
-    qDebug("LOCAL: %.1f, %.1f", m_mouse.localPos.x, m_mouse.localPos.y);
+    // qDebug("pixel: (%d, %d) | chunk: (%d, %d)", m_area.hoveredWorldX, m_area.hoveredWorldY, m_area.hoveredChunkX, m_area.hoveredChunkY);
+    qDebug("CPU: %zu KB | GPU: %zu MB | chunks: %zu | pages: %zu",
+    m_raster.cpuMemoryBytes() / 1024,
+    m_raster.gpuMemoryBytes() / 1024 / 1024,
+    m_raster.m_chunks.size(),
+    m_raster.m_atlasPages.size());
 
+    // swap
     m_context->swapBuffers(this);
     m_context->doneCurrent();
 }
 
 CanvasWindow::~CanvasWindow()
 {
+    if(m_context && m_initialized)
+    {
+        m_context->makeCurrent(this);
+
+        glDeleteVertexArrays(1, &m_colVAO);
+        glDeleteBuffers(1, &m_colVBO);
+        glDeleteBuffers(1, &m_colEBO);
+
+        glDeleteVertexArrays(1, &m_texVAO);
+        glDeleteBuffers(1, &m_texVBO);
+        glDeleteBuffers(1, &m_texEBO);
+
+        glDeleteBuffers(1, &m_UBOmx);
+
+        m_context->doneCurrent();
+    }
+    
     delete m_colShader;
     delete m_texShader;
 }
