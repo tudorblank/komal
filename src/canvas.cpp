@@ -156,7 +156,7 @@ void CanvasWindow::initialize()
 {
     // init
     m_gl.initGL();
-    // m_gl.properties();
+    m_gl.setAttributes();
 
     // buffers
     m_gl.initColBuffers();
@@ -205,7 +205,12 @@ void CanvasWindow::runningFrame()
 
     m_gl.unbindTexVAO();
 
-    // qDebug("pixel: (%d, %d) | chunk: (%d, %d)", m_area.hoveredWorldX, m_area.hoveredWorldY, m_area.hoveredChunkX, m_area.hoveredChunkY);
+    m_gl.drawScreenBoundsBox(
+        m_raster,
+        m_area.pan,
+        m_area.zoom,
+        { 47, 102, 253, 255 });
+
     qDebug("CPU: %zu KB | GPU: %zu MB | chunks: %zu | pages: %zu",
         m_raster.cpuMemoryBytes() / 1024,
         m_raster.gpuMemoryBytes() / 1024 / 1024,
@@ -220,5 +225,7 @@ void CanvasWindow::runningFrame()
 CanvasWindow::~CanvasWindow()
 {
     if(m_context)
+    {
         m_context->makeCurrent(this);
+    }
 }

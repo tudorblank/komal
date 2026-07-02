@@ -1,13 +1,10 @@
 #pragma once
 #include "shader.h"
+#include "raster.h"
 
 #include <QOpenGLFunctions>
 #include <QOpenGLFunctions_3_3_Core>
 #include <QOpenGLContext>
-
-class Chunk;
-class Atlas;
-class RasterData;
 
 void makeProj(float left, float right, float bottom, float top, float* m);
 void makeModel(float x, float y, float w, float h, float* m);
@@ -113,6 +110,8 @@ public:
     void initAtlasTexture(Atlas& atlas);
     void uploadChunkToAtlas(Chunk& chunk);
     void updateChunkUniforms(Chunk& chunk);
+    
+    void drawScreenBoundsBox(RasterData& inputRaster, Vec2 pan, float zoom, RGBA color);
 
     ~GLDevice();
 };

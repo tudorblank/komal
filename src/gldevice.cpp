@@ -1,5 +1,4 @@
 #include "gldevice.h"
-#include "raster.h"
 
 // math
 void makeProj(float left, float right, float bottom, float top, float* m)
@@ -215,6 +214,8 @@ void GLDevice::initAtlasTexture(Atlas& atlas)
                     0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     // unbind atlas tex
     glBindTexture(GL_TEXTURE_2D, 0);
+
+    atlas.initialized = true;
 }
 void GLDevice::uploadChunkToAtlas(Chunk& chunk)
 {
@@ -253,14 +254,48 @@ void GLDevice::updateChunkUniforms(Chunk& chunk)
     GLDevice::bindTexture(atlas.texID);
     glUniform1i(m_tex.uTexture, 0);
 }
+void GLDevice::drawScreenBoundsBox(RasterData& inputRaster, Vec2 pan, float zoom, RGBA color)
+{
+    BoundsI& rasterBounds = inputRaster.returnPixelBounds();
+
+    if(!rasterBounds.valid)
+        return;
+
+    Vec2 topLeft = {
+        rasterBounds.minX * zoom + pan.x,
+        rasterBounds.minY * zoom + pan.y
+    };
+
+    Vec2 bottomRight = {
+        (rasterBounds.maxX + 1) * zoom + pan.x,
+        (rasterBounds.maxY + 1) * zoom + pan.y
+    };
+
+    makeModel(
+        topLeft.x, 
+        topLeft.y, 
+        bottomRight.x - topLeft.x, 
+        bottomRight.y - topLeft.y, 
+        m_model);
+
+    m_screenCol.shader->Activate();
+    glUniformMatrix4fv(m_screenCol.uModel, 1, GL_FALSE, m_model);
+    glUniform4f(m_screenCol.uColor,
+        color.r / 255.0f, color.g / 255.0f,
+        color.b / 255.0f, color.a / 255.0f);
+
+    bindColVAO();
+    glDrawArrays(GL_LINE_LOOP, 0, 4);
+    unbindColVAO();
+}
 
 // destructor
 GLDevice::~GLDevice()
 {   
     // del shaders
-    if(m_col.shader) m_col.shader->Delete();
-    if(m_tex.shader) m_tex.shader->Delete();
-    if(m_screenCol.shader) m_screenCol.shader->Delete();
+    if(m_col.shader) { m_col.shader->Delete(); delete m_col.shader; m_col.shader = nullptr; } 
+    if(m_tex.shader) { m_tex.shader->Delete(); delete m_tex.shader; m_tex.shader = nullptr; }
+    if(m_screenCol.shader) { m_screenCol.shader->Delete(); delete m_screenCol.shader; m_screenCol.shader = nullptr; }
 
     // del buffers
     glDeleteVertexArrays(1, &m_col.VAO);

@@ -1,20 +1,35 @@
 #include "raster.h"
 #include "gldevice.h"
 
-// chunk
+// ---chunk---
+// local data
 RGBA& Chunk::pixel(int lx, int ly)
 {
     return data[ly * SIZE + lx];
 }
+void Chunk::recomputeLocalBounds()
+{
+    localPixelBounds.reset();
+
+    for(int ly = 0; ly < SIZE; ly++)
+        for(int lx = 0; lx < SIZE; lx++)
+            if(pixel(lx, ly).a > 0)
+                localPixelBounds.expand(lx, ly);
+
+    localPixelBounds.dirty = false;
+}
+// return atlas
 Atlas& Chunk::getAtlas() const
 {
     return rasterOwner->m_atlasPages[atlasPage];
 }
 
-// atlas
-Atlas::Atlas(Atlas&& o) noexcept : texID(o.texID), usedSlots(o.usedSlots)
+// ---atlas---
+Atlas::Atlas(Atlas&& o) noexcept
+    : texID(o.texID), usedSlots(o.usedSlots)
 {
-    o.texID = 0; // prevent the moved-from object from deleting the texture
+    o.texID = 0;
+    o.initialized = false;
 }
 Atlas& Atlas::operator=(Atlas&& o) noexcept
 {
@@ -23,7 +38,9 @@ Atlas& Atlas::operator=(Atlas&& o) noexcept
         if(texID) GLDevice::deleteTexture(texID);
         texID = o.texID;
         usedSlots = o.usedSlots;
-        o.texID = 0; // prevent the moved-from object from deleting the texture
+        initialized = o.initialized;
+        o.texID = 0;
+        o.initialized = false;
     }
     return *this;
 }
@@ -46,90 +63,171 @@ uint64_t RasterData::chunkKey(int chunkX, int chunkY) // coord key for chunk map
     return (static_cast<uint64_t>(chunkX) << 32) | static_cast<uint32_t>(chunkY);
 }
 
-bool RasterData::chunkExists(int chunkX, int chunkY) // find chunk in chunk map by its grid position
+bool RasterData::chunkExists(int chunkX, int chunkY) // find chunk in chunk map by its grid position [hash lookup]
 {
     return m_chunks.count(chunkKey(chunkX, chunkY)) > 0;
 }
-Chunk& RasterData::accessChunk(int chunkX, int chunkY) // access chunk in chunk map [rasterObject->chunk]
+Chunk& RasterData::accessChunk(int chunkX, int chunkY)
 {
-    if(!chunkExists(chunkX, chunkY))
-        createChunk(chunkX, chunkY);
-    
-    return m_chunks[chunkKey(chunkX, chunkY)];
+    uint64_t key = chunkKey(chunkX, chunkY);
+    auto it = m_chunks.find(key);
+    if(it != m_chunks.end())
+        return it->second;
+
+    return createChunk(chunkX, chunkY);
 }
 Chunk& RasterData::createChunk(int chunkX, int chunkY)
 {
-    // if chunk exists, exit function and return it
-    if(chunkExists(chunkX, chunkY))
-        return m_chunks[chunkKey(chunkX, chunkY)];
+    uint64_t key = chunkKey(chunkX, chunkY);
+    
+    auto it = m_chunks.find(key);
+    if(it != m_chunks.end())
+        return it->second; // chunk already exists, return it
     
     // find atlas page with space, or create new one
     if(m_atlasPages.empty() || m_atlasPages.back().isFull())
-    {
         m_atlasPages.emplace_back();
-    }
 
-    Chunk tempChunk;
     // update chunk internal data (pos on chunk grid + owner)
-    tempChunk.cPosX = chunkX;
-    tempChunk.cPosY = chunkY;
-    tempChunk.rasterOwner = this;
+    auto [newIt, inserted] = m_chunks.try_emplace(key);
+    Chunk& chunk = newIt->second;
+
+    chunk.cPosX = chunkX;
+    chunk.cPosY = chunkY;
+    chunk.rasterOwner = this;
 
     // assign chunk to atlas page
-    int pageIndex = m_atlasPages.size() - 1;
-    m_atlasPages[pageIndex].assignSlot(tempChunk, pageIndex);
+    int pageIndex = static_cast<int>(m_atlasPages.size()) - 1;
+    m_atlasPages[pageIndex].assignSlot(chunk, pageIndex);
 
-    // assign chunk to raster chunk map
-    m_chunks[chunkKey(chunkX, chunkY)] = tempChunk;
-    return m_chunks[chunkKey(chunkX, chunkY)];
+    // update raster chunk bounds. only expands (since no chunks ever get deleted)
+    // update when chunk get deleted for saving memory
+    m_chunkBounds.expand(chunkX, chunkY); 
+
+    return chunk;
 }
 
 // write chunk internal pixel data
 void RasterData::setPixel(int worldX, int worldY, RGBA color)
 {
-    int chunkX = worldX >> 6;
-    int chunkY = worldY >> 6;
-    int pxLocalX = worldX & 63;
-    int pxLocalY = worldY & 63;
+    int chunkX = worldToChunk(worldX);
+    int chunkY = worldToChunk(worldY);
+    int pxLocalX = worldToLocal(worldX);
+    int pxLocalY = worldToLocal(worldY);
 
-    Chunk& tempChunk = accessChunk(chunkX, chunkY);
-    tempChunk.pixel(pxLocalX, pxLocalY) = color;
-    tempChunk.dirty = true;
+    Chunk& accessedChunk = accessChunk(chunkX, chunkY);
+    accessedChunk.pixel(pxLocalX, pxLocalY) = color;
+    // store dirty chunk key for later GPU upload
+    if(!accessedChunk.dirty)
+    {
+        accessedChunk.dirty = true;
+        m_dirtyChunks.push_back(chunkKey(chunkX, chunkY));
+    }
+
+    // update raster pixel bbox + chunk local pixel bbox
+    if(color.a > 0) 
+    {
+        accessedChunk.localPixelBounds.expand(pxLocalX, pxLocalY);
+        m_pixelBounds.expand(worldX, worldY);
+    }
+    else markPixelErased(accessedChunk, pxLocalX, pxLocalY);
 }
 void RasterData::erasePixel(int worldX, int worldY)
 {
-    int chunkX = worldX >> 6;
-    int chunkY = worldY >> 6;
+    int chunkX = worldToChunk(worldX);
+    int chunkY = worldToChunk(worldY);
 
-    if(!chunkExists(chunkX, chunkY)) return; // chunk doesn't exist, nothing to erase
+    auto it = m_chunks.find(chunkKey(chunkX, chunkY));
+    if(it == m_chunks.end()) return; // skip if chunk doesn't exist
+    Chunk& accessedChunk = it->second;
 
-    int pxLocalX = worldX & 63;
-    int pxLocalY = worldY & 63;
+    int pxLocalX = worldToLocal(worldX);
+    int pxLocalY = worldToLocal(worldY);
 
-    Chunk& tempChunk = m_chunks[chunkKey(chunkX, chunkY)];
-    tempChunk.pixel(pxLocalX, pxLocalY) = {0, 0, 0, 0};
-    tempChunk.dirty = true;
+    if(accessedChunk.pixel(pxLocalX, pxLocalY).a == 0) return; // skip if pixel already empty
+    accessedChunk.pixel(pxLocalX, pxLocalY) = {0, 0, 0, 0};
+    // store dirty chunk key for later GPU upload
+    if(!accessedChunk.dirty)
+    {
+        accessedChunk.dirty = true;
+        m_dirtyChunks.push_back(chunkKey(chunkX, chunkY));
+    }
+
+    markPixelErased(accessedChunk, pxLocalX, pxLocalY);
+}
+// check if chunk pixel bounds (local) or raster pixel bounds (global) need updating
+void RasterData::markPixelErased(Chunk& chunk, int lx, int ly)
+{
+    if(!chunk.localPixelBounds.valid) return; // skip if chunk empty
+    
+    bool onLocalEdge =
+        lx == chunk.localPixelBounds.minX || lx == chunk.localPixelBounds.maxX ||
+        ly == chunk.localPixelBounds.minY || ly == chunk.localPixelBounds.maxY;
+
+    if(!onLocalEdge) return; // interior pixel, this chunk's local bbox can't have shrunk
+
+    chunk.localPixelBounds.dirty = true;
+
+    int worldX = chunkToWorld(chunk.cPosX, lx);
+    int worldY = chunkToWorld(chunk.cPosY, ly);
+
+    int worldMinX = chunkToWorld(chunk.cPosX, chunk.localPixelBounds.minX);
+    int worldMaxX = chunkToWorld(chunk.cPosX, chunk.localPixelBounds.maxX);
+    int worldMinY = chunkToWorld(chunk.cPosY, chunk.localPixelBounds.minY);
+    int worldMaxY = chunkToWorld(chunk.cPosY, chunk.localPixelBounds.maxY);
+
+    bool onGlobalEdge =
+        (worldX == m_pixelBounds.minX && worldMinX == m_pixelBounds.minX) ||
+        (worldX == m_pixelBounds.maxX && worldMaxX == m_pixelBounds.maxX) ||
+        (worldY == m_pixelBounds.minY && worldMinY == m_pixelBounds.minY) ||
+        (worldY == m_pixelBounds.maxY && worldMaxY == m_pixelBounds.maxY);
+
+    if(onGlobalEdge)
+        m_pixelBounds.dirty = true;
+}
+
+// re-derive of raster's global px bbox from local chunk px bbox
+void RasterData::recomputePixelBounds()
+{
+    m_pixelBounds.reset();
+
+    for(auto& [key, chunk] : m_chunks)
+    {
+        if(chunk.localPixelBounds.dirty)
+            chunk.recomputeLocalBounds();
+
+        if(!chunk.localPixelBounds.valid)
+            continue; // skip empty chunks
+
+        int worldMinX = chunkToWorld(chunk.cPosX, chunk.localPixelBounds.minX);
+        int worldMaxX = chunkToWorld(chunk.cPosX, chunk.localPixelBounds.maxX);
+        int worldMinY = chunkToWorld(chunk.cPosY, chunk.localPixelBounds.minY);
+        int worldMaxY = chunkToWorld(chunk.cPosY, chunk.localPixelBounds.maxY);
+
+        m_pixelBounds.expand(worldMinX, worldMinY);
+        m_pixelBounds.expand(worldMaxX, worldMaxY);
+    }
+
+    m_pixelBounds.dirty = false;
 }
 
 // ---atlas---
 void RasterData::flushDirtyGL(GLDevice& glDevice)
 {
     // browse all chunks, find dirty ones, and update their atlas texture
-    for(auto& [key, chunk] : m_chunks)
+    for(uint64_t key : m_dirtyChunks)
     {
+        auto it = m_chunks.find(key);
+        if(it == m_chunks.end()) continue; // skip if chunk doesn't exist
+        
+        Chunk& chunk = it->second;
         Atlas& atlas = m_atlasPages[chunk.atlasPage]; // get atlas for chunks
 
         if(!atlas.initialized)
-        {
             glDevice.initAtlasTexture(atlas);
-            atlas.initialized = true;
-        }
 
-        if(chunk.dirty)
-            glDevice.uploadChunkToAtlas(chunk);
+        glDevice.uploadChunkToAtlas(chunk);
     }
+    m_dirtyChunks.clear();
 }
-Atlas& RasterData::getAtlasForChunk(Chunk& chunk)
-{
-    return m_atlasPages[chunk.atlasPage];
-}
+Atlas& RasterData::getAtlasForChunk(Chunk& chunk) { return m_atlasPages[chunk.atlasPage]; }

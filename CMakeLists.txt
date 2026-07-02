@@ -45,7 +45,6 @@ endif()
 
 qt_finalize_executable(Komal)
 
-# Windows icon via windres — finds windres on PATH, no hardcoded paths
 if(MINGW)
     find_program(WINDRES_EXECUTABLE windres REQUIRED)
     add_custom_command(
@@ -56,7 +55,6 @@ if(MINGW)
     target_sources(Komal PRIVATE ${CMAKE_BINARY_DIR}/icon.o)
 endif()
 
-# Copy shaders next to the binary
 add_custom_command(TARGET Komal POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/shaders"
@@ -64,7 +62,6 @@ add_custom_command(TARGET Komal POST_BUILD
     COMMENT "Copying shaders..."
 )
 
-# windeployqt — runs automatically as part of the build
 if(WIN32)
     find_program(WINDEPLOYQT_EXECUTABLE windeployqt HINTS
         "$ENV{Qt6_DIR}/bin"

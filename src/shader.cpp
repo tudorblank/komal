@@ -25,22 +25,44 @@ Shader::Shader(const char* vertexFile, const char* fragmentFile)
     GLuint vert = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(vert, 1, &vSrc, nullptr);
     glCompileShader(vert);
+
     GLint ok;
     glGetShaderiv(vert, GL_COMPILE_STATUS, &ok);
-    if (!ok) { char log[512]; glGetShaderInfoLog(vert, 512, nullptr, log); std::cerr << "Vert: " << log << "\n"; }
+    if(!ok)
+    {
+        char log[512];
+        glGetShaderInfoLog(vert, 512, nullptr, log);
+        
+        throw std::runtime_error(
+            std::string("Vertex shader compilation failed:\n") + log);
+    }
 
     GLuint frag = glCreateShader(GL_FRAGMENT_SHADER);
     glShaderSource(frag, 1, &fSrc, nullptr);
     glCompileShader(frag);
     glGetShaderiv(frag, GL_COMPILE_STATUS, &ok);
-    if (!ok) { char log[512]; glGetShaderInfoLog(frag, 512, nullptr, log); std::cerr << "Frag: " << log << "\n"; }
+    if(!ok)
+    {
+        char log[512];
+        glGetShaderInfoLog(frag, 512, nullptr, log);
+
+        throw std::runtime_error(
+            std::string("Fragment shader compilation failed:\n") + log);
+    }
 
     ID = glCreateProgram();
     glAttachShader(ID, vert);
     glAttachShader(ID, frag);
     glLinkProgram(ID);
     glGetProgramiv(ID, GL_LINK_STATUS, &ok);
-    if (!ok) { char log[512]; glGetProgramInfoLog(ID, 512, nullptr, log); std::cerr << "Link: " << log << "\n"; }
+    if (!ok)
+    {
+        char log[512];
+        glGetProgramInfoLog(ID, 512, nullptr, log);
+
+        throw std::runtime_error(
+            std::string("Shader program linking failed:\n") + log);
+    }
 
     glDeleteShader(vert);
     glDeleteShader(frag);

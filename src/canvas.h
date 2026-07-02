@@ -15,11 +15,6 @@
 #include <QResizeEvent>
 #include <QMouseEvent>
 
-struct Vec2
-{
-    float x, y;
-};
-
 class Area
 {
 public:

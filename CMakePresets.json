@@ -8,7 +8,7 @@
       "binaryDir": "${sourceDir}/build"
     },
     {
-      "name": "windows-mingw",
+      "name": "windows",
       "displayName": "Windows (Qt6 MinGW)",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build",
@@ -25,8 +25,8 @@
       "configurePreset": "linux"
     },
     {
-      "name": "windows-mingw",
-      "configurePreset": "windows-mingw"
+      "name": "windows",
+      "configurePreset": "windows"
     }
   ]
 }
