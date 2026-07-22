@@ -1,17 +1,14 @@
 #pragma once
+#include <stdio.h>
 #include <unordered_map>
 #include <vector>
 #include <cstdint>
+#include <utility>
+#include <memory>
 
-#include <QOpenGLFunctions>
-#include <QOpenGLFunctions_3_3_Core>
-
-class GLDevice;
-class Atlas;
 class RasterData;
 
-struct Vec2
-{
+struct Vec2{
     float x, y;
 };
 
@@ -61,54 +58,87 @@ public:
 
     // chunk grid location
     int cPosX, cPosY;
-    
-    // atlas location
-    int atlasPage = -1;  // which atlas texture
-    int atlasSlotX = -1; // slot col
-    int atlasSlotY = -1; // slot row
 
     // direct access to pixels in chunk
-    RGBA& pixel(int lx, int ly);
+    RGBA& pixel(int lx, int ly) { return data[ly * SIZE + lx]; }
 
     // local pixel bbox
     BoundsI localPixelBounds; // within chunk
     void recomputeLocalBounds(); // chunk rescan + clean dirty bbox
-    const BoundsI& returnLocalBounds()
+    const BoundsI& returnLocalBounds() // chunk local bounds getter, recompute if dirty
     {
         if(localPixelBounds.dirty)
             recomputeLocalBounds();
         return localPixelBounds;
-
     }
 
     RasterData* rasterOwner = nullptr;
-    Atlas& getAtlas() const;
 };
 
-class Atlas // GL texture pool that holds chunks
+class ChunkPool // pool of blocks of chunks
 {
 public:
-    bool initialized = false;
-    Atlas() {}
+    static constexpr uint32_t BLOCK_SIZE = 1024; // chunks per block (16KB * 1024 = 16MB/slab)
 
-    // no copying
-    Atlas(const Atlas&) = delete;
-    Atlas& operator=(const Atlas&) = delete;
+    struct Handle
+    {
+        static constexpr uint32_t kInvalid = 0xFFFFFFFF; // "null"
+        uint32_t index = kInvalid;
+        bool valid() const { return index != kInvalid; }
+    };
 
-    // moving is fine
-    Atlas(Atlas&& o) noexcept;
-    Atlas& operator=(Atlas&& o) noexcept;
-    ~Atlas();
+    std::vector<bool> m_alive;
+    std::vector<uint32_t> m_freeIndices;
+    uint32_t m_indexCount = 0;
 
-    static constexpr int PAGE_SIZE = 4096;
-    static constexpr int SLOTS_PER_ROW  = PAGE_SIZE / Chunk::SIZE; // 64
-    static constexpr int SLOTS_TOTAL    = SLOTS_PER_ROW * SLOTS_PER_ROW; // 4096
+    Handle allocateHandle()
+    {
+        uint32_t idx;
+        if(!m_freeIndices.empty())
+        {
+            idx = m_freeIndices.back();
+            m_freeIndices.pop_back();
+        }
+        else
+        {
+            idx = m_indexCount++;
+            ensureBlockFor(idx);
+        }
+        m_alive[idx] = true;
+        return { idx };
+    }
+    void freeHandle(Handle h)
+    {
+        if(!h.valid() || !m_alive[h.index]) return;
+        getChunk(h) = Chunk{};
+        m_alive[h.index] = false;
+        m_freeIndices.push_back(h.index);
+    }
 
-    GLuint texID = 0;
-    int usedSlots = 0;
+    std::vector<std::unique_ptr<Chunk[]>> m_blocks;
+    void ensureBlockFor(uint32_t idx)
+    {
+        size_t blockIDX = idx / BLOCK_SIZE;
+        while(m_blocks.size() <= blockIDX)
+        {
+            m_blocks.push_back(std::make_unique<Chunk[]>(BLOCK_SIZE));
+            m_alive.resize(m_blocks.size() * BLOCK_SIZE, false);
+        }
+    }
+    Chunk& getChunk(Handle h)
+    {
+        return m_blocks[h.index / BLOCK_SIZE][h.index % BLOCK_SIZE];
+    }
+    template<typename Fn>
+    void forEachAlive(Fn&& fn)
+    {
+        for(uint32_t i = 0; i < m_indexCount; i++)
+            if(m_alive[i])
+                fn(getChunk({i}));
+    }
 
-    void assignSlot(Chunk& chunk, int pageIndex);
-    bool isFull() { return usedSlots >= SLOTS_TOTAL; }
+    size_t aliveChunkCount() const { return (size_t)m_indexCount - m_freeIndices.size(); }
+    size_t bytesAllocated() const { return (size_t)m_blocks.size() * BLOCK_SIZE * sizeof(Chunk); }
 };
 
 class RasterData
@@ -116,45 +146,40 @@ class RasterData
 public:
     RasterData()  {}
     ~RasterData() {}
+    RasterData(const RasterData&) = delete;
+    RasterData& operator=(const RasterData&) = delete;
+    RasterData(RasterData&& other) noexcept;
+    RasterData& operator=(RasterData&& other) noexcept;
 
-    std::unordered_map<uint64_t, Chunk> m_chunks;
+    ChunkPool m_chunkPool;
+
+    std::unordered_map<uint64_t, ChunkPool::Handle> m_chunkHandleMap;
     uint64_t chunkKey(int chunkX, int chunkY);
-    std::vector<uint64_t> m_dirtyChunks;
+    std::vector<uint64_t> m_dirtyChunkKeys;
 
-    std::vector<Atlas> m_atlasPages;
-
-    // ---chunk related---
     bool chunkExists(int chunkX, int chunkY);
     Chunk& accessChunk(int chunkX, int chunkY);
     Chunk& createChunk(int chunkX, int chunkY);
-    // converters
+    Chunk* tryGetChunk(int chunkX, int chunkY);
+
+    template<typename Fn>
+    void forEachChunk(Fn&& fn) { m_chunkPool.forEachAlive(std::forward<Fn>(fn)); }
+
     static int worldToChunk(int world) { return world >> 6; }
     static int worldToLocal(int world) { return world & 63; }
     static int chunkToWorld(int chunkCoord, int localCoord) { return (chunkCoord << 6) + localCoord; }
-    // edit chunk
+
     void setPixel(int worldX, int worldY, RGBA color);
     void erasePixel(int worldX, int worldY);
-    void markPixelErased(Chunk& chunk, int lx, int ly); // alpha > 0 -> 0
-    // bboxes
+    void markPixelErased(Chunk& chunk, int lx, int ly);
+
     BoundsI m_chunkBounds;
     BoundsI m_pixelBounds;
-    void recomputePixelBounds(); // calc raster's pixel bounds
+    void recomputePixelBounds();
     BoundsI& returnPixelBounds()
     {
         if(m_pixelBounds.dirty)
             recomputePixelBounds();
-        
         return m_pixelBounds;
     }
-
-    // ---atlas stuff---
-    void flushDirtyGL(GLDevice& glDevice);
-    Atlas& getAtlasForChunk(Chunk& chunk);
-
-    // ---raster memory usage---
-    size_t cpuMemoryBytes() // each chunk is 64*64*4 = 16KB
-    { return m_chunks.size() * sizeof(Chunk); }
-
-    size_t gpuMemoryBytes() // each atlas page is 4096*4096*4 bytes = 64MB
-    { return m_atlasPages.size() * Atlas::PAGE_SIZE * Atlas::PAGE_SIZE * 4; }
 };

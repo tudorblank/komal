@@ -1,113 +1,60 @@
 #pragma once
-#include "shader.h"
-#include "raster.h"
-#include "gldevice.h"
 
-// Qt
 #include <QWindow>
 #include <QTimer>
+#include <QElapsedTimer>
+#include <QMatrix4x4>
 
-// GL
-#include <QOpenGLContext>
-
-// events
-#include <QExposeEvent>
-#include <QResizeEvent>
 #include <QMouseEvent>
+#include <QWheelEvent>
 
-class Area
-{
-public:
-    // world nav (origin = 0,0)
-    Vec2 pan = { 0.0f, 0.0f };
-    float zoom = 1.0f;
+#include <webgpu.h>
+#include "gfxdevice.h"
+#include "raster.h"
 
-    // screen
-    int screenW, screenH;
-
-    Vec2 screenToWorld(float sx, float sy)
-    {
-        return { (sx - pan.x) / zoom, (sy - pan.y) / zoom };
-    }
-    Vec2 worldToScreen(float wx, float wy)
-    {
-        return { wx * zoom + pan.x, wy * zoom + pan.y };
-    }
-
-    // hovered pixel in world
-    int hoveredWorldX = 0;
-    int hoveredWorldY = 0;
-
-    // hovered chunk in chunk grid
-    int hoveredChunkX = 0;
-    int hoveredChunkY = 0;
-
-    void updateHovered(float x, float y)
-    {
-        hoveredWorldX = (int)std::floor(x);
-        hoveredWorldY = (int)std::floor(y);
-
-        hoveredChunkX = hoveredWorldX >> 6;
-        hoveredChunkY = hoveredWorldY >> 6;
-    }
-};
+#include <vector>
+#include <algorithm>
+#include <cstdint>
 
 struct MouseHandler
 {
-    Vec2 screenPos;
-    Vec2 worldPos;
+    Vec2 screen;
+    Vec2 world;
+    Vec2 prevWorld;
 
-    bool isMoving = false;
-
-    // clicks
-    bool leftButtonON = false;
-    bool leftButtonOFF = true;
-
-    bool rightButtonON = false;
-    bool rightButtonOFF = true;
-
-    bool middleButtonON = false;
-    bool middleButtonOFF = true;
-
-    QTimer *stopTimer = nullptr;
+    bool leftDown = false;
+    bool rightDown = false;
+    bool middleDown = false;
 };
 
 class CanvasWindow : public QWindow
 {
+    Q_OBJECT
 public:
-    // constructor
-    explicit CanvasWindow(QWindow *parent = nullptr);
-    // GL context getter
-    QOpenGLContext *context() const { return m_context; }
-    // destructor
+    explicit CanvasWindow(QWindow* parent = nullptr);
     ~CanvasWindow();
 
-protected: // events
-    // window
-    void exposeEvent        (QExposeEvent *) override;
-    void resizeEvent        (QResizeEvent *e) override;
-    // mouse
-    void mouseMoveEvent     (QMouseEvent *e) override;
-    void mousePressEvent    (QMouseEvent *e) override;
-    void mouseReleaseEvent  (QMouseEvent *e) override;
-    void wheelEvent         (QWheelEvent *e) override;
+protected:
+    void resizeEvent(QResizeEvent*) override;
+    void mousePressEvent(QMouseEvent*) override;
+    void mouseMoveEvent(QMouseEvent*) override;
+    void mouseReleaseEvent(QMouseEvent*) override;
+    void wheelEvent(QWheelEvent*) override;
 
 private:
-    void initialize();
-    void runningFrame();
-
-    // inputs
     MouseHandler m_mouse;
 
-    // logic
-    Area m_area;
+    GFXDevice m_gfx;
+    Camera m_camera;
 
-    // GL window data
-    QOpenGLContext *m_context   = nullptr;
-    QTimer         *m_timer     = nullptr;
+    void syncRasterData(RasterData& raster);
+    void interpDraw(RasterData& inputRaster, RGBA color);
+    void render();
 
-    // GL declarations
-    GLDevice m_gl;
+    RasterData m_drawRaster;
+    
+    bool m_needsRender = false;
+    void markDirty() { m_needsRender = true; }
 
-    RasterData m_raster;
+    QTimer* m_renderTimer = nullptr;
 };

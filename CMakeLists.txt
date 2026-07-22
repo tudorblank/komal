@@ -11,8 +11,9 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets OpenGL OpenGLWidgets)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets OpenGL OpenGLWidgets)
+# Widgets only now — OpenGL/OpenGLWidgets dropped
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
 
 set(PROJECT_SOURCES
     src/main.cpp
@@ -20,12 +21,10 @@ set(PROJECT_SOURCES
     src/komal.h
     src/canvas.cpp
     src/canvas.h
-    src/gldevice.cpp
-    src/gldevice.h
+    src/gfxdevice.cpp
+    src/gfxdevice.h
     src/raster.cpp
     src/raster.h
-    src/shader.cpp
-    src/shader.h
 )
 
 qt_add_executable(Komal
@@ -35,25 +34,40 @@ qt_add_executable(Komal
 
 target_link_libraries(Komal PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
-    Qt${QT_VERSION_MAJOR}::OpenGL
-    Qt${QT_VERSION_MAJOR}::OpenGLWidgets
+)
+
+# --- wgpu-native ---
+set(WGPU_NATIVE_DIR "${CMAKE_SOURCE_DIR}/include/webgpu" CACHE PATH "Path to wgpu-native headers/libs" FORCE)
+
+target_include_directories(Komal PRIVATE
+    "${WGPU_NATIVE_DIR}"
+    "${CMAKE_SOURCE_DIR}/include"
+)
+
+target_link_directories(Komal PRIVATE
+    "${WGPU_NATIVE_DIR}/lib"
+)
+
+target_link_libraries(Komal PRIVATE
+    wgpu_native
 )
 
 if(WIN32)
-    target_link_libraries(Komal PRIVATE opengl32)
+    # transitive system libs wgpu-native needs on Windows (D3D12/surface creation)
+    target_link_libraries(Komal PRIVATE
+        d3dcompiler dxgi d3d12 ws2_32 userenv bcrypt ntdll
+    )
+
+    # wgpu_native.dll must sit next to the exe at runtime
+    add_custom_command(TARGET Komal POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${WGPU_NATIVE_DIR}/lib/wgpu_native.dll"
+            "$<TARGET_FILE_DIR:Komal>"
+        COMMENT "Copying wgpu_native.dll..."
+    )
 endif()
 
 qt_finalize_executable(Komal)
-
-if(MINGW)
-    find_program(WINDRES_EXECUTABLE windres REQUIRED)
-    add_custom_command(
-        OUTPUT ${CMAKE_BINARY_DIR}/icon.o
-        COMMAND ${WINDRES_EXECUTABLE} ${CMAKE_SOURCE_DIR}/icon.rc -O coff -o ${CMAKE_BINARY_DIR}/icon.o
-        DEPENDS ${CMAKE_SOURCE_DIR}/icon.rc
-    )
-    target_sources(Komal PRIVATE ${CMAKE_BINARY_DIR}/icon.o)
-endif()
 
 add_custom_command(TARGET Komal POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory

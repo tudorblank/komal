@@ -21,8 +21,7 @@ komal::komal(QWidget *parent)
     setWindowTitle("Komal Studio");
     resize(1400, 860);
 
-    /* --- Menu Bar ---
-    { */
+    // --- Menu Bar ---
         //File
         QMenu *fileMenu = menuBar()->addMenu("&File");
         fileMenu->addAction(QIcon::fromTheme("document-new"),  "&New",   QKeySequence::New);
@@ -84,11 +83,7 @@ komal::komal(QWidget *parent)
             }
         )");
 
-     /*
-    { */
-
-    /* --- Toolbar ---
-    { */
+    // --- Toolbar ---
         QToolBar *toolbar = new QToolBar("Toolbar", this);
         addToolBar(Qt::TopToolBarArea, toolbar);
         toolbar->setMovable(true);
@@ -164,17 +159,19 @@ komal::komal(QWidget *parent)
         )");
 
         toolbar->setPalette(QApplication::palette());
-        /*
-    { */
     
-    /* --- Canvas Dock (native GL window) ---
-    { */
+    // --- Canvas Window ---
         m_canvasWindow = new CanvasWindow();
 
         QWidget *canvasContainer = QWidget::createWindowContainer(m_canvasWindow, this);
         canvasContainer->setMinimumSize(400, 300);
         canvasContainer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         canvasContainer->setFocusPolicy(Qt::WheelFocus);
+
+        canvasContainer->setAutoFillBackground(true);
+        QPalette pal = canvasContainer->palette();
+        pal.setColor(QPalette::Window, QColor(38, 38, 38));
+        canvasContainer->setPalette(pal);
 
         // dock
         QDockWidget *canvasDock = new QDockWidget("Canvas", this);
@@ -194,11 +191,8 @@ komal::komal(QWidget *parent)
                 font-size: 11px;
             }
         )");
-    /*
-    } */
 
-    /* --- Status Bar ---
-    { */
+    // --- Status Bar ---
         statusBar()->setSizeGripEnabled(false);
         statusBar()->showMessage("Ready");
         
@@ -210,8 +204,6 @@ komal::komal(QWidget *parent)
                 border-top: 1px solid #222;
             }
         )");
-        /*
-    } */
 }
 
 komal::~komal() {}
