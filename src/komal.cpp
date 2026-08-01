@@ -1,5 +1,5 @@
-#include "komal.h"
-#include "canvas.h"
+#include "komal.hpp"
+#include "canvas.hpp"
 
 #include <QApplication>
 #include <QWidget>

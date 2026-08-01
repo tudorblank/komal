@@ -1,4 +1,4 @@
-#include "gfxdevice.h"
+#include "gfxdevice.hpp"
 
 // CAMERA
 void Camera::create(WGPUDevice device, WGPUQueue queue)
@@ -53,6 +53,52 @@ void Camera::update(WGPUQueue queue, float screenW, float screenH)
     CameraUniform data{};
     memcpy(data.viewProj, viewProj.constData(), sizeof(data.viewProj));
     wgpuQueueWriteBuffer(queue, m_buffer, 0, data.viewProj, sizeof(data.viewProj));
+}
+void Camera::createScreen(WGPUDevice device, WGPUQueue queue, uint32_t width, uint32_t height)
+{
+    QMatrix4x4 proj;
+    proj.ortho(0.0f, (float)width, (float)height, 0.0f, -1.0f, 1.0f);
+
+    struct { float proj[16]; } data{};
+    memcpy(data.proj, proj.constData(), sizeof(data.proj));
+
+    WGPUBufferDescriptor desc{};
+    desc.label = sv("Screen Camera Buffer");
+    desc.size = sizeof(data);
+    desc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+    m_screenBuffer = wgpuDeviceCreateBuffer(device, &desc);
+    wgpuQueueWriteBuffer(queue, m_screenBuffer, 0, data.proj, sizeof(data));
+
+    WGPUBindGroupLayoutEntry entry{};
+    entry.binding = 0;
+    entry.visibility = WGPUShaderStage_Vertex;
+    entry.buffer.type = WGPUBufferBindingType_Uniform;
+    entry.buffer.minBindingSize = sizeof(data);
+
+    WGPUBindGroupLayoutDescriptor layoutDesc{};
+    layoutDesc.entryCount = 1;
+    layoutDesc.entries = &entry;
+    m_screenBindLayout = wgpuDeviceCreateBindGroupLayout(device, &layoutDesc);
+
+    WGPUBindGroupEntry gEntry{};
+    gEntry.binding = 0;
+    gEntry.buffer = m_screenBuffer;
+    gEntry.size = sizeof(data);
+
+    WGPUBindGroupDescriptor gDesc{};
+    gDesc.layout = m_screenBindLayout;
+    gDesc.entryCount = 1;
+    gDesc.entries = &gEntry;
+    m_screenBindGroup = wgpuDeviceCreateBindGroup(device, &gDesc);
+}
+void Camera::updateScreen(WGPUQueue queue, uint32_t width, uint32_t height)
+{
+    QMatrix4x4 proj;
+    proj.ortho(0.0f, (float)width, (float)height, 0.0f, -1.0f, 1.0f);
+
+    struct { float proj[16]; } data{};
+    memcpy(data.proj, proj.constData(), sizeof(data.proj));
+    wgpuQueueWriteBuffer(queue, m_screenBuffer, 0, data.proj, sizeof(data));
 }
 
 // commons
@@ -349,6 +395,134 @@ void GFXDevice::updateColObjectMVP(ColObject& obj)
     wgpuQueueWriteBuffer(m_queue, obj.buffer, 0, &data, sizeof(data));
 }
 
+// line pipeline
+void GFXDevice::createLinePipeline(WGPUBindGroupLayout screenCamLayout)
+{
+    std::string src = readFile("shaders/line.wgsl");
+    WGPUShaderSourceWGSL wgsl{};
+    wgsl.chain.sType = WGPUSType_ShaderSourceWGSL;
+    wgsl.code = sv(src.c_str());
+    WGPUShaderModuleDescriptor shaderDesc{};
+    shaderDesc.nextInChain = &wgsl.chain;
+    m_lineShaderModule = wgpuDeviceCreateShaderModule(m_device, &shaderDesc);
+
+    WGPUBindGroupLayoutEntry colorEntry{};
+    colorEntry.binding = 0;
+    colorEntry.visibility = WGPUShaderStage_Fragment;
+    colorEntry.buffer.type = WGPUBufferBindingType_Uniform;
+    colorEntry.buffer.minBindingSize = sizeof(float) * 4;
+
+    WGPUBindGroupLayoutDescriptor colorLayoutDesc{};
+    colorLayoutDesc.entryCount = 1;
+    colorLayoutDesc.entries = &colorEntry;
+    m_lineBindLayout = wgpuDeviceCreateBindGroupLayout(m_device, &colorLayoutDesc);
+
+    WGPUVertexAttribute attrib{};
+    attrib.shaderLocation = 0;
+    attrib.offset = 0;
+    attrib.format = WGPUVertexFormat_Float32x2;
+
+    WGPUVertexBufferLayout vbLayout{};
+    vbLayout.arrayStride = sizeof(float) * 2;
+    vbLayout.attributeCount = 1;
+    vbLayout.attributes = &attrib;
+
+    WGPUVertexState vertState{};
+    vertState.module = m_lineShaderModule;
+    vertState.entryPoint = sv("vs_main");
+    vertState.bufferCount = 1;
+    vertState.buffers = &vbLayout;
+
+    WGPUColorTargetState colorTarget{};
+    colorTarget.format = m_surfaceFormat;
+    colorTarget.writeMask = WGPUColorWriteMask_All;
+
+    WGPUFragmentState fragState{};
+    fragState.module = m_lineShaderModule;
+    fragState.entryPoint = sv("fs_main");
+    fragState.targetCount = 1;
+    fragState.targets = &colorTarget;
+
+    WGPUPrimitiveState primState{};
+    primState.topology = WGPUPrimitiveTopology_LineList;
+
+    WGPUBindGroupLayout bgLayouts[2] = { screenCamLayout, m_lineBindLayout };
+    WGPUPipelineLayoutDescriptor plLayoutDesc{};
+    plLayoutDesc.bindGroupLayoutCount = 2;
+    plLayoutDesc.bindGroupLayouts = bgLayouts;
+    m_linePipelineLayout = wgpuDeviceCreatePipelineLayout(m_device, &plLayoutDesc);
+
+    WGPURenderPipelineDescriptor plDesc{};
+    plDesc.vertex = vertState;
+    plDesc.fragment = &fragState;
+    plDesc.primitive = primState;
+    plDesc.layout = m_linePipelineLayout;
+    plDesc.multisample.count = 1;
+    plDesc.multisample.mask = 0xFFFFFFFF;
+    m_linePipeline = wgpuDeviceCreateRenderPipeline(m_device, &plDesc);
+
+    // color bind group
+    WGPUBufferDescriptor colorBufDesc{};
+    colorBufDesc.size = sizeof(float) * 4;
+    colorBufDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
+    WGPUBuffer colorBuf = wgpuDeviceCreateBuffer(m_device, &colorBufDesc);
+    float col[4] = { 0.18f, 0.4f, 1.0f, 1.0f };
+    wgpuQueueWriteBuffer(m_queue, colorBuf, 0, col, sizeof(col));
+
+    WGPUBindGroupEntry colorEntry2{};
+    colorEntry2.binding = 0;
+    colorEntry2.buffer = colorBuf;
+    colorEntry2.size = sizeof(col);
+
+    WGPUBindGroupDescriptor colorGroupDesc{};
+    colorGroupDesc.layout = m_lineBindLayout;
+    colorGroupDesc.entryCount = 1;
+    colorGroupDesc.entries = &colorEntry2;
+    m_lineColorBindGroup = wgpuDeviceCreateBindGroup(m_device, &colorGroupDesc);
+}
+
+void GFXDevice::updateBoundsLines(const std::vector<BoundsI>& boxes, Vec2 pan, float zoom)
+{
+    std::vector<float> verts;
+    verts.reserve(boxes.size() * 8 * 2);
+
+    for(const BoundsI& b : boxes)
+    {
+        if(!b.valid) continue;
+
+        float x0 = b.minX * zoom + pan.x;
+        float y0 = b.minY * zoom + pan.y;
+        float x1 = (b.maxX + 1) * zoom + pan.x;
+        float y1 = (b.maxY + 1) * zoom + pan.y;
+
+        float edges[8][2] = {
+            {x0,y0},{x1,y0},   // top
+            {x1,y0},{x1,y1},   // right
+            {x1,y1},{x0,y1},   // bottom
+            {x0,y1},{x0,y0},   // left
+        };
+        for(auto& p : edges) { verts.push_back(p[0]); verts.push_back(p[1]); }
+    }
+
+    m_lineVertexCount = (uint32_t)(verts.size() / 2);
+    if(m_lineVertexCount == 0) return;
+
+    // grow buffer if needed
+    if(m_lineVertexCount > m_lineVertexCapacity)
+    {
+        if(m_lineVertexBuffer) wgpuBufferRelease(m_lineVertexBuffer);
+
+        m_lineVertexCapacity = m_lineVertexCount; // or round up/pad for headroom
+        WGPUBufferDescriptor vbDesc{};
+        vbDesc.label = sv("Bounds Line Vertex Buffer");
+        vbDesc.size = sizeof(float) * 2 * m_lineVertexCapacity;
+        vbDesc.usage = WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst;
+        m_lineVertexBuffer = wgpuDeviceCreateBuffer(m_device, &vbDesc);
+    }
+
+    wgpuQueueWriteBuffer(m_queue, m_lineVertexBuffer, 0, verts.data(), verts.size() * sizeof(float));
+}
+
 // texture pipeline
 void GFXDevice::createTexBindLayout()
 {
@@ -448,35 +622,16 @@ void GFXDevice::createTexPipeline(WGPUBindGroupLayout camLayout)
 }
 
 // texture objects
-TexObject GFXDevice::buildTexObject(float x, float y, float w, float h,
-                                    const RGBA* pixels, uint32_t texW, uint32_t texH)
+TexObject GFXDevice::buildAtlasTexObject(AtlasSet& atlas, uint64_t chunkKey,
+                                          float x, float y, float w, float h,
+                                          const RGBA* pixels)
 {
     TexObject obj{};
     obj.x = x; obj.y = y; obj.w = w; obj.h = h;
 
-    WGPUTextureDescriptor texDesc{};
-    texDesc.label = sv("Chunk Texture");
-    texDesc.dimension = WGPUTextureDimension_2D;
-    texDesc.size = { texW, texH, 1 };
-    texDesc.format = WGPUTextureFormat_RGBA8Unorm;
-    texDesc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
-    texDesc.mipLevelCount = 1;
-    texDesc.sampleCount = 1;
-    obj.texture = wgpuDeviceCreateTexture(m_device, &texDesc);
-
-    updateTexObject(obj, pixels, texW, texH); // initial upload
-
-    obj.textureView = wgpuTextureCreateView(obj.texture, nullptr);
-
-    WGPUSamplerDescriptor samplerDesc{};
-    samplerDesc.label = sv("Chunk Nearest Sampler");
-    samplerDesc.magFilter = WGPUFilterMode_Nearest;
-    samplerDesc.minFilter = WGPUFilterMode_Nearest;
-    samplerDesc.mipmapFilter = WGPUMipmapFilterMode_Nearest;
-    samplerDesc.addressModeU = WGPUAddressMode_ClampToEdge;
-    samplerDesc.addressModeV = WGPUAddressMode_ClampToEdge;
-    samplerDesc.maxAnisotropy = 1;
-    obj.sampler = wgpuDeviceCreateSampler(m_device, &samplerDesc);
+    ChunkSlot slot = allocateSlot(atlas, chunkKey);
+    obj.slot = slot;
+    writeChunkToAtlas(atlas.pages[slot.page], slot, pixels);
 
     WGPUBufferDescriptor modelDesc{};
     modelDesc.label = sv("Chunk Model Buffer");
@@ -485,37 +640,20 @@ TexObject GFXDevice::buildTexObject(float x, float y, float w, float h,
     obj.modelBuffer = wgpuDeviceCreateBuffer(m_device, &modelDesc);
 
     WGPUBindGroupEntry entries[3]{};
-    entries[0].binding = 0; entries[0].buffer = obj.modelBuffer; entries[0].offset = 0; entries[0].size = sizeof(TexUniform);
-    entries[1].binding = 1; entries[1].textureView = obj.textureView;
-    entries[2].binding = 2; entries[2].sampler = obj.sampler;
+    entries[0].binding = 0; entries[0].buffer = obj.modelBuffer; entries[0].size = sizeof(TexUniform);
+    entries[1].binding = 1; entries[1].textureView = atlas.pages[slot.page].view;
+    entries[2].binding = 2; entries[2].sampler = m_atlasSampler;
 
     WGPUBindGroupDescriptor groupDesc{};
-    groupDesc.label = sv("Chunk Bind Group");
     groupDesc.layout = m_texBindLayout;
     groupDesc.entryCount = 3;
     groupDesc.entries = entries;
     obj.bindGroup = wgpuDeviceCreateBindGroup(m_device, &groupDesc);
 
-    updateTexObjectModel(obj);
+    updateAtlasTexObjectModel(obj);
     return obj;
 }
-
-void GFXDevice::updateTexObject(TexObject& obj, const RGBA* pixels, uint32_t texW, uint32_t texH)
-{
-    WGPUTexelCopyTextureInfo dst{};
-    dst.texture = obj.texture;
-    dst.mipLevel = 0;
-    dst.origin = {0, 0, 0};
-
-    WGPUTexelCopyBufferLayout layout{};
-    layout.offset = 0;
-    layout.bytesPerRow = texW * sizeof(RGBA);
-    layout.rowsPerImage = texH;
-
-    WGPUExtent3D writeSize = { texW, texH, 1 };
-    wgpuQueueWriteTexture(m_queue, &dst, pixels, (size_t)texW * texH * sizeof(RGBA), &layout, &writeSize);
-}
-void GFXDevice::updateTexObjectModel(TexObject& obj)
+void GFXDevice::updateAtlasTexObjectModel(TexObject& obj)
 {
     QMatrix4x4 model;
     model.translate(obj.x + obj.w / 2.0f, obj.y + obj.h / 2.0f, 0.0f);
@@ -523,11 +661,120 @@ void GFXDevice::updateTexObjectModel(TexObject& obj)
 
     TexUniform data{};
     memcpy(data.model, model.constData(), sizeof(data.model));
-    wgpuQueueWriteBuffer(m_queue, obj.modelBuffer, 0, data.model, sizeof(data.model));
+    data.uvOffset[0] = (float)(obj.slot.slotX * Chunk::SIZE) / AtlasPage::PAGE_SIZE;
+    data.uvOffset[1] = (float)(obj.slot.slotY * Chunk::SIZE) / AtlasPage::PAGE_SIZE;
+    data.uvScale[0] = (float)Chunk::SIZE / AtlasPage::PAGE_SIZE;
+    data.uvScale[1] = (float)Chunk::SIZE / AtlasPage::PAGE_SIZE;
+
+    wgpuQueueWriteBuffer(m_queue, obj.modelBuffer, 0, &data, sizeof(data));
+}
+void GFXDevice::updateTexObject(TexObject& obj, AtlasSet& atlas, const RGBA* pixels)
+{
+    writeChunkToAtlas(atlas.pages[obj.slot.page], obj.slot, pixels);
+}
+void GFXDevice::writeChunkToAtlas(AtlasPage& page, ChunkSlot slot, const RGBA* pixels)
+{
+    uint32_t pixelX = slot.slotX * Chunk::SIZE;
+    uint32_t pixelY = slot.slotY * Chunk::SIZE;
+
+    WGPUTexelCopyTextureInfo dst{};
+    dst.texture = page.texture;
+    dst.mipLevel = 0;
+    dst.origin = {pixelX, pixelY, 0};
+
+    WGPUTexelCopyBufferLayout layout{};
+    layout.offset = 0;
+    layout.bytesPerRow = Chunk::SIZE * sizeof(RGBA);
+    layout.rowsPerImage = Chunk::SIZE;
+
+    WGPUExtent3D writeSize = {Chunk::SIZE, Chunk::SIZE, 1};
+    wgpuQueueWriteTexture(m_queue, &dst, pixels, 
+                         (size_t)Chunk::SIZE * Chunk::SIZE * sizeof(RGBA), 
+                         &layout, &writeSize);
+}
+
+// atlas
+void GFXDevice::initAtlas()
+{
+    WGPUSamplerDescriptor samplerDesc{};
+    samplerDesc.label = sv("Atlas Sampler");
+    samplerDesc.magFilter = WGPUFilterMode_Nearest;
+    samplerDesc.minFilter = WGPUFilterMode_Nearest;
+    samplerDesc.mipmapFilter = WGPUMipmapFilterMode_Nearest;
+    samplerDesc.addressModeU = WGPUAddressMode_ClampToEdge;
+    samplerDesc.addressModeV = WGPUAddressMode_ClampToEdge;
+    samplerDesc.maxAnisotropy = 1;
+    m_atlasSampler = wgpuDeviceCreateSampler(m_device, &samplerDesc);
+}
+AtlasSet& GFXDevice::atlasForLayer(size_t layerIndex)
+{
+    if(layerIndex >= m_atlases.size())
+        m_atlases.resize(layerIndex + 1);
+    return m_atlases[layerIndex];
+}
+AtlasPage GFXDevice::createAtlasPage()
+{
+    AtlasPage page{};
+    page.slotUsed.assign(AtlasPage::SLOTS_TOTAL, false);
+
+    WGPUTextureDescriptor texDesc{};
+    texDesc.label = sv("Atlas Page");
+    texDesc.dimension = WGPUTextureDimension_2D;
+    texDesc.size = { AtlasPage::PAGE_SIZE, AtlasPage::PAGE_SIZE, 1 };
+    texDesc.format = WGPUTextureFormat_RGBA8Unorm;
+    texDesc.usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
+    texDesc.mipLevelCount = 1;
+    texDesc.sampleCount = 1;
+    page.texture = wgpuDeviceCreateTexture(m_device, &texDesc);
+    page.view = wgpuTextureCreateView(page.texture, nullptr);
+
+    return page;
+}
+ChunkSlot GFXDevice::allocateSlot(AtlasSet& atlas, uint64_t chunkKey)
+{
+    auto it = atlas.chunkSlots.find(chunkKey);
+    if(it != atlas.chunkSlots.end())
+        return it->second;
+
+    for(int p = 0; p < (int)atlas.pages.size(); p++)
+    {
+        AtlasPage& page = atlas.pages[p];
+        if(page.isFull()) continue;
+        for(int i = 0; i < AtlasPage::SLOTS_TOTAL; i++)
+        {
+            if(!page.slotUsed[i])
+            {
+                page.slotUsed[i] = true;
+                page.usedSlots++;
+                ChunkSlot slot{ p, i % AtlasPage::SLOTS_PER_ROW, i / AtlasPage::SLOTS_PER_ROW };
+                atlas.chunkSlots[chunkKey] = slot;
+                return slot;
+            }
+        }
+    }
+
+    // new page if no room
+    atlas.pages.push_back(createAtlasPage());
+    AtlasPage& page = atlas.pages.back();
+    page.slotUsed[0] = true;
+    page.usedSlots = 1;
+    ChunkSlot slot{ (int)atlas.pages.size() - 1, 0, 0 };
+    atlas.chunkSlots[chunkKey] = slot;
+    return slot;
+}
+void GFXDevice::freeSlot(AtlasSet& atlas, uint64_t chunkKey)
+{
+    auto it = atlas.chunkSlots.find(chunkKey);
+    if(it == atlas.chunkSlots.end()) return;
+    AtlasPage& page = atlas.pages[it->second.page];
+    int i = it->second.slotY * AtlasPage::SLOTS_PER_ROW + it->second.slotX;
+    page.slotUsed[i] = false;
+    page.usedSlots--;
+    atlas.chunkSlots.erase(it);
 }
 
 // RENDERING
-void GFXDevice::renderPass(uint32_t width, uint32_t height, WGPUBindGroup cameraBindGroup)
+void GFXDevice::renderPass(uint32_t width, uint32_t height, const Camera& cam)
 {
     // safety check
     WGPUSurfaceTexture surfaceTex{};
@@ -565,7 +812,7 @@ void GFXDevice::renderPass(uint32_t width, uint32_t height, WGPUBindGroup camera
     wgpuRenderPassEncoderSetPipeline(pass, m_colPipeline);
     wgpuRenderPassEncoderSetVertexBuffer(pass, 0, m_colVertBuffer, 0, WGPU_WHOLE_SIZE);
     wgpuRenderPassEncoderSetIndexBuffer(pass, m_indexBuffer, WGPUIndexFormat_Uint16, 0, WGPU_WHOLE_SIZE);
-    wgpuRenderPassEncoderSetBindGroup(pass, 0, cameraBindGroup, 0, nullptr);
+    wgpuRenderPassEncoderSetBindGroup(pass, 0, cam.m_bindGroup, 0, nullptr);
     for(ColObject& colObj : m_colObjects)
     {
         wgpuRenderPassEncoderSetBindGroup(pass, 1, colObj.bindGroup, 0, nullptr);
@@ -575,11 +822,24 @@ void GFXDevice::renderPass(uint32_t width, uint32_t height, WGPUBindGroup camera
     // texture pass
     wgpuRenderPassEncoderSetPipeline(pass, m_texPipeline);
     wgpuRenderPassEncoderSetVertexBuffer(pass, 0, m_texVertBuffer, 0, WGPU_WHOLE_SIZE);
-    wgpuRenderPassEncoderSetBindGroup(pass, 0, cameraBindGroup, 0, nullptr);
-    for(auto& [key, texObj] : m_chunkTexObjects)
+    wgpuRenderPassEncoderSetBindGroup(pass, 0, cam.m_bindGroup, 0, nullptr);
+    for(auto& layerMap : m_chunkTexObjects)
     {
-        wgpuRenderPassEncoderSetBindGroup(pass, 1, texObj.bindGroup, 0, nullptr);
-        wgpuRenderPassEncoderDrawIndexed(pass, 6, 1, 0, 0, 0);
+        for(auto& [key, texObj] : layerMap)
+        {
+            wgpuRenderPassEncoderSetBindGroup(pass, 1, texObj.bindGroup, 0, nullptr);
+            wgpuRenderPassEncoderDrawIndexed(pass, 6, 1, 0, 0, 0);
+        }
+    }
+
+    // line pass
+    if(m_showBoundsLine && m_lineVertexCount > 0)
+    {
+        wgpuRenderPassEncoderSetPipeline(pass, m_linePipeline);
+        wgpuRenderPassEncoderSetVertexBuffer(pass, 0, m_lineVertexBuffer, 0, WGPU_WHOLE_SIZE);
+        wgpuRenderPassEncoderSetBindGroup(pass, 0, cam.m_screenBindGroup, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(pass, 1, m_lineColorBindGroup, 0, nullptr);
+        wgpuRenderPassEncoderDraw(pass, m_lineVertexCount, 1, 0, 0);
     }
 
     // end frame

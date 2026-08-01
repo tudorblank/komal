@@ -1,4 +1,4 @@
-#include "raster.h"
+#include "raster.hpp"
 
 void Chunk::recomputeLocalBounds()
 {

@@ -11,8 +11,15 @@ struct VertexOut {
 struct Camera {
     viewProj : mat4x4f,
 };
+
 struct RasterObject {
     model : mat4x4f,
+
+    uvOffset : vec2f,
+    uvScale  : vec2f,
+
+    opacity : f32,
+    _pad0 : vec3f,
 };
 
 @group(0) @binding(0) var<uniform> uCamera : Camera;
@@ -24,7 +31,9 @@ struct RasterObject {
 fn vs_main(in : VertexIn) -> VertexOut {
     var out : VertexOut;
     out.clipPos = uCamera.viewProj * uObject.model * vec4f(in.pos, 0.0, 1.0);
-    out.uv = in.uv;
+    
+    out.uv = in.uv * uObject.uvScale + uObject.uvOffset;
+    
     return out;
 }
 

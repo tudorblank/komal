@@ -9,8 +9,8 @@
 #include <QWheelEvent>
 
 #include <webgpu.h>
-#include "gfxdevice.h"
-#include "raster.h"
+#include "gfxdevice.hpp"
+#include "raster.hpp"
 
 #include <vector>
 #include <algorithm>
@@ -31,10 +31,13 @@ class CanvasWindow : public QWindow
 {
     Q_OBJECT
 public:
+    // constructor
     explicit CanvasWindow(QWindow* parent = nullptr);
-    ~CanvasWindow();
+    // destructor
+    ~CanvasWindow() { if(m_renderTimer) m_renderTimer->stop(); }
 
 protected:
+    // events
     void resizeEvent(QResizeEvent*) override;
     void mousePressEvent(QMouseEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;
@@ -47,14 +50,13 @@ private:
     GFXDevice m_gfx;
     Camera m_camera;
 
-    void syncRasterData(RasterData& raster);
+    void syncRasterData(RasterData& raster, size_t layerIndex);
     void interpDraw(RasterData& inputRaster, RGBA color);
     void render();
 
-    RasterData m_drawRaster;
+    std::vector<RasterData> m_layers;
     
+    QTimer* m_renderTimer = nullptr;
     bool m_needsRender = false;
     void markDirty() { m_needsRender = true; }
-
-    QTimer* m_renderTimer = nullptr;
 };

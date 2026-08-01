@@ -18,13 +18,13 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
 set(PROJECT_SOURCES
     src/main.cpp
     src/komal.cpp
-    src/komal.h
+    src/komal.hpp
     src/canvas.cpp
-    src/canvas.h
+    src/canvas.hpp
     src/gfxdevice.cpp
-    src/gfxdevice.h
+    src/gfxdevice.hpp
     src/raster.cpp
-    src/raster.h
+    src/raster.hpp
 )
 
 qt_add_executable(Komal
