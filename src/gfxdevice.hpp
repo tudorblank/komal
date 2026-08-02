@@ -2,14 +2,17 @@
 
 #include <QMatrix4x4>
 
-#include <windows.h>
+#ifdef _WIN32
+  #include <windows.h>
+#endif
+#include <cstring>
+
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <stdexcept>
 
 #include <webgpu.h>
-
 #include "raster.hpp"
 
 inline std::string readFile(const char* filename)
@@ -126,13 +129,20 @@ public:
     GFXDevice& operator=(const GFXDevice&) = delete;
 
     // init
+#ifdef _WIN32
     void init(HWND hwnd);
+#else
+    void init(const char* platform, void* display, void* handle);
+#endif
+    void initCommon();
     bool m_initialized;
+
     WGPUInstance m_instance = nullptr;
     WGPUSurface  m_surface  = nullptr;
     WGPUAdapter  m_adapter  = nullptr;
     WGPUDevice   m_device   = nullptr;
     WGPUQueue    m_queue    = nullptr;
+    
     void configSurface(uint32_t width, uint32_t height);
     WGPUTextureFormat m_surfaceFormat = WGPUTextureFormat_Undefined;
 
@@ -166,8 +176,8 @@ public:
     WGPUPipelineLayout m_texPipelineLayout = nullptr;
 
     // atlas
-    void initAtlas(); // just creates the shared nearest-sampler now; pages are created lazily per layer
-    AtlasSet& atlasForLayer(size_t layerIndex); // returns (creating if needed) that layer's own atlas set
+    void initAtlas();
+    AtlasSet& atlasForLayer(size_t layerIndex);
     std::vector<AtlasSet> m_atlases;
     WGPUSampler m_atlasSampler = nullptr;
 

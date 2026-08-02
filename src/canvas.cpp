@@ -1,11 +1,36 @@
 #include "canvas.hpp"
 
+#ifndef _WIN32
+  #include <QGuiApplication>
+  #include <qpa/qplatformnativeinterface.h>
+#endif
+
 // constructor
 CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
 {
-    // init gfx
-    setSurfaceType(QWindow::VulkanSurface);
+#ifdef _WIN32
+    setSurfaceType(QWindow::RasterSurface);
     m_gfx.init((HWND)winId());
+#else
+    QByteArray platform = QGuiApplication::platformName().toLower().toLatin1();
+    QPlatformNativeInterface* native = QGuiApplication::platformNativeInterface();
+
+    setSurfaceType(QWindow::RasterSurface);
+
+    if(platform.contains("wayland"))
+    {
+        void* display = native->nativeResourceForIntegration("wl_display");
+        void* surface = native->nativeResourceForWindow("surface", this);
+        m_gfx.init("wayland", display, surface);
+    }
+    else // xcb
+    {
+        void* display = native->nativeResourceForWindow("display", this);
+        void* xwindow = (void*)(uintptr_t)winId();
+        m_gfx.init("xcb", display, xwindow);
+    }
+#endif
+
     if(!m_gfx.m_initialized) return;
     m_gfx.configSurface(width(), height());
 

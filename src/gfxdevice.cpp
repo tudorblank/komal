@@ -102,11 +102,11 @@ void Camera::updateScreen(WGPUQueue queue, uint32_t width, uint32_t height)
 }
 
 // commons
+#ifdef _WIN32
 void GFXDevice::init(HWND hwnd)
 {
     m_instance = wgpuCreateInstance(nullptr);
 
-    // Qt HWND -> WebGPU surface
     WGPUSurfaceSourceWindowsHWND hwndSrc{};
     hwndSrc.chain.sType = WGPUSType_SurfaceSourceWindowsHWND;
     hwndSrc.hinstance = GetModuleHandle(nullptr);
@@ -116,6 +116,41 @@ void GFXDevice::init(HWND hwnd)
     surfDesc.nextInChain = (WGPUChainedStruct*)&hwndSrc;
     m_surface = wgpuInstanceCreateSurface(m_instance, &surfDesc);
 
+    initCommon(); // adapter/device/queue request, factored out below
+}
+#else
+void GFXDevice::init(const char* platform, void* display, void* handle)
+{
+    m_instance = wgpuCreateInstance(nullptr);
+
+    WGPUSurfaceDescriptor surfDesc{};
+
+    WGPUSurfaceSourceXlibWindow xlibSrc{};
+    WGPUSurfaceSourceWaylandSurface waylandSrc{};
+
+    if(strcmp(platform, "wayland") == 0)
+    {
+        waylandSrc.chain.sType = WGPUSType_SurfaceSourceWaylandSurface;
+        waylandSrc.display = display;
+        waylandSrc.surface = handle;
+        surfDesc.nextInChain = (WGPUChainedStruct*)&waylandSrc;
+    }
+    else // xcb / X11
+    {
+        xlibSrc.chain.sType = WGPUSType_SurfaceSourceXlibWindow;
+        xlibSrc.display = display;
+        xlibSrc.window = (uint64_t)(uintptr_t)handle;
+        surfDesc.nextInChain = (WGPUChainedStruct*)&xlibSrc;
+    }
+
+    m_surface = wgpuInstanceCreateSurface(m_instance, &surfDesc);
+
+    initCommon();
+}
+#endif
+
+void GFXDevice::initCommon()
+{
     // request adapter
     WGPURequestAdapterOptions adapterOpts{};
     adapterOpts.compatibleSurface = m_surface;
@@ -184,6 +219,7 @@ void GFXDevice::init(HWND hwnd)
     m_queue = wgpuDeviceGetQueue(m_device);
     m_initialized = true;
 }
+
 void GFXDevice::configSurface(uint32_t width, uint32_t height)
 {
     if(width <= 0 || height <= 0) return;

@@ -11,9 +11,13 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Widgets only now — OpenGL/OpenGLWidgets dropped
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
+
+# needed for qpa/qplatformnativeinterface.h on Linux
+if(UNIX AND NOT APPLE)
+    find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Gui GuiPrivate)
+endif()
 
 set(PROJECT_SOURCES
     src/main.cpp
@@ -64,6 +68,25 @@ if(WIN32)
             "${WGPU_NATIVE_DIR}/lib/wgpu_native.dll"
             "$<TARGET_FILE_DIR:Komal>"
         COMMENT "Copying wgpu_native.dll..."
+    )
+endif()
+
+if(UNIX AND NOT APPLE)
+    target_link_libraries(Komal PRIVATE
+        dl pthread
+        Qt${QT_VERSION_MAJOR}::GuiPrivate   # exposes qpa/ private headers
+    )
+
+    set_target_properties(Komal PROPERTIES
+        BUILD_RPATH "$ORIGIN"
+        INSTALL_RPATH "$ORIGIN"
+    )
+
+    add_custom_command(TARGET Komal POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${WGPU_NATIVE_DIR}/lib/libwgpu_native.so"
+            "$<TARGET_FILE_DIR:Komal>"
+        COMMENT "Copying libwgpu_native.so..."
     )
 endif()
 
