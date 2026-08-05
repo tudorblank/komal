@@ -12,7 +12,7 @@ void Camera::create()
     camDesc.size = sizeof(CameraUniform);
     camDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
     m_buffer = wgpuDeviceCreateBuffer(m_ctx.device, &camDesc);
-    wgpuQueueWriteBuffer(m_ctx.queue, m_buffer, 0, camInput.viewProj, sizeof(camInput.viewProj));
+    wgpuQueueWriteBuffer(m_ctx.queue, m_buffer, 0, camInput.viewProj, sizeof(CameraUniform));
 
     WGPUBindGroupLayoutEntry camLayoutEntry{};
     camLayoutEntry.binding = 0;

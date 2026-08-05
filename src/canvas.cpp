@@ -49,30 +49,32 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
     m_gfx.m_TEXSYS.createRenderPipeline(m_camera.m_bindLayout);
     m_gfx.m_LINSYS.createRenderPipeline(m_camera.m_screenBindLayout); 
     
-    // test data
-        // two layers
-        m_layers.reserve(2);
+    m_layers.emplace_back();
+    RasterData& background = m_layers[0];
+    for(int y = 0; y < 200; y++)
+        for(int x = 0; x < 200; x++)
+            background.setPixel(x, y, RGBA{245, 40, 145, 255});
 
-        // layer 0
-        m_layers.emplace_back();
-        RasterData& background = m_layers[0];
-        for(int y = 0; y < 200; y++)
-            for(int x = 0; x < 200; x++)
-                background.setPixel(x, y, RGBA{245, 40, 145, 255});
+    m_layers.emplace_back(); // layer 1 - draw
 
-        // layer 1 - draw
-        m_layers.emplace_back();
+    m_compositor = CompositorNode::create();
+    for(auto& raster : m_layers)
+    {
+        auto node = RasterRootNode::create(&raster);
+        m_compositor->addLayer(node, 1.0f, BlendMode::Normal, true);
+        m_layerNodes.push_back(node);
+    }
 
-        // sync before first render
-        for(size_t i = 0; i < m_layers.size(); i++) syncRasterData(m_layers[i], i);
-    //
+    m_compositor->setLayerOpacity(1, 0.5f);
+
+    syncCompositedOutput();
 
     render(); // first render
 
     // timer
     m_renderTimer = new QTimer(this);
     m_renderTimer->setInterval(8);  // ~125 Hz
-    connect(m_renderTimer, &QTimer::timeout, this, [this]() {
+        connect(m_renderTimer, &QTimer::timeout, this, [this]() {
         if(!m_needsRender) return;
 
         if(m_camera.panDirty)
@@ -83,7 +85,8 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
             m_camera.panDirty = false;
             m_camera.update((float)width(), (float)height());
         }
-        for(size_t i = 0; i < m_layers.size(); i++) syncRasterData(m_layers[i], i);
+
+        syncCompositedOutput();
         render();
 
         m_needsRender = false;
@@ -219,21 +222,55 @@ void CanvasWindow::wheelEvent(QWheelEvent* e)
 }
 
 // raster data core
-void CanvasWindow::syncRasterData(RasterData& raster, size_t layerIndex)
+void CanvasWindow::syncCompositedOutput()
 {
-    for(uint64_t key : raster.m_dirtyChunkKeys)
+    std::vector<std::pair<int,int>> dirtyTiles;
+
+    for(size_t i = 0; i < m_layers.size(); i++)
     {
-        auto it = raster.m_chunkHandleMap.find(key);
-        if(it == raster.m_chunkHandleMap.end()) continue;
-        Chunk& chunk = raster.m_chunkPool.getChunk(it->second);
+        RasterData& raster = m_layers[i];
+        for(uint64_t key : raster.m_dirtyChunkKeys)
+        {
+            int32_t chunkX = static_cast<int32_t>(static_cast<uint32_t>(key >> 32));
+            int32_t chunkY = static_cast<int32_t>(static_cast<uint32_t>(key & 0xFFFFFFFFu));
 
-        m_gfx.m_TEXSYS.syncChunk(layerIndex, key,
-            (float)(chunk.cPosX * Chunk::SIZE), (float)(chunk.cPosY * Chunk::SIZE),
-            chunk.data);
+            m_layerNodes[i]->invalidateTile(chunkX, chunkY);
+            dirtyTiles.emplace_back(chunkX, chunkY);
 
-        chunk.dirty = false;
+            auto it = raster.m_chunkHandleMap.find(key);
+            if(it != raster.m_chunkHandleMap.end())
+                raster.m_chunkPool.getChunk(it->second).dirty = false;
+        }
+        raster.m_dirtyChunkKeys.clear();
     }
-    raster.m_dirtyChunkKeys.clear();
+
+    // structural compositor change -> rebake
+    if(m_compositor->needsGPUBake())
+    {
+        BoundsI bounds = m_compositor->bounds();
+        if(bounds.valid)
+        {
+            int minCX = RasterData::worldToChunk(bounds.minX);
+            int maxCX = RasterData::worldToChunk(bounds.maxX);
+            int minCY = RasterData::worldToChunk(bounds.minY);
+            int maxCY = RasterData::worldToChunk(bounds.maxY);
+
+            for(int cy = minCY; cy <= maxCY; cy++)
+                for(int cx = minCX; cx <= maxCX; cx++)
+                    dirtyTiles.emplace_back(cx, cy);
+        }
+        m_compositor->markGPUBaked();
+    }
+
+    for(auto [chunkX, chunkY] : dirtyTiles)
+    {
+        uint64_t key = RasterData::chunkKey(chunkX, chunkY);
+        const std::vector<RGBA>& tile = m_compositor->getTile(chunkX, chunkY);
+
+        m_gfx.m_TEXSYS.syncChunk(0, key,
+            (float)(chunkX * Chunk::SIZE), (float)(chunkY * Chunk::SIZE),
+            tile.data());
+    }
 }
 
 void CanvasWindow::interpDraw(RasterData& inputRaster, RGBA color)

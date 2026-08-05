@@ -37,12 +37,12 @@ public:
 
     ~Camera()
     {
-        if(m_screenBuffer)    wgpuBufferRelease(m_screenBuffer);
-        if(m_screenBindLayout)wgpuBindGroupLayoutRelease(m_screenBindLayout);
-        if(m_screenBindGroup) wgpuBindGroupRelease(m_screenBindGroup);
+        if(m_screenBindGroup)   wgpuBindGroupRelease(m_screenBindGroup);
+        if(m_screenBindLayout)  wgpuBindGroupLayoutRelease(m_screenBindLayout);
+        if(m_screenBuffer)      wgpuBufferRelease(m_screenBuffer);
         
-        if(m_bindGroup)       wgpuBindGroupRelease(m_bindGroup);
-        if(m_bindLayout)      wgpuBindGroupLayoutRelease(m_bindLayout);
-        if(m_buffer)          wgpuBufferRelease(m_buffer);
+        if(m_bindGroup)     wgpuBindGroupRelease(m_bindGroup);
+        if(m_bindLayout)    wgpuBindGroupLayoutRelease(m_bindLayout);
+        if(m_buffer)        wgpuBufferRelease(m_buffer);
     }
 };

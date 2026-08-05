@@ -154,7 +154,8 @@ public:
     ChunkPool m_chunkPool;
 
     std::unordered_map<uint64_t, ChunkPool::Handle> m_chunkHandleMap;
-    uint64_t chunkKey(int chunkX, int chunkY);
+    static uint64_t chunkKey(int chunkX, int chunkY)
+    { return (static_cast<uint64_t>(chunkX) << 32) | static_cast<uint32_t>(chunkY); }
     std::vector<uint64_t> m_dirtyChunkKeys;
 
     bool chunkExists(int chunkX, int chunkY);
@@ -165,9 +166,20 @@ public:
     template<typename Fn>
     void forEachChunk(Fn&& fn) { m_chunkPool.forEachAlive(std::forward<Fn>(fn)); }
 
-    static int worldToChunk(int world) { return world >> 6; }
-    static int worldToLocal(int world) { return world & 63; }
-    static int chunkToWorld(int chunkCoord, int localCoord) { return (chunkCoord << 6) + localCoord; }
+    static inline int floorDiv(int x, int y)
+    {
+        if (y <= 0) return 0;
+        if (x >= 0) return x / y;
+        return - ( ( -x + y - 1 ) / y );
+    }
+    static inline int worldToChunk(int world) { return floorDiv(world, Chunk::SIZE); }
+    static inline int worldToLocal(int world)
+    {
+        int cx = worldToChunk(world);
+        return world - (cx * Chunk::SIZE);
+    }
+    static inline int chunkToWorld(int chunkCoord, int localCoord)
+    { return chunkCoord * Chunk::SIZE + localCoord; }
 
     void setPixel(int worldX, int worldY, RGBA color);
     void erasePixel(int worldX, int worldY);

@@ -37,11 +37,6 @@ RasterData& RasterData::operator=(RasterData&& other) noexcept
     return *this;
 }
 
-uint64_t RasterData::chunkKey(int chunkX, int chunkY)
-{
-    return (static_cast<uint64_t>(chunkX) << 32) | static_cast<uint32_t>(chunkY);
-}
-
 bool RasterData::chunkExists(int chunkX, int chunkY)
 {
     return m_chunkHandleMap.count(chunkKey(chunkX, chunkY)) > 0;
@@ -129,23 +124,25 @@ void RasterData::erasePixel(int worldX, int worldY)
 }
 void RasterData::markPixelErased(Chunk& chunk, int lx, int ly)
 {
-    if(!chunk.localPixelBounds.valid) return;
+    // Use returnLocalBounds() so we recompute the chunk's local bbox if dirty.
+    const BoundsI& local = chunk.returnLocalBounds();
+    if(!local.valid) return;
 
     bool onLocalEdge =
-        lx == chunk.localPixelBounds.minX || lx == chunk.localPixelBounds.maxX ||
-        ly == chunk.localPixelBounds.minY || ly == chunk.localPixelBounds.maxY;
+        lx == local.minX || lx == local.maxX ||
+        ly == local.minY || ly == local.maxY;
 
     if(!onLocalEdge) return;
-
+    
     chunk.localPixelBounds.dirty = true;
 
     int worldX = chunkToWorld(chunk.cPosX, lx);
     int worldY = chunkToWorld(chunk.cPosY, ly);
 
-    int worldMinX = chunkToWorld(chunk.cPosX, chunk.localPixelBounds.minX);
-    int worldMaxX = chunkToWorld(chunk.cPosX, chunk.localPixelBounds.maxX);
-    int worldMinY = chunkToWorld(chunk.cPosY, chunk.localPixelBounds.minY);
-    int worldMaxY = chunkToWorld(chunk.cPosY, chunk.localPixelBounds.maxY);
+    int worldMinX = chunkToWorld(chunk.cPosX, local.minX);
+    int worldMaxX = chunkToWorld(chunk.cPosX, local.maxX);
+    int worldMinY = chunkToWorld(chunk.cPosY, local.minY);
+    int worldMaxY = chunkToWorld(chunk.cPosY, local.maxY);
 
     bool onGlobalEdge =
         (worldX == m_pixelBounds.minX && worldMinX == m_pixelBounds.minX) ||

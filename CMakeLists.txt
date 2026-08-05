@@ -27,6 +27,8 @@ set(PROJECT_SOURCES
     src/canvas.hpp
     src/raster.cpp
     src/raster.hpp
+    src/node.cpp
+    src/node.hpp
     src/gfx/gfxcontext.hpp
     src/gfx/gfxdevice.cpp
     src/gfx/gfxdevice.hpp

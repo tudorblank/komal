@@ -11,10 +11,12 @@
 #include <webgpu.h>
 #include "gfx/gfxdevice.hpp"
 #include "raster.hpp"
+#include "node.hpp"
 
 #include <vector>
 #include <algorithm>
 #include <cstdint>
+#include <deque>
 
 struct MouseHandler{
     Vec2 screen;
@@ -48,11 +50,13 @@ private:
     GFXDevice m_gfx;
     Camera m_camera;
 
-    void syncRasterData(RasterData& raster, size_t layerIndex);
+    std::deque<RasterData> m_layers;
+    std::vector<std::shared_ptr<RasterRootNode>> m_layerNodes;
+    std::shared_ptr<CompositorNode> m_compositor;
+
+    void syncCompositedOutput();
     void interpDraw(RasterData& inputRaster, RGBA color);
     void render();
-
-    std::vector<RasterData> m_layers;
     
     QTimer* m_renderTimer = nullptr;
     bool m_needsRender = false;

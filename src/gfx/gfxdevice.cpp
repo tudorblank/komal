@@ -147,7 +147,7 @@ void GFXDevice::configSurface(uint32_t width, uint32_t height)
 void GFXDevice::passContext(Camera& cam)
 {
     GFXContext ctx = context();
-    cam.m_ctx = ctx;       // camera
+    cam.m_ctx = ctx;      // camera
     m_COLSYS.m_ctx = ctx; // color
     m_TEXSYS.m_ctx = ctx; // texture
     m_LINSYS.m_ctx = ctx; // line
