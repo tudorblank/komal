@@ -25,10 +25,19 @@ set(PROJECT_SOURCES
     src/komal.hpp
     src/canvas.cpp
     src/canvas.hpp
-    src/gfxdevice.cpp
-    src/gfxdevice.hpp
     src/raster.cpp
     src/raster.hpp
+    src/gfx/gfxcontext.hpp
+    src/gfx/gfxdevice.cpp
+    src/gfx/gfxdevice.hpp
+    src/gfx/camera.cpp
+    src/gfx/camera.hpp
+    src/gfx/colsys.cpp
+    src/gfx/colsys.hpp
+    src/gfx/texsys.cpp
+    src/gfx/texsys.hpp
+    src/gfx/linsys.cpp
+    src/gfx/linsys.hpp
 )
 
 qt_add_executable(Komal
@@ -46,6 +55,7 @@ set(WGPU_NATIVE_DIR "${CMAKE_SOURCE_DIR}/include/webgpu" CACHE PATH "Path to wgp
 target_include_directories(Komal PRIVATE
     "${WGPU_NATIVE_DIR}"
     "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_SOURCE_DIR}/src"
 )
 
 target_link_directories(Komal PRIVATE

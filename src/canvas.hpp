@@ -9,15 +9,14 @@
 #include <QWheelEvent>
 
 #include <webgpu.h>
-#include "gfxdevice.hpp"
+#include "gfx/gfxdevice.hpp"
 #include "raster.hpp"
 
 #include <vector>
 #include <algorithm>
 #include <cstdint>
 
-struct MouseHandler
-{
+struct MouseHandler{
     Vec2 screen;
     Vec2 world;
     Vec2 prevWorld;
@@ -27,8 +26,7 @@ struct MouseHandler
     bool middleDown = false;
 };
 
-class CanvasWindow : public QWindow
-{
+class CanvasWindow : public QWindow{
     Q_OBJECT
 public:
     // constructor

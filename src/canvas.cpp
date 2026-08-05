@@ -8,6 +8,7 @@
 // constructor
 CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
 {
+    // init WGPU
 #ifdef _WIN32
     setSurfaceType(QWindow::RasterSurface);
     m_gfx.init((HWND)winId());
@@ -34,20 +35,19 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
     if(!m_gfx.m_initialized) return;
     m_gfx.configSurface(width(), height());
 
+    m_gfx.passContext(m_camera);
+
     // camera
-    m_camera.create(m_gfx.m_device, m_gfx.m_queue);
-    m_camera.update(m_gfx.m_queue, (float)width(), (float)height());
-    m_camera.createScreen(m_gfx.m_device, m_gfx.m_queue, width(), height());
+    m_camera.create();
+    m_camera.update((float)width(), (float)height());
+    m_camera.createScreen(width(), height());
 
     // pipelines
-    m_gfx.createGeometry();
-    m_gfx.createColorBindLayout();
-    m_gfx.createTexBindLayout();
-    m_gfx.initAtlas();
-    m_gfx.createShaders();
-    m_gfx.createColorPipeline(m_camera.m_bindLayout);
-    m_gfx.createTexPipeline(m_camera.m_bindLayout);
-    m_gfx.createLinePipeline(m_camera.m_screenBindLayout); 
+    m_gfx.initIndexBuffer();
+    m_gfx.m_COLSYS.createRenderPipeline(m_camera.m_bindLayout);
+    m_gfx.m_TEXSYS.initAtlasSampler();
+    m_gfx.m_TEXSYS.createRenderPipeline(m_camera.m_bindLayout);
+    m_gfx.m_LINSYS.createRenderPipeline(m_camera.m_screenBindLayout); 
     
     // test data
         // two layers
@@ -81,7 +81,7 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
             m_camera.pan.y += m_camera.pendingPan.y;
             m_camera.pendingPan = {0.0f, 0.0f};
             m_camera.panDirty = false;
-            m_camera.update(m_gfx.m_queue, (float)width(), (float)height());
+            m_camera.update((float)width(), (float)height());
         }
         for(size_t i = 0; i < m_layers.size(); i++) syncRasterData(m_layers[i], i);
         render();
@@ -99,8 +99,8 @@ void CanvasWindow::resizeEvent(QResizeEvent*)
 
     m_gfx.configSurface(width(), height());
 
-    m_camera.update(m_gfx.m_queue, (float)width(), (float)height());
-    m_camera.updateScreen(m_gfx.m_queue, width(), height());
+    m_camera.update((float)width(), (float)height());
+    m_camera.updateScreen(width(), height());
     
     render();
 }
@@ -205,7 +205,7 @@ void CanvasWindow::wheelEvent(QWheelEvent* e)
 
         m_camera.zoom = newZoom;
 
-        m_camera.update(m_gfx.m_queue, (float)width(), (float)height());
+        m_camera.update((float)width(), (float)height());
         markDirty();
     }
     else
@@ -213,7 +213,7 @@ void CanvasWindow::wheelEvent(QWheelEvent* e)
         m_camera.pan.x += e->angleDelta().x() * 0.2f;
         m_camera.pan.y += e->angleDelta().y() * 0.2f;
 
-        m_camera.update(m_gfx.m_queue, (float)width(), (float)height());
+        m_camera.update((float)width(), (float)height());
         markDirty();
     }
 }
@@ -221,28 +221,15 @@ void CanvasWindow::wheelEvent(QWheelEvent* e)
 // raster data core
 void CanvasWindow::syncRasterData(RasterData& raster, size_t layerIndex)
 {
-    if(layerIndex >= m_gfx.m_chunkTexObjects.size())
-        m_gfx.m_chunkTexObjects.resize(layerIndex + 1);
-
-    auto& texMap = m_gfx.m_chunkTexObjects[layerIndex];
-    AtlasSet& atlas = m_gfx.atlasForLayer(layerIndex);
-
     for(uint64_t key : raster.m_dirtyChunkKeys)
     {
         auto it = raster.m_chunkHandleMap.find(key);
         if(it == raster.m_chunkHandleMap.end()) continue;
         Chunk& chunk = raster.m_chunkPool.getChunk(it->second);
 
-        auto renderIt = texMap.find(key);
-        if(renderIt == texMap.end())
-        {
-            float worldX = (float)(chunk.cPosX * Chunk::SIZE);
-            float worldY = (float)(chunk.cPosY * Chunk::SIZE);
-            texMap.emplace(key,
-                m_gfx.buildAtlasTexObject(atlas, key, worldX, worldY,
-                                           (float)Chunk::SIZE, (float)Chunk::SIZE, chunk.data));
-        }
-        else m_gfx.updateTexObject(renderIt->second, atlas, chunk.data);
+        m_gfx.m_TEXSYS.syncChunk(layerIndex, key,
+            (float)(chunk.cPosX * Chunk::SIZE), (float)(chunk.cPosY * Chunk::SIZE),
+            chunk.data);
 
         chunk.dirty = false;
     }
@@ -269,21 +256,23 @@ void CanvasWindow::interpDraw(RasterData& inputRaster, RGBA color)
     }
 }
 
-// MAIN
+// main
 void CanvasWindow::render()
 {
     if(!m_gfx.m_initialized) return;
 
     std::vector<BoundsI> boxes;
-    boxes.reserve(m_layers.size());
+    boxes.reserve(m_layers.size()); // boxes count = layer count
+
+    // for each layer, store rasterdata bounds in [boxes]
     for(RasterData& layer : m_layers)
     {
         BoundsI& b = layer.returnPixelBounds();
         if(b.valid) boxes.push_back(b);
     }
 
-    m_gfx.updateBoundsLines(boxes, m_camera.pan, m_camera.zoom);
-    m_gfx.m_showBoundsLine = !boxes.empty();
+    m_gfx.m_LINSYS.updateBoundsLines(boxes, m_camera.pan, m_camera.zoom);
+    m_gfx.m_showBBOXs = !boxes.empty();
 
     m_gfx.renderPass(width(), height(), m_camera);
 }
