@@ -51,17 +51,17 @@ target_link_libraries(Komal PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
 )
 
-# --- wgpu-native ---
-set(WGPU_NATIVE_DIR "${CMAKE_SOURCE_DIR}/include/webgpu" CACHE PATH "Path to wgpu-native headers/libs" FORCE)
+# --- wgpu-native (auto-downloaded, see cmake/FetchWgpuNative.cmake) ---
+include(${CMAKE_SOURCE_DIR}/cmake/FetchWgpuNative.cmake)
 
 target_include_directories(Komal PRIVATE
-    "${WGPU_NATIVE_DIR}"
+    "${WGPU_NATIVE_INCLUDE_DIR}"
     "${CMAKE_SOURCE_DIR}/include"
     "${CMAKE_SOURCE_DIR}/src"
 )
 
 target_link_directories(Komal PRIVATE
-    "${WGPU_NATIVE_DIR}/lib"
+    "${WGPU_NATIVE_LIB_DIR}"
 )
 
 target_link_libraries(Komal PRIVATE
@@ -77,7 +77,7 @@ if(WIN32)
     # wgpu_native.dll must sit next to the exe at runtime
     add_custom_command(TARGET Komal POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${WGPU_NATIVE_DIR}/lib/wgpu_native.dll"
+            "${WGPU_NATIVE_LIB_DIR}/wgpu_native.dll"
             "$<TARGET_FILE_DIR:Komal>"
         COMMENT "Copying wgpu_native.dll..."
     )
@@ -96,7 +96,7 @@ if(UNIX AND NOT APPLE)
 
     add_custom_command(TARGET Komal POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${WGPU_NATIVE_DIR}/lib/libwgpu_native.so"
+            "${WGPU_NATIVE_LIB_DIR}/libwgpu_native.so"
             "$<TARGET_FILE_DIR:Komal>"
         COMMENT "Copying libwgpu_native.so..."
     )
