@@ -1,148 +1,158 @@
 #include "raster.hpp"
 
+// ==== CHUNK ====
 void Chunk::recomputeLocalBounds()
 {
-    localPixelBounds.reset();
+    if(!localBounds.dirty) return;
+
+    localBounds.reset();
 
     for(int ly = 0; ly < SIZE; ly++)
         for(int lx = 0; lx < SIZE; lx++)
             if(pixel(lx, ly).a > 0)
-                localPixelBounds.expand(lx, ly);
+                localBounds.expand(lx, ly);
 
-    localPixelBounds.dirty = false;
+    localBounds.dirty = false;
 }
 
-RasterData::RasterData(RasterData&& other) noexcept
-    : m_chunkPool(std::move(other.m_chunkPool))
-    , m_chunkHandleMap(std::move(other.m_chunkHandleMap))
-    , m_dirtyChunkKeys(std::move(other.m_dirtyChunkKeys))
-    , m_chunkBounds(other.m_chunkBounds)
-    , m_pixelBounds(other.m_pixelBounds)
+// ==== CHUNK POOL ====
+void ChunkPool::ensureBlockFor(uint32_t idx)
 {
-    forEachChunk([&](Chunk& chunk) { chunk.rasterOwner = this; });
+    size_t blockIDX = idx / BLOCK_SIZE;
+    while(m_blocks.size() <= blockIDX)
+        m_blocks.push_back(std::make_unique<Chunk[]>(BLOCK_SIZE));
 }
-
-RasterData& RasterData::operator=(RasterData&& other) noexcept
+uint32_t ChunkPool::allocateIndex()
 {
-    if(this != &other)
+    uint32_t idx;
+
+    // grab from free ones (if available)
+    if(!m_freeList.empty())
     {
-        m_chunkPool      = std::move(other.m_chunkPool);
-        m_chunkHandleMap = std::move(other.m_chunkHandleMap);
-        m_dirtyChunkKeys = std::move(other.m_dirtyChunkKeys);
-        m_chunkBounds    = other.m_chunkBounds;
-        m_pixelBounds    = other.m_pixelBounds;
-
-        forEachChunk([&](Chunk& chunk) { chunk.rasterOwner = this; });
+        idx = m_freeList.back();
+        m_freeList.pop_back();
+        m_idxList[idx] = true;
+        return idx;
     }
-    return *this;
+
+    idx = (uint32_t)m_idxList.size();
+    ensureBlockFor(idx);
+    m_idxList.push_back(true);
+    return idx;
+}
+void ChunkPool::freeIndex(uint32_t idx)
+{
+    if(idx >= m_idxList.size() || !m_idxList[idx]) return; // doesn't exist / already free
+
+    getChunk(idx) = Chunk{}; // reset chunk
+    m_idxList[idx] = false;
+    m_freeList.push_back(idx);
 }
 
-bool RasterData::chunkExists(int chunkX, int chunkY)
+// ==== RASTER DATA ====
+Chunk* RasterData::readChunk(int chunkX, int chunkY)
 {
-    return m_chunkHandleMap.count(chunkKey(chunkX, chunkY)) > 0;
+    uint64_t key = Key::pack(chunkX, chunkY);
+    auto it = m_chunkIndexMap.find(key); // search it by key
+
+    if(it == m_chunkIndexMap.end()) return nullptr; // not found
+    return &m_chunkPool.getChunk(it->second);
 }
 Chunk& RasterData::accessChunk(int chunkX, int chunkY)
 {
-    uint64_t key = chunkKey(chunkX, chunkY);
-    auto it = m_chunkHandleMap.find(key);
-    if(it != m_chunkHandleMap.end())
-        return m_chunkPool.getChunk(it->second);
+    uint64_t key = Key::pack(chunkX, chunkY);
+    auto it = m_chunkIndexMap.find(key);
 
-    return createChunk(chunkX, chunkY);
+    if(it != m_chunkIndexMap.end()) return m_chunkPool.getChunk(it->second); // found
+
+    // not found -> create
+    uint32_t idx = m_chunkPool.allocateIndex(); 
+    m_chunkIndexMap.emplace(key, idx);
+    return m_chunkPool.getChunk(idx);
 }
-Chunk* RasterData::tryGetChunk(int chunkX, int chunkY)
+void RasterData::freeChunk(int chunkX, int chunkY)
 {
-    auto it = m_chunkHandleMap.find(chunkKey(chunkX, chunkY));
-    return (it != m_chunkHandleMap.end()) ? &m_chunkPool.getChunk(it->second) : nullptr;
-}
+    uint64_t key = Key::pack(chunkX, chunkY);
+    auto it = m_chunkIndexMap.find(key);
+    if(it == m_chunkIndexMap.end()) return; // wasn't allocated, nothing to do
 
-Chunk& RasterData::createChunk(int chunkX, int chunkY)
-{
-    uint64_t key = chunkKey(chunkX, chunkY);
+    m_chunkPool.freeIndex(it->second);
+    m_chunkIndexMap.erase(it);
 
-    auto it = m_chunkHandleMap.find(key);
-    if(it != m_chunkHandleMap.end())
-        return m_chunkPool.getChunk(it->second);
-
-    ChunkPool::Handle handle = m_chunkPool.allocateHandle();
-    m_chunkHandleMap.emplace(key, handle);
-
-    Chunk& chunk = m_chunkPool.getChunk(handle);
-    chunk.cPosX = chunkX;
-    chunk.cPosY = chunkY;
-    chunk.rasterOwner = this;
-
-    m_chunkBounds.expand(chunkX, chunkY);
-
-    return chunk;
+    std::erase(m_dirtyChunkKeys, key);
 }
 
 void RasterData::setPixel(int worldX, int worldY, RGBA color)
 {
-    int chunkX = worldToChunk(worldX);
-    int chunkY = worldToChunk(worldY);
-    int pxLocalX = worldToLocal(worldX);
-    int pxLocalY = worldToLocal(worldY);
+    if(color.a == 0)
+    {
+        erasePixel(worldX, worldY);
+        return;
+    }
+    
+    // convert coords
+    int chunkX = Grid::worldToChunk(worldX);
+    int chunkY = Grid::worldToChunk(worldY);
+    int pxLocalX = Grid::worldToLocal(worldX);
+    int pxLocalY = Grid::worldToLocal(worldY);
 
+    // set pixel
     Chunk& accessedChunk = accessChunk(chunkX, chunkY);
     accessedChunk.pixel(pxLocalX, pxLocalY) = color;
 
+    // dirty
     if(!accessedChunk.dirty)
     {
         accessedChunk.dirty = true;
-        m_dirtyChunkKeys.push_back(chunkKey(chunkX, chunkY));
+        m_dirtyChunkKeys.push_back(Key::pack(chunkX, chunkY));
     }
-
-    if(color.a > 0)
-    {
-        accessedChunk.localPixelBounds.expand(pxLocalX, pxLocalY);
-        m_pixelBounds.expand(worldX, worldY);
-    }
-    else markPixelErased(accessedChunk, pxLocalX, pxLocalY);
+    
+    // bounds
+    accessedChunk.localBounds.expand(pxLocalX, pxLocalY); // local chunk
+    m_pixelBounds.expand(worldX, worldY);
 }
 void RasterData::erasePixel(int worldX, int worldY)
 {
-    int chunkX = worldToChunk(worldX);
-    int chunkY = worldToChunk(worldY);
-    int pxLocalX = worldToLocal(worldX);
-    int pxLocalY = worldToLocal(worldY);
+    // convert coords
+    int chunkX = Grid::worldToChunk(worldX);
+    int chunkY = Grid::worldToChunk(worldY);
+    int pxLocalX = Grid::worldToLocal(worldX);
+    int pxLocalY = Grid::worldToLocal(worldY);
 
-    auto it = m_chunkHandleMap.find(chunkKey(chunkX, chunkY));
-    if(it == m_chunkHandleMap.end()) return;
-    Chunk& accessedChunk = m_chunkPool.getChunk(it->second);
+    Chunk* chunk = readChunk(chunkX, chunkY);
+    if(!chunk) return;
 
-    if(accessedChunk.pixel(pxLocalX, pxLocalY).a == 0) return;
-    accessedChunk.pixel(pxLocalX, pxLocalY) = {0, 0, 0, 0};
+    if(chunk->pixel(pxLocalX, pxLocalY).a == 0) return;
+    chunk->pixel(pxLocalX, pxLocalY) = {0, 0, 0, 0};
 
-    if(!accessedChunk.dirty)
+    if(!chunk->dirty)
     {
-        accessedChunk.dirty = true;
-        m_dirtyChunkKeys.push_back(chunkKey(chunkX, chunkY));
+        chunk->dirty = true;
+        m_dirtyChunkKeys.push_back(Key::pack(chunkX, chunkY));
     }
 
-    markPixelErased(accessedChunk, pxLocalX, pxLocalY);
+    markPixelErased(*chunk, chunkX, chunkY, pxLocalX, pxLocalY);
 }
-void RasterData::markPixelErased(Chunk& chunk, int lx, int ly)
+void RasterData::markPixelErased(Chunk& chunk, int chunkX, int chunkY, int lx, int ly)
 {
-    // Use returnLocalBounds() so we recompute the chunk's local bbox if dirty.
-    const BoundsI& local = chunk.returnLocalBounds();
+    const BoundsI& local = chunk.getLocalBounds();
     if(!local.valid) return;
 
     bool onLocalEdge =
         lx == local.minX || lx == local.maxX ||
         ly == local.minY || ly == local.maxY;
 
-    if(!onLocalEdge) return;
-    
-    chunk.localPixelBounds.dirty = true;
+    if(!onLocalEdge) return; // interior pixel, no change
 
-    int worldX = chunkToWorld(chunk.cPosX, lx);
-    int worldY = chunkToWorld(chunk.cPosY, ly);
+    chunk.localBounds.dirty = true;
 
-    int worldMinX = chunkToWorld(chunk.cPosX, local.minX);
-    int worldMaxX = chunkToWorld(chunk.cPosX, local.maxX);
-    int worldMinY = chunkToWorld(chunk.cPosY, local.minY);
-    int worldMaxY = chunkToWorld(chunk.cPosY, local.maxY);
+    int worldX = Grid::chunkToWorld(chunkX, lx);
+    int worldY = Grid::chunkToWorld(chunkY, ly);
+
+    int worldMinX = Grid::chunkToWorld(chunkX, local.minX);
+    int worldMaxX = Grid::chunkToWorld(chunkX, local.maxX);
+    int worldMinY = Grid::chunkToWorld(chunkY, local.minY);
+    int worldMaxY = Grid::chunkToWorld(chunkY, local.maxY);
 
     bool onGlobalEdge =
         (worldX == m_pixelBounds.minX && worldMinX == m_pixelBounds.minX) ||
@@ -150,30 +160,29 @@ void RasterData::markPixelErased(Chunk& chunk, int lx, int ly)
         (worldY == m_pixelBounds.minY && worldMinY == m_pixelBounds.minY) ||
         (worldY == m_pixelBounds.maxY && worldMaxY == m_pixelBounds.maxY);
 
-    if(onGlobalEdge)
-        m_pixelBounds.dirty = true;
+    if(onGlobalEdge) m_pixelBounds.dirty = true; // needs global rescan
 }
 
 void RasterData::recomputePixelBounds()
 {
     m_pixelBounds.reset();
 
-    forEachChunk([&](Chunk& chunk)
+    for(auto& [key, idx] : m_chunkIndexMap)
     {
-        if(chunk.localPixelBounds.dirty)
-            chunk.recomputeLocalBounds();
+        Chunk& chunk = m_chunkPool.getChunk(idx);
+        const BoundsI& local = chunk.getLocalBounds();
+        if(!local.valid) continue; // empty chunk, skip
 
-        if(!chunk.localPixelBounds.valid)
-            return;
-
-        int worldMinX = chunkToWorld(chunk.cPosX, chunk.localPixelBounds.minX);
-        int worldMaxX = chunkToWorld(chunk.cPosX, chunk.localPixelBounds.maxX);
-        int worldMinY = chunkToWorld(chunk.cPosY, chunk.localPixelBounds.minY);
-        int worldMaxY = chunkToWorld(chunk.cPosY, chunk.localPixelBounds.maxY);
+        // convert coords
+        Key::XY pos = Key::unpack(key);
+        int worldMinX = Grid::chunkToWorld(pos.x, local.minX);
+        int worldMaxX = Grid::chunkToWorld(pos.x, local.maxX);
+        int worldMinY = Grid::chunkToWorld(pos.y, local.minY);
+        int worldMaxY = Grid::chunkToWorld(pos.y, local.maxY);
 
         m_pixelBounds.expand(worldMinX, worldMinY);
         m_pixelBounds.expand(worldMaxX, worldMaxY);
-    });
+    }
 
-    m_pixelBounds.dirty = false;
+    m_pixelBounds.dirty = false; // cleared
 }

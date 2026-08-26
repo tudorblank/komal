@@ -73,7 +73,7 @@ This allows only modified regions of the canvas to be synchronized with the GPU,
 ## Requirements
 
 - CMake 3.16+
-- C++17 compiler
+- C++20 compiler
 - Qt 6 (Widgets)
 
 ## Building

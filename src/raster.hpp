@@ -1,22 +1,39 @@
 #pragma once
-#include <stdio.h>
-#include <unordered_map>
+
 #include <vector>
+#include <unordered_map>
 #include <cstdint>
-#include <utility>
 #include <memory>
 
-class RasterData;
-
+// commons
 struct Vec2{
     float x, y;
 };
 
-struct RGBA { uint8_t r, g, b, a; };
+struct RGBA{
+    uint8_t r, g, b, a;
+};
 
-struct BoundsI
-{
-    int minX, minY, maxX, maxY;
+class Key{
+public:
+    // pack key
+    static inline uint64_t pack(int x, int y)
+    {
+        return (static_cast<uint64_t>(static_cast<uint32_t>(x)) << 32) |  static_cast<uint32_t>(y);
+    }
+    // unpack key
+    struct XY { int32_t x, y; };
+    static inline XY unpack(uint64_t key)
+    {
+        return {
+            static_cast<int32_t>(static_cast<uint32_t>(key >> 32)),
+            static_cast<int32_t>(static_cast<uint32_t>(key & 0xFFFFFFFFu))
+        };
+    }
+};
+
+struct BoundsI{
+    int minX = 0, minY = 0, maxX = -1, maxY = -1;
     bool valid = false;
     bool dirty = false;
 
@@ -49,123 +66,46 @@ struct BoundsI
     int posY()  const { return minY; }
 };
 
-class Chunk
-{
+// members
+class Chunk{
 public:
+    // 64 x 64 RGBA pixels storage
     static constexpr int SIZE = 64;
     RGBA data[SIZE * SIZE] = {};
     bool dirty = false;
-
-    // chunk grid location
-    int cPosX, cPosY;
-
-    // direct access to pixels in chunk
-    RGBA& pixel(int lx, int ly) { return data[ly * SIZE + lx]; }
-
-    // local pixel bbox
-    BoundsI localPixelBounds; // within chunk
-    void recomputeLocalBounds(); // chunk rescan + clean dirty bbox
-    const BoundsI& returnLocalBounds() // chunk local bounds getter, recompute if dirty
+    RGBA& pixel(int lx, int ly) { return data[ly * SIZE + lx]; } // pixel access
+    
+    // chunk bounds
+    BoundsI localBounds;
+    void recomputeLocalBounds();
+    const BoundsI& getLocalBounds() // chunk bounds getter
     {
-        if(localPixelBounds.dirty)
-            recomputeLocalBounds();
-        return localPixelBounds;
+        recomputeLocalBounds();
+        return localBounds;
     }
 
-    RasterData* rasterOwner = nullptr;
 };
 
-class ChunkPool // pool of blocks of chunks
-{
+class ChunkPool{
 public:
-    static constexpr uint32_t BLOCK_SIZE = 1024; // chunks per block (16KB * 1024 = 16MB/slab)
+    // blocks
+    static constexpr uint32_t BLOCK_SIZE = 1024; // chunks per block
+    std::vector<std::unique_ptr<Chunk[]>> m_blocks; // vector of pointers [chunk data]
+    void ensureBlockFor(uint32_t idx);
 
-    struct Handle
-    {
-        static constexpr uint32_t kInvalid = 0xFFFFFFFF; // "null"
-        uint32_t index = kInvalid;
-        bool valid() const { return index != kInvalid; }
-    };
+    // indices
+    std::vector<char> m_idxList; // 0 / 1 (validity)
+    std::vector<uint32_t> m_freeList;
+    uint32_t allocateIndex();
+    void freeIndex(uint32_t idx);
 
-    std::vector<bool> m_alive;
-    std::vector<uint32_t> m_freeIndices;
-    uint32_t m_indexCount = 0;
-
-    Handle allocateHandle()
-    {
-        uint32_t idx;
-        if(!m_freeIndices.empty())
-        {
-            idx = m_freeIndices.back();
-            m_freeIndices.pop_back();
-        }
-        else
-        {
-            idx = m_indexCount++;
-            ensureBlockFor(idx);
-        }
-        m_alive[idx] = true;
-        return { idx };
-    }
-    void freeHandle(Handle h)
-    {
-        if(!h.valid() || !m_alive[h.index]) return;
-        getChunk(h) = Chunk{};
-        m_alive[h.index] = false;
-        m_freeIndices.push_back(h.index);
-    }
-
-    std::vector<std::unique_ptr<Chunk[]>> m_blocks;
-    void ensureBlockFor(uint32_t idx)
-    {
-        size_t blockIDX = idx / BLOCK_SIZE;
-        while(m_blocks.size() <= blockIDX)
-        {
-            m_blocks.push_back(std::make_unique<Chunk[]>(BLOCK_SIZE));
-            m_alive.resize(m_blocks.size() * BLOCK_SIZE, false);
-        }
-    }
-    Chunk& getChunk(Handle h)
-    {
-        return m_blocks[h.index / BLOCK_SIZE][h.index % BLOCK_SIZE];
-    }
-    template<typename Fn>
-    void forEachAlive(Fn&& fn)
-    {
-        for(uint32_t i = 0; i < m_indexCount; i++)
-            if(m_alive[i])
-                fn(getChunk({i}));
-    }
-
-    size_t aliveChunkCount() const { return (size_t)m_indexCount - m_freeIndices.size(); }
-    size_t bytesAllocated() const { return (size_t)m_blocks.size() * BLOCK_SIZE * sizeof(Chunk); }
+    // chunk getter
+    Chunk& getChunk(uint32_t idx)
+    { return m_blocks[idx / BLOCK_SIZE][idx % BLOCK_SIZE]; }
 };
 
-class RasterData
-{
+class Grid{
 public:
-    RasterData()  {}
-    ~RasterData() {}
-    RasterData(const RasterData&) = delete;
-    RasterData& operator=(const RasterData&) = delete;
-    RasterData(RasterData&& other) noexcept;
-    RasterData& operator=(RasterData&& other) noexcept;
-
-    ChunkPool m_chunkPool;
-
-    std::unordered_map<uint64_t, ChunkPool::Handle> m_chunkHandleMap;
-    static uint64_t chunkKey(int chunkX, int chunkY)
-    { return (static_cast<uint64_t>(chunkX) << 32) | static_cast<uint32_t>(chunkY); }
-    std::vector<uint64_t> m_dirtyChunkKeys;
-
-    bool chunkExists(int chunkX, int chunkY);
-    Chunk& accessChunk(int chunkX, int chunkY);
-    Chunk& createChunk(int chunkX, int chunkY);
-    Chunk* tryGetChunk(int chunkX, int chunkY);
-
-    template<typename Fn>
-    void forEachChunk(Fn&& fn) { m_chunkPool.forEachAlive(std::forward<Fn>(fn)); }
-
     static inline int floorDiv(int x, int y)
     {
         if (y <= 0) return 0;
@@ -180,18 +120,34 @@ public:
     }
     static inline int chunkToWorld(int chunkCoord, int localCoord)
     { return chunkCoord * Chunk::SIZE + localCoord; }
+};
 
+class RasterData
+{
+public:
+    RasterData() {}
+    ~RasterData() {}
+
+    ChunkPool m_chunkPool;
+    std::unordered_map<uint64_t, uint32_t> m_chunkIndexMap; // key -> chunk index (pool)
+    std::vector<uint64_t> m_dirtyChunkKeys; // used outside of class
+
+    // chunk utilities
+    Chunk* readChunk(int chunkX, int chunkY);
+    Chunk& accessChunk(int chunkX, int chunkY);
+    void freeChunk(int chunkX, int chunkY);
+
+    // editing
     void setPixel(int worldX, int worldY, RGBA color);
     void erasePixel(int worldX, int worldY);
-    void markPixelErased(Chunk& chunk, int lx, int ly);
+    void markPixelErased(Chunk& chunk, int chunkX, int chunkY, int lx, int ly);
 
-    BoundsI m_chunkBounds;
+    // bounds
     BoundsI m_pixelBounds;
     void recomputePixelBounds();
-    BoundsI& returnPixelBounds()
+    BoundsI& getPixelBounds()
     {
-        if(m_pixelBounds.dirty)
-            recomputePixelBounds();
+        if(m_pixelBounds.dirty) recomputePixelBounds();
         return m_pixelBounds;
     }
 };

@@ -58,18 +58,20 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
     m_layers.emplace_back(); // layer 1 - draw
 
     m_compositor = CompositorNode::create();
+    m_compositor->setMain(true); // master compositor
+
     for(auto& raster : m_layers)
     {
         auto node = RasterRootNode::create(&raster);
-        m_compositor->addLayer(node, 1.0f, BlendMode::Normal, true);
+        m_compositor->addLayer(node);
         m_layerNodes.push_back(node);
     }
 
-    m_compositor->setLayerOpacity(1, 0.5f);
+    m_layerNodes[1]->m_opacity = 0.5f;
 
     syncCompositedOutput();
 
-    render(); // first render
+    renderFrame(); // first render
 
     // timer
     m_renderTimer = new QTimer(this);
@@ -87,7 +89,7 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
         }
 
         syncCompositedOutput();
-        render();
+        renderFrame();
 
         m_needsRender = false;
     });
@@ -105,7 +107,7 @@ void CanvasWindow::resizeEvent(QResizeEvent*)
     m_camera.update((float)width(), (float)height());
     m_camera.updateScreen(width(), height());
     
-    render();
+    markDirty();
 }
 void CanvasWindow::mousePressEvent(QMouseEvent* e)
 {
@@ -231,29 +233,28 @@ void CanvasWindow::syncCompositedOutput()
         RasterData& raster = m_layers[i];
         for(uint64_t key : raster.m_dirtyChunkKeys)
         {
-            int32_t chunkX = static_cast<int32_t>(static_cast<uint32_t>(key >> 32));
-            int32_t chunkY = static_cast<int32_t>(static_cast<uint32_t>(key & 0xFFFFFFFFu));
+            Key::XY pos = Key::unpack(key);
 
-            m_layerNodes[i]->invalidateTile(chunkX, chunkY);
-            dirtyTiles.emplace_back(chunkX, chunkY);
+            m_layerNodes[i]->invalidateTile(pos.x, pos.y);
+            dirtyTiles.emplace_back(pos.x, pos.y);
 
-            auto it = raster.m_chunkHandleMap.find(key);
-            if(it != raster.m_chunkHandleMap.end())
+            auto it = raster.m_chunkIndexMap.find(key);
+            if(it != raster.m_chunkIndexMap.end())
                 raster.m_chunkPool.getChunk(it->second).dirty = false;
         }
         raster.m_dirtyChunkKeys.clear();
     }
 
-    // structural compositor change -> rebake
+    // structural change -> rebake everything under current bounds
     if(m_compositor->needsGPUBake())
     {
-        BoundsI bounds = m_compositor->bounds();
+        BoundsI bounds = m_compositor->computeBounds();
         if(bounds.valid)
         {
-            int minCX = RasterData::worldToChunk(bounds.minX);
-            int maxCX = RasterData::worldToChunk(bounds.maxX);
-            int minCY = RasterData::worldToChunk(bounds.minY);
-            int maxCY = RasterData::worldToChunk(bounds.maxY);
+            int minCX = Grid::worldToChunk(bounds.minX);
+            int maxCX = Grid::worldToChunk(bounds.maxX);
+            int minCY = Grid::worldToChunk(bounds.minY);
+            int maxCY = Grid::worldToChunk(bounds.maxY);
 
             for(int cy = minCY; cy <= maxCY; cy++)
                 for(int cx = minCX; cx <= maxCX; cx++)
@@ -264,37 +265,40 @@ void CanvasWindow::syncCompositedOutput()
 
     for(auto [chunkX, chunkY] : dirtyTiles)
     {
-        uint64_t key = RasterData::chunkKey(chunkX, chunkY);
-        const std::vector<RGBA>& tile = m_compositor->getTile(chunkX, chunkY);
+        uint64_t key = Key::pack(chunkX, chunkY);
+        const Chunk& tile = m_compositor->getTileBuffer(chunkX, chunkY);
 
         m_gfx.m_TEXSYS.syncChunk(0, key,
             (float)(chunkX * Chunk::SIZE), (float)(chunkY * Chunk::SIZE),
-            tile.data());
+            tile.data);
     }
 }
 
 void CanvasWindow::interpDraw(RasterData& inputRaster, RGBA color)
 {
-    float x0 = m_mouse.prevWorld.x;
-    float y0 = m_mouse.prevWorld.y;
-    float x1 = m_mouse.world.x;
-    float y1 = m_mouse.world.y;
-    
-    float dx = x1 - x0, dy = y1 - y0;
-    float dist = std::sqrt(dx*dx + dy*dy);
-    int steps = std::max(1, (int)std::ceil(dist));
+    int x0 = (int)std::floor(m_mouse.prevWorld.x);
+    int y0 = (int)std::floor(m_mouse.prevWorld.y);
+    int x1 = (int)std::floor(m_mouse.world.x);
+    int y1 = (int)std::floor(m_mouse.world.y);
 
-    for(int i = 0; i <= steps; i++)
+    int dx = std::abs(x1 - x0), sx = (x0 < x1) ? 1 : -1;
+    int dy = -std::abs(y1 - y0), sy = (y0 < y1) ? 1 : -1;
+    int err = dx + dy;
+
+    int x = x0, y = y0;
+    while(true)
     {
-        float t = (float)i / steps;
-        int px = (int)(x0 + dx * t);
-        int py = (int)(y0 + dy * t);
-        inputRaster.setPixel(px, py, color);
+        inputRaster.setPixel(x, y, color);
+        if(x == x1 && y == y1) break;
+
+        int e2 = 2 * err;
+        if(e2 >= dy) { err += dy; x += sx; }
+        if(e2 <= dx) { err += dx; y += sy; }
     }
 }
 
 // main
-void CanvasWindow::render()
+void CanvasWindow::renderFrame()
 {
     if(!m_gfx.m_initialized) return;
 
@@ -304,7 +308,7 @@ void CanvasWindow::render()
     // for each layer, store rasterdata bounds in [boxes]
     for(RasterData& layer : m_layers)
     {
-        BoundsI& b = layer.returnPixelBounds();
+        BoundsI& b = layer.getPixelBounds();
         if(b.valid) boxes.push_back(b);
     }
 

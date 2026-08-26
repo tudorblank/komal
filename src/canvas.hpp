@@ -56,7 +56,7 @@ private:
 
     void syncCompositedOutput();
     void interpDraw(RasterData& inputRaster, RGBA color);
-    void render();
+    void renderFrame();
     
     QTimer* m_renderTimer = nullptr;
     bool m_needsRender = false;
