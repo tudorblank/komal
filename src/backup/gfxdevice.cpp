@@ -1,7 +1,5 @@
 #include "gfxdevice.hpp"
 
-#include <cmath>
-
 // commons
 #ifdef _WIN32
 void GFXDevice::init(HWND hwnd)
@@ -17,7 +15,7 @@ void GFXDevice::init(HWND hwnd)
     surfDesc.nextInChain = (WGPUChainedStruct*)&hwndSrc;
     m_surface = wgpuInstanceCreateSurface(m_instance, &surfDesc);
 
-    initCommon();
+    initCommon(); // adapter/device/queue request, factored out below
 }
 #else
 void GFXDevice::init(const char* platform, void* display, void* handle)
@@ -219,46 +217,12 @@ void GFXDevice::renderPass(uint32_t width, uint32_t height, const Camera& cam)
     wgpuRenderPassEncoderSetPipeline(pass, m_TEXSYS.m_pipeline);
     wgpuRenderPassEncoderSetVertexBuffer(pass, 0, m_TEXSYS.m_vertBuff, 0, WGPU_WHOLE_SIZE);
     wgpuRenderPassEncoderSetBindGroup(pass, 0, cam.m_bindGroup, 0, nullptr);
-
-    float viewMinX = (0.0f            - cam.pan.x) / cam.zoom;
-    float viewMinY = (0.0f            - cam.pan.y) / cam.zoom;
-    float viewMaxX = ((float)width  - cam.pan.x) / cam.zoom;
-    float viewMaxY = ((float)height - cam.pan.y) / cam.zoom;
-
-    int minCX = Grid::worldToChunk((int)std::floor(viewMinX)) - 1;
-    int maxCX = Grid::worldToChunk((int)std::floor(viewMaxX)) + 1;
-    int minCY = Grid::worldToChunk((int)std::floor(viewMinY)) - 1;
-    int maxCY = Grid::worldToChunk((int)std::floor(viewMaxY)) + 1;
-
-    size_t visibleTileCount = (size_t)(maxCX - minCX + 1) * (size_t)(maxCY - minCY + 1);
-
     for(auto& layerMap : m_TEXSYS.m_chunkObjects)
     {
-        if(layerMap.size() <= visibleTileCount)
+        for(auto& [key, texObj] : layerMap)
         {
-            for(auto& [key, texObj] : layerMap)
-            {
-                if(texObj.x + texObj.w < viewMinX || texObj.x > viewMaxX ||
-                   texObj.y + texObj.h < viewMinY || texObj.y > viewMaxY)
-                    continue;
-
-                wgpuRenderPassEncoderSetBindGroup(pass, 1, texObj.bindGroup, 0, nullptr);
-                wgpuRenderPassEncoderDrawIndexed(pass, 6, 1, 0, 0, 0);
-            }
-        }
-        else
-        {
-            for(int cy = minCY; cy <= maxCY; cy++)
-            {
-                for(int cx = minCX; cx <= maxCX; cx++)
-                {
-                    auto it = layerMap.find(Key::pack(cx, cy));
-                    if(it == layerMap.end()) continue;
-
-                    wgpuRenderPassEncoderSetBindGroup(pass, 1, it->second.bindGroup, 0, nullptr);
-                    wgpuRenderPassEncoderDrawIndexed(pass, 6, 1, 0, 0, 0);
-                }
-            }
+            wgpuRenderPassEncoderSetBindGroup(pass, 1, texObj.bindGroup, 0, nullptr);
+            wgpuRenderPassEncoderDrawIndexed(pass, 6, 1, 0, 0, 0);
         }
     }
 

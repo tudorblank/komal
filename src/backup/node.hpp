@@ -42,8 +42,6 @@ public:
     virtual RGBA computePixel(int worldX, int worldY) = 0;
     virtual BoundsI computeBounds() = 0;
 
-    virtual Chunk* tryGetTileChunk(int /*tileX*/, int /*tileY*/) { return nullptr; }
-
     float m_opacity = 1.0f;
     float m_fill = 1.0f;
     RGBA sample(int worldX, int worldY) // for opacity / fill
@@ -107,10 +105,6 @@ public:
         if(!chunk) return transparent();
 
         return chunk->pixel(Grid::worldToLocal(worldX), Grid::worldToLocal(worldY));
-    }
-    Chunk* tryGetTileChunk(int tileX, int tileY) override
-    {
-        return m_inputRaster ? m_inputRaster->readChunk(tileX, tileY) : nullptr;
     }
     BoundsI computeBounds() override
     {
@@ -254,8 +248,6 @@ public:
         if(!m_cache) setMain(true);
         return m_cache->getOrCreateTile(*this, tileX, tileY);
     }
-
-    void bakeTile(Chunk& out, int tileX, int tileY);
 };
 
 // ==== CHANNEL SPLIT NODE ====

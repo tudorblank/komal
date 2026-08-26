@@ -1,7 +1,5 @@
 #include "canvas.hpp"
 
-#include <QDebug>
-
 #ifndef _WIN32
   #include <QGuiApplication>
   #include <qpa/qplatformnativeinterface.h>
@@ -76,7 +74,6 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
     renderFrame(); // first render
 
     // timer
-    m_perfLogTimer.start();
     m_renderTimer = new QTimer(this);
     m_renderTimer->setInterval(8);  // ~125 Hz
         connect(m_renderTimer, &QTimer::timeout, this, [this]() {
@@ -91,21 +88,10 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
             m_camera.update((float)width(), (float)height());
         }
 
-        QElapsedTimer stepTimer;
-
-        stepTimer.start();
-        size_t tileCount = syncCompositedOutput();
-        m_perf.syncNs += stepTimer.nsecsElapsed();
-        m_perf.syncTileCount += tileCount;
-
-        stepTimer.restart();
+        syncCompositedOutput();
         renderFrame();
-        m_perf.renderNs += stepTimer.nsecsElapsed();
-        m_perf.frameCalls++;
 
         m_needsRender = false;
-
-        logPerfIfDue();
     });
     m_renderTimer->start();
 }
@@ -194,10 +180,7 @@ void CanvasWindow::mouseMoveEvent(QMouseEvent* e)
 
     if(m_mouse.leftDown)
     {
-        QElapsedTimer t; t.start();
         interpDraw(m_layers[1], {255,255,255,255});
-        m_perf.interpDrawNs += t.nsecsElapsed();
-        m_perf.interpDrawCalls++;
         markDirty();
     }
     else if(m_mouse.rightDown)
@@ -241,7 +224,7 @@ void CanvasWindow::wheelEvent(QWheelEvent* e)
 }
 
 // raster data core
-size_t CanvasWindow::syncCompositedOutput()
+void CanvasWindow::syncCompositedOutput()
 {
     std::vector<std::pair<int,int>> dirtyTiles;
 
@@ -289,8 +272,6 @@ size_t CanvasWindow::syncCompositedOutput()
             (float)(chunkX * Chunk::SIZE), (float)(chunkY * Chunk::SIZE),
             tile.data);
     }
-
-    return dirtyTiles.size();
 }
 
 void CanvasWindow::interpDraw(RasterData& inputRaster, RGBA color)
@@ -314,30 +295,6 @@ void CanvasWindow::interpDraw(RasterData& inputRaster, RGBA color)
         if(e2 >= dy) { err += dy; x += sx; }
         if(e2 <= dx) { err += dx; y += sy; }
     }
-}
-
-void CanvasWindow::logPerfIfDue()
-{
-    if(m_perfLogTimer.elapsed() < 1000) return;
-
-    double interpDrawAvgMs = m_perf.interpDrawCalls
-        ? (m_perf.interpDrawNs / 1e6) / m_perf.interpDrawCalls : 0.0;
-    double syncAvgMsPerFrame = m_perf.frameCalls
-        ? (m_perf.syncNs / 1e6) / m_perf.frameCalls : 0.0;
-    double syncAvgMsPerTile = m_perf.syncTileCount
-        ? (m_perf.syncNs / 1e6) / (double)m_perf.syncTileCount : 0.0;
-    double renderAvgMs = m_perf.frameCalls
-        ? (m_perf.renderNs / 1e6) / m_perf.frameCalls : 0.0;
-
-    qDebug("perf/1s | interpDraw: n=%d avg=%.3fms  |  sync: frames=%d avg=%.3fms/frame "
-           "(%zu tiles, %.3fms/tile)  |  render: avg=%.3fms",
-           m_perf.interpDrawCalls, interpDrawAvgMs,
-           m_perf.frameCalls, syncAvgMsPerFrame,
-           m_perf.syncTileCount, syncAvgMsPerTile,
-           renderAvgMs);
-
-    m_perf = PerfStats{};
-    m_perfLogTimer.restart();
 }
 
 // main

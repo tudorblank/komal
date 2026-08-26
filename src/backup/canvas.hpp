@@ -28,19 +28,6 @@ struct MouseHandler{
     bool middleDown = false;
 };
 
-// Rolling accumulators, flushed to qDebug once per second - see mouseMoveEvent
-// and the render timer lambda in canvas.cpp.
-struct PerfStats{
-    qint64 interpDrawNs = 0;
-    int    interpDrawCalls = 0;
-
-    qint64 syncNs = 0;
-    size_t syncTileCount = 0;
-
-    qint64 renderNs = 0;
-    int    frameCalls = 0;
-};
-
 class CanvasWindow : public QWindow{
     Q_OBJECT
 public:
@@ -67,17 +54,11 @@ private:
     std::vector<std::shared_ptr<RasterRootNode>> m_layerNodes;
     std::shared_ptr<CompositorNode> m_compositor;
 
-    size_t syncCompositedOutput(); // returns dirty-tile count, for perf logging
+    void syncCompositedOutput();
     void interpDraw(RasterData& inputRaster, RGBA color);
     void renderFrame();
     
     QTimer* m_renderTimer = nullptr;
     bool m_needsRender = false;
     void markDirty() { m_needsRender = true; }
-
-    // perf instrumentation - see canvas.cpp; safe to strip once we've found
-    // the real bottleneck
-    PerfStats m_perf;
-    QElapsedTimer m_perfLogTimer;
-    void logPerfIfDue();
 };

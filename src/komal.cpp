@@ -120,7 +120,7 @@ komal::komal(QWidget *parent)
 
         toolbar->addSeparator();
 
-        connect(toolGroup, &QActionGroup::triggered, this, [=](QAction *active)
+        connect(toolGroup, &QActionGroup::triggered, this, [this, toolGroup](QAction *active)
         {
             for (QAction *a : toolGroup->actions())
                 a->setEnabled(a != active);
