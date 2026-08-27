@@ -11,7 +11,8 @@
 #include <webgpu.h>
 #include "gfx/gfxdevice.hpp"
 #include "raster.hpp"
-#include "node.hpp"
+#include "node/node-base.hpp"
+#include "node/node-compositor.hpp"
 
 #include <vector>
 #include <algorithm>
@@ -28,8 +29,6 @@ struct MouseHandler{
     bool middleDown = false;
 };
 
-// Rolling accumulators, flushed to qDebug once per second - see mouseMoveEvent
-// and the render timer lambda in canvas.cpp.
 struct PerfStats{
     qint64 interpDrawNs = 0;
     int    interpDrawCalls = 0;
@@ -75,8 +74,6 @@ private:
     bool m_needsRender = false;
     void markDirty() { m_needsRender = true; }
 
-    // perf instrumentation - see canvas.cpp; safe to strip once we've found
-    // the real bottleneck
     PerfStats m_perf;
     QElapsedTimer m_perfLogTimer;
     void logPerfIfDue();

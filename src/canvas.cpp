@@ -36,7 +36,6 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
 
     if(!m_gfx.m_initialized) return;
     m_gfx.configSurface(width(), height());
-
     m_gfx.passContext(m_camera);
 
     // camera
@@ -51,6 +50,7 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
     m_gfx.m_TEXSYS.createRenderPipeline(m_camera.m_bindLayout);
     m_gfx.m_LINSYS.createRenderPipeline(m_camera.m_screenBindLayout); 
     
+    // layers
     m_layers.emplace_back();
     RasterData& background = m_layers[0];
     for(int y = 0; y < 200; y++)
@@ -60,7 +60,7 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
     m_layers.emplace_back(); // layer 1 - draw
 
     m_compositor = CompositorNode::create();
-    m_compositor->setMain(true); // master compositor
+    m_compositor->enableCache(true); // master compositor
 
     for(auto& raster : m_layers)
     {
@@ -73,7 +73,8 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
 
     syncCompositedOutput();
 
-    renderFrame(); // first render
+    // first render
+    renderFrame(); 
 
     // timer
     m_perfLogTimer.start();
@@ -283,7 +284,7 @@ size_t CanvasWindow::syncCompositedOutput()
     for(auto [chunkX, chunkY] : dirtyTiles)
     {
         uint64_t key = Key::pack(chunkX, chunkY);
-        const Chunk& tile = m_compositor->getTileBuffer(chunkX, chunkY);
+        const Chunk& tile = m_compositor->getCachedTile(chunkX, chunkY);
 
         m_gfx.m_TEXSYS.syncChunk(0, key,
             (float)(chunkX * Chunk::SIZE), (float)(chunkY * Chunk::SIZE),
@@ -340,7 +341,7 @@ void CanvasWindow::logPerfIfDue()
     m_perfLogTimer.restart();
 }
 
-// main
+// render
 void CanvasWindow::renderFrame()
 {
     if(!m_gfx.m_initialized) return;
