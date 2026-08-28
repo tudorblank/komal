@@ -24,8 +24,14 @@ struct ChunkUniform{
 
 struct ChunkObject{
     float x, y, w, h;
-    WGPUBuffer modelBuffer = nullptr;
-    WGPUBindGroup bindGroup = nullptr; 
+};
+
+struct ChunkInstance{
+    float posX, posY;
+    float scaleX, scaleY;
+    float uvOffset[2];
+    float uvScale[2];
+    float opacity;
 };
 
 struct ChunkSlot{
@@ -36,6 +42,8 @@ struct ChunkSlot{
 struct AtlasPage{
     WGPUTexture texture = nullptr;
     WGPUTextureView view = nullptr;
+    WGPUBindGroup bindGroup = nullptr;
+    WGPUBuffer instanceBuffer = nullptr;
     std::vector<bool> slotUsed; 
     int usedSlots = 0;
     static constexpr int PAGE_SIZE = 4096;
@@ -43,6 +51,21 @@ struct AtlasPage{
     static constexpr int SLOTS_TOTAL = SLOTS_PER_ROW * SLOTS_PER_ROW;
     bool isFull() const { return usedSlots >= SLOTS_TOTAL; }
 };
+
+inline ChunkInstance makeChunkInstance(const ChunkObject& obj, const ChunkSlot& slot)
+{
+    ChunkInstance inst{};
+    inst.posX = obj.x + obj.w * 0.5f;
+    inst.posY = obj.y + obj.h * 0.5f;
+    inst.scaleX = obj.w;
+    inst.scaleY = obj.h;
+    inst.uvOffset[0] = (float)(slot.slotX * Chunk::SIZE) / AtlasPage::PAGE_SIZE;
+    inst.uvOffset[1] = (float)(slot.slotY * Chunk::SIZE) / AtlasPage::PAGE_SIZE;
+    inst.uvScale[0] = (float)Chunk::SIZE / AtlasPage::PAGE_SIZE;
+    inst.uvScale[1] = (float)Chunk::SIZE / AtlasPage::PAGE_SIZE;
+    inst.opacity = 1.0f;
+    return inst;
+}
 
 struct AtlasSet{
     std::vector<AtlasPage> pages;
@@ -59,13 +82,10 @@ public:
     void createRenderPipeline(WGPUBindGroupLayout camLayout);
 
     //// atlas
-    // sampler
     WGPUSampler m_atlasSampler = nullptr;
     void initAtlasSampler();
-    // storage
-    std::vector<AtlasSet> m_atlases; // storage of atlases (1 atlas per layer)
-    AtlasSet& atlasForLayer(size_t layerIndex); // link function between layer - atlas
-    // internal management
+    std::vector<AtlasSet> m_atlases; // 1 atlas per layer
+    AtlasSet& atlasForLayer(size_t layerIndex);
     AtlasPage createAtlasPage();
     ChunkSlot allocateSlot(AtlasSet& atlas, uint64_t chunkKey);
     void freeSlot(AtlasSet& atlas, uint64_t chunkKey);

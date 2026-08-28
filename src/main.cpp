@@ -1,4 +1,4 @@
-#include "komal.hpp"
+#include "gui.hpp"
 
 #include <QApplication>
 #include <QLocale>

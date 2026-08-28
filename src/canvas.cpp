@@ -43,7 +43,7 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
     m_camera.update((float)width(), (float)height());
     m_camera.createScreen(width(), height());
 
-    // pipelines
+    // gfx pipelines
     m_gfx.initIndexBuffer();
     m_gfx.m_COLSYS.createRenderPipeline(m_camera.m_bindLayout);
     m_gfx.m_TEXSYS.initAtlasSampler();
@@ -51,25 +51,28 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
     m_gfx.m_LINSYS.createRenderPipeline(m_camera.m_screenBindLayout); 
     
     // layers
-    m_layers.emplace_back();
-    RasterData& background = m_layers[0];
+    m_rawRasters.emplace_back();
+    RasterData& backgroundSquare = m_rawRasters[0];
     for(int y = 0; y < 200; y++)
         for(int x = 0; x < 200; x++)
-            background.setPixel(x, y, RGBA{245, 40, 145, 255});
+            backgroundSquare.setPixel(x, y, RGBA{245, 40, 145, 255});
 
-    m_layers.emplace_back(); // layer 1 - draw
+    m_rawRasters.emplace_back(); // layer 1 - draw
 
-    m_compositor = CompositorNode::create();
-    m_compositor->enableCache(true); // master compositor
+    m_masterCompositor = CompositorNode::create();
+    m_masterCompositor->enableCache(true);
 
-    for(auto& raster : m_layers)
+    for(auto& raster : m_rawRasters)
     {
         auto node = RasterRootNode::create(&raster);
-        m_compositor->addLayer(node);
-        m_layerNodes.push_back(node);
+        m_rasterNodes.push_back(node);
     }
 
-    m_layerNodes[1]->m_opacity = 0.5f;
+    m_moveNode = MoveNode::create(m_rasterNodes[0], 50, 50);
+    m_masterCompositor->addLayer(m_moveNode);
+    m_masterCompositor->addLayer(m_rasterNodes[1]);
+
+    m_rasterNodes[1]->m_opacity = 0.5f;
 
     syncCompositedOutput();
 
@@ -82,6 +85,7 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
     m_renderTimer->setInterval(8);  // ~125 Hz
         connect(m_renderTimer, &QTimer::timeout, this, [this]() {
         if(!m_needsRender) return;
+        m_needsRender = false;
 
         if(m_camera.panDirty)
         {
@@ -104,157 +108,21 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
         m_perf.renderNs += stepTimer.nsecsElapsed();
         m_perf.frameCalls++;
 
-        m_needsRender = false;
-
         logPerfIfDue();
     });
     m_renderTimer->start();
 }
 
-// events
-void CanvasWindow::resizeEvent(QResizeEvent*)
-{
-    if(!m_gfx.m_initialized) return;
-    if(width() <= 0 || height() <= 0) return;
-
-    m_gfx.configSurface(width(), height());
-
-    m_camera.update((float)width(), (float)height());
-    m_camera.updateScreen(width(), height());
-    
-    markDirty();
-}
-void CanvasWindow::mousePressEvent(QMouseEvent* e)
-{
-    if(e->button() == Qt::LeftButton)
-    {
-        m_mouse.leftDown = true;
-        m_mouse.screen.x = e->position().x();
-        m_mouse.screen.y = e->position().y();
-        m_mouse.world.x = (e->position().x() - m_camera.pan.x) / m_camera.zoom;
-        m_mouse.world.y = (e->position().y() - m_camera.pan.y) / m_camera.zoom;
-        m_mouse.prevWorld = m_mouse.world;
-    }
-    else if(e->button() == Qt::RightButton)
-    {
-        m_mouse.rightDown = true;
-        m_mouse.screen.x = e->position().x();
-        m_mouse.screen.y = e->position().y();
-        m_mouse.world.x = (e->position().x() - m_camera.pan.x) / m_camera.zoom;
-        m_mouse.world.y = (e->position().y() - m_camera.pan.y) / m_camera.zoom;
-        m_mouse.prevWorld = m_mouse.world;
-    }
-    else if(e->button() == Qt::MiddleButton)
-    {
-        m_mouse.middleDown = true;
-        m_mouse.screen.x = e->position().x();
-        m_mouse.screen.y = e->position().y();
-        m_mouse.world.x = (e->position().x() - m_camera.pan.x) / m_camera.zoom;
-        m_mouse.world.y = (e->position().y() - m_camera.pan.y) / m_camera.zoom;
-        m_mouse.prevWorld = m_mouse.world;
-    }
-}
-void CanvasWindow::mouseReleaseEvent(QMouseEvent* e)
-{
-    if(e->button() == Qt::LeftButton)
-    {
-        m_mouse.leftDown = false;
-        markDirty();
-    }
-    else if(e->button() == Qt::RightButton)
-    {
-        m_mouse.rightDown = false;
-        markDirty();
-    }
-    else if(e->button() == Qt::MiddleButton)
-    {
-        m_mouse.middleDown = false;
-        markDirty();
-    }
-}
-void CanvasWindow::mouseMoveEvent(QMouseEvent* e)
-{
-    float x = e->position().x();
-    float y = e->position().y();
-    float deltaX = x - m_mouse.screen.x;
-    float deltaY = y - m_mouse.screen.y;
-
-    if(m_mouse.middleDown)
-    {
-        m_camera.pendingPan.x += deltaX;
-        m_camera.pendingPan.y += deltaY;
-
-        m_camera.panDirty = true;
-        markDirty();
-    }
-
-    m_mouse.screen.x = x;
-    m_mouse.screen.y = y;
-    m_mouse.world.x = (x - m_camera.pan.x) / m_camera.zoom;
-    m_mouse.world.y = (y - m_camera.pan.y) / m_camera.zoom;
-
-    if(m_mouse.leftDown)
-    {
-        QElapsedTimer t; t.start();
-        interpDraw(m_layers[1], {255,255,255,255});
-        m_perf.interpDrawNs += t.nsecsElapsed();
-        m_perf.interpDrawCalls++;
-        markDirty();
-    }
-    else if(m_mouse.rightDown)
-    {
-        m_layers[1].erasePixel((int)m_mouse.world.x, (int)m_mouse.world.y);
-        markDirty();
-    }
-
-    m_mouse.prevWorld = m_mouse.world; 
-}
-void CanvasWindow::wheelEvent(QWheelEvent* e)
-{
-    if(e->modifiers() & Qt::ControlModifier)
-    {
-        float delta = e->angleDelta().y();
-        float zoomFactor = (delta > 0) ? 1.1f : 0.9f;
-        float newZoom = qBound(0.05f, m_camera.zoom * zoomFactor, 50.0f);
-        if(newZoom == m_camera.zoom) return;
-
-        float actualFactor = newZoom / m_camera.zoom;
-
-        // anchor zoom to cursor pos
-        float mx = e->position().x();
-        float my = e->position().y();
-        m_camera.pan.x = mx + (m_camera.pan.x - mx) * actualFactor;
-        m_camera.pan.y = my + (m_camera.pan.y - my) * actualFactor;
-
-        m_camera.zoom = newZoom;
-
-        m_camera.update((float)width(), (float)height());
-        markDirty();
-    }
-    else
-    {
-        m_camera.pan.x += e->angleDelta().x() * 0.2f;
-        m_camera.pan.y += e->angleDelta().y() * 0.2f;
-
-        m_camera.update((float)width(), (float)height());
-        markDirty();
-    }
-}
-
 // raster data core
 size_t CanvasWindow::syncCompositedOutput()
 {
-    std::vector<std::pair<int,int>> dirtyTiles;
-
-    for(size_t i = 0; i < m_layers.size(); i++)
+    for(size_t i = 0; i < m_rawRasters.size(); i++)
     {
-        RasterData& raster = m_layers[i];
+        RasterData& raster = m_rawRasters[i];
         for(uint64_t key : raster.m_dirtyChunkKeys)
         {
             Key::XY pos = Key::unpack(key);
-
-            m_layerNodes[i]->invalidateTile(pos.x, pos.y);
-            dirtyTiles.emplace_back(pos.x, pos.y);
+            m_rasterNodes[i]->invalidateTile(pos.x, pos.y);
 
             auto it = raster.m_chunkIndexMap.find(key);
             if(it != raster.m_chunkIndexMap.end())
@@ -263,35 +131,57 @@ size_t CanvasWindow::syncCompositedOutput()
         raster.m_dirtyChunkKeys.clear();
     }
 
-    // structural change -> rebake everything under current bounds
-    if(m_compositor->needsGPUBake())
+    for(auto [cx, cy] : m_masterCompositor->drainDirtySyncTiles())
+        m_deferredSyncKeys.insert(Key::pack(cx, cy));
+
+    if(m_masterCompositor->needsGPUBake())
     {
-        BoundsI bounds = m_compositor->computeBounds();
+        BoundsI bounds = m_masterCompositor->computeBounds();
         if(bounds.valid)
         {
             int minCX = Grid::worldToChunk(bounds.minX);
             int maxCX = Grid::worldToChunk(bounds.maxX);
             int minCY = Grid::worldToChunk(bounds.minY);
             int maxCY = Grid::worldToChunk(bounds.maxY);
-
             for(int cy = minCY; cy <= maxCY; cy++)
                 for(int cx = minCX; cx <= maxCX; cx++)
-                    dirtyTiles.emplace_back(cx, cy);
+                    m_deferredSyncKeys.insert(Key::pack(cx, cy));
         }
-        m_compositor->markGPUBaked();
+        m_masterCompositor->markGPUBaked();
     }
 
-    for(auto [chunkX, chunkY] : dirtyTiles)
+    int viewMinCX = Grid::worldToChunk((int)std::floor(-m_camera.pan.x / m_camera.zoom));
+    int viewMaxCX = Grid::worldToChunk((int)std::ceil((width()  - m_camera.pan.x) / m_camera.zoom));
+    int viewMinCY = Grid::worldToChunk((int)std::floor(-m_camera.pan.y / m_camera.zoom));
+    int viewMaxCY = Grid::worldToChunk((int)std::ceil((height() - m_camera.pan.y) / m_camera.zoom));
+
+    QElapsedTimer budgetTimer;
+    budgetTimer.start();
+    constexpr qint64 kSyncBudgetMs = 4; // leave headroom in the ~8ms tick for render + overhead
+
+    size_t processed = 0;
+    for(auto it = m_deferredSyncKeys.begin(); it != m_deferredSyncKeys.end(); )
     {
-        uint64_t key = Key::pack(chunkX, chunkY);
-        const Chunk& tile = m_compositor->getCachedTile(chunkX, chunkY);
+        if(budgetTimer.elapsed() >= kSyncBudgetMs) break;
 
-        m_gfx.m_TEXSYS.syncChunk(0, key,
-            (float)(chunkX * Chunk::SIZE), (float)(chunkY * Chunk::SIZE),
-            tile.data);
+        Key::XY pos = Key::unpack(*it);
+        bool visible = pos.x >= viewMinCX && pos.x <= viewMaxCX
+                    && pos.y >= viewMinCY && pos.y <= viewMaxCY;
+
+        if(!visible) { ++it; continue; }
+
+        const Chunk& tile = m_masterCompositor->getCachedTile(pos.x, pos.y);
+        m_gfx.m_TEXSYS.syncChunk(0, *it,
+            (float)(pos.x * Chunk::SIZE), (float)(pos.y * Chunk::SIZE), tile.data);
+
+        processed++;
+        it = m_deferredSyncKeys.erase(it);
     }
 
-    return dirtyTiles.size();
+    if(!m_deferredSyncKeys.empty())
+        markDirty(); // keep draining the backlog next tick
+
+    return processed;
 }
 
 void CanvasWindow::interpDraw(RasterData& inputRaster, RGBA color)
@@ -317,6 +207,28 @@ void CanvasWindow::interpDraw(RasterData& inputRaster, RGBA color)
     }
 }
 
+// render
+void CanvasWindow::renderFrame()
+{
+    if(!m_gfx.m_initialized) return;
+
+    std::vector<BoundsI> boxes;
+    boxes.reserve(m_rawRasters.size()); // boxes count = layer count
+
+    // for each layer, store rasterdata bounds in [boxes]
+    for(RasterData& layer : m_rawRasters)
+    {
+        BoundsI& b = layer.getPixelBounds();
+        if(b.valid) boxes.push_back(b);
+    }
+
+    m_gfx.m_LINSYS.updateBoundsLines(boxes, m_camera.pan, m_camera.zoom);
+    m_gfx.m_showBBOXs = !boxes.empty();
+
+    m_gfx.renderPass(width(), height(), m_camera);
+}
+
+// debug
 void CanvasWindow::logPerfIfDue()
 {
     if(m_perfLogTimer.elapsed() < 1000) return;
@@ -336,28 +248,9 @@ void CanvasWindow::logPerfIfDue()
            m_perf.frameCalls, syncAvgMsPerFrame,
            m_perf.syncTileCount, syncAvgMsPerTile,
            renderAvgMs);
+    qDebug() << "raster1 chunk count:" << m_rawRasters[1].m_chunkIndexMap.size();
+    qDebug() << "raster0 chunk count:" << m_rawRasters[0].m_chunkIndexMap.size();
 
     m_perf = PerfStats{};
     m_perfLogTimer.restart();
-}
-
-// render
-void CanvasWindow::renderFrame()
-{
-    if(!m_gfx.m_initialized) return;
-
-    std::vector<BoundsI> boxes;
-    boxes.reserve(m_layers.size()); // boxes count = layer count
-
-    // for each layer, store rasterdata bounds in [boxes]
-    for(RasterData& layer : m_layers)
-    {
-        BoundsI& b = layer.getPixelBounds();
-        if(b.valid) boxes.push_back(b);
-    }
-
-    m_gfx.m_LINSYS.updateBoundsLines(boxes, m_camera.pan, m_camera.zoom);
-    m_gfx.m_showBBOXs = !boxes.empty();
-
-    m_gfx.renderPass(width(), height(), m_camera);
 }

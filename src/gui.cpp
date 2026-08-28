@@ -1,4 +1,4 @@
-#include "komal.hpp"
+#include "gui.hpp"
 #include "canvas.hpp"
 
 #include <QApplication>
@@ -82,6 +82,40 @@ komal::komal(QWidget *parent)
                 background: #3a3a3a;
             }
         )");
+    //
+
+    // --- Canvas Window ---
+        m_canvasWindow = new CanvasWindow();
+
+        QWidget *canvasContainer = QWidget::createWindowContainer(m_canvasWindow, this);
+        canvasContainer->setMinimumSize(400, 300);
+        canvasContainer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        canvasContainer->setFocusPolicy(Qt::WheelFocus);
+
+        canvasContainer->setAutoFillBackground(true);
+        QPalette pal = canvasContainer->palette();
+        pal.setColor(QPalette::Window, QColor(38, 38, 38));
+        canvasContainer->setPalette(pal);
+
+        // dock
+        QDockWidget *canvasDock = new QDockWidget("Canvas", this);
+        canvasDock->setObjectName("CanvasDock");
+        canvasDock->setWidget(canvasContainer);
+        canvasDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
+
+        canvasDock->setAllowedAreas(Qt::AllDockWidgetAreas);
+        addDockWidget(Qt::RightDockWidgetArea, canvasDock);
+
+        connect(showRightPanel, &QAction::toggled, canvasDock, &QDockWidget::setVisible);
+
+        canvasDock->setStyleSheet(R"(
+            QDockWidget
+            {
+                color: #d0d0d0;
+                font-size: 11px;
+            }
+        )");
+    //
 
     // --- Toolbar ---
         QToolBar *toolbar = new QToolBar("Toolbar", this);
@@ -120,12 +154,15 @@ komal::komal(QWidget *parent)
 
         toolbar->addSeparator();
 
-        connect(toolGroup, &QActionGroup::triggered, this, [this, toolGroup](QAction *active)
+        connect(toolGroup, &QActionGroup::triggered, this, [this, toolGroup, canvasContainer](QAction *active)
         {
             for (QAction *a : toolGroup->actions())
                 a->setEnabled(a != active);
 
             statusBar()->showMessage("Tool: " + active->text());
+
+            canvasContainer->setFocus();
+            m_canvasWindow->requestActivate();
         });
 
         toolbar->setStyleSheet(R"(
@@ -159,38 +196,7 @@ komal::komal(QWidget *parent)
         )");
 
         toolbar->setPalette(QApplication::palette());
-    
-    // --- Canvas Window ---
-        m_canvasWindow = new CanvasWindow();
-
-        QWidget *canvasContainer = QWidget::createWindowContainer(m_canvasWindow, this);
-        canvasContainer->setMinimumSize(400, 300);
-        canvasContainer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-        canvasContainer->setFocusPolicy(Qt::WheelFocus);
-
-        canvasContainer->setAutoFillBackground(true);
-        QPalette pal = canvasContainer->palette();
-        pal.setColor(QPalette::Window, QColor(38, 38, 38));
-        canvasContainer->setPalette(pal);
-
-        // dock
-        QDockWidget *canvasDock = new QDockWidget("Canvas", this);
-        canvasDock->setObjectName("CanvasDock");
-        canvasDock->setWidget(canvasContainer);
-        canvasDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
-
-        canvasDock->setAllowedAreas(Qt::AllDockWidgetAreas);
-        addDockWidget(Qt::RightDockWidgetArea, canvasDock);
-
-        connect(showRightPanel, &QAction::toggled, canvasDock, &QDockWidget::setVisible);
-
-        canvasDock->setStyleSheet(R"(
-            QDockWidget
-            {
-                color: #d0d0d0;
-                font-size: 11px;
-            }
-        )");
+    //
 
     // --- Status Bar ---
         statusBar()->setSizeGripEnabled(false);
@@ -204,6 +210,7 @@ komal::komal(QWidget *parent)
                 border-top: 1px solid #222;
             }
         )");
+    //
 }
 
 komal::~komal() {}

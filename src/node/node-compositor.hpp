@@ -1,6 +1,8 @@
 #pragma once
 #include "node-base.hpp"
 
+#include <unordered_set>
+
 class CompositorNode;
 
 class NodeCache{
@@ -61,6 +63,9 @@ private:
         };
     }
 
+    std::vector<std::pair<int,int>> m_pendingSyncTiles;
+    std::unordered_set<uint64_t> m_pendingSyncKeys;
+
 public:
     // init
     explicit CompositorNode(Private) {}
@@ -72,22 +77,41 @@ public:
     void addLayer(std::shared_ptr<Node> input)
     {
         listenTo(input, shared_from_this());
+        BoundsI b = input->computeBounds();
         m_layers.push_back(std::move(input));
-        invalidate();
+        invalidateBoundsTiles(b);
     }
+
     void removeLayer(size_t index)
     {
         if(index >= m_layers.size()) return;
+        BoundsI b = m_layers[index] ? m_layers[index]->computeBounds() : BoundsI{};
         m_layers.erase(m_layers.begin() + index);
-        invalidate();
+        invalidateBoundsTiles(b);
     }
     void moveLayer(size_t fromIndex, size_t toIndex)
     {
         if(fromIndex >= m_layers.size() || toIndex >= m_layers.size() || fromIndex == toIndex) return;
+
+        size_t lo = std::min(fromIndex, toIndex);
+        size_t hi = std::max(fromIndex, toIndex);
+
+        std::vector<std::unordered_set<uint64_t>> footprints(hi - lo + 1);
+        for(size_t i = lo; i <= hi; i++)
+            if(m_layers[i]) m_layers[i]->collectOccupiedTiles(footprints[i - lo]);
+
+        std::unordered_set<uint64_t> affected;
+        for(size_t a = 0; a < footprints.size(); a++)
+            for(size_t b = a + 1; b < footprints.size(); b++)
+                for(uint64_t key : footprints[a])
+                    if(footprints[b].count(key))
+                        affected.insert(key);
+
         auto moved = std::move(m_layers[fromIndex]);
         m_layers.erase(m_layers.begin() + fromIndex);
         m_layers.insert(m_layers.begin() + toIndex, std::move(moved));
-        invalidate();
+
+        for(uint64_t key : affected) { Key::XY p = Key::unpack(key); invalidateTile(p.x, p.y); }
     }
     size_t layerCount() const { return m_layers.size(); }
 
@@ -141,15 +165,41 @@ public:
     }
     void invalidateTile(int tx, int ty) override
     {
+        uint64_t key = Key::pack(tx, ty);
+        if(m_pendingSyncKeys.insert(key).second)
+            m_pendingSyncTiles.emplace_back(tx, ty);
+
         if(m_cache) m_cache->invalidateTile(tx, ty);
         Node::invalidateTile(tx, ty);
     }
+    void invalidateBoundsTiles(const BoundsI& b)
+    {
+        TileRange r = boundsToTileRange(b);
+        if(!r.valid) return;
 
-    const Chunk& getCachedTile(int tileX, int tileY) // sync compositor access
+        for(int ty = r.minTY; ty <= r.maxTY; ty++)
+            for(int tx = r.minTX; tx <= r.maxTX; tx++)
+                invalidateTile(tx, ty);
+    }
+    void collectOccupiedTiles(std::unordered_set<uint64_t>& out) override
+    {
+        for(auto& layer : m_layers)
+            if(layer) layer->collectOccupiedTiles(out);
+    }
+
+    std::vector<std::pair<int,int>> drainDirtySyncTiles()
+    {
+        auto result = std::move(m_pendingSyncTiles);
+        m_pendingSyncTiles.clear();
+        m_pendingSyncKeys.clear();
+        return result;
+    }
+
+    const Chunk& getCachedTile(int tileX, int tileY)
     {
         if(!m_cache) enableCache(true);
         return m_cache->getOrCreateTile(*this, tileX, tileY);
     }
 
-    void buildTile(Chunk& out, int tileX, int tileY); // per tile - needs comp layer context + math
+    void buildTile(Chunk& out, int tileX, int tileY);
 };

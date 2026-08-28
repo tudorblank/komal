@@ -10,6 +10,7 @@
 
 #include <webgpu.h>
 #include "gfx/gfxdevice.hpp"
+#include "input.hpp"
 #include "raster.hpp"
 #include "node/node-base.hpp"
 #include "node/node-compositor.hpp"
@@ -18,16 +19,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <deque>
-
-struct MouseHandler{
-    Vec2 screen;
-    Vec2 world;
-    Vec2 prevWorld;
-
-    bool leftDown = false;
-    bool rightDown = false;
-    bool middleDown = false;
-};
+#include <unordered_set>
 
 struct PerfStats{
     qint64 interpDrawNs = 0;
@@ -55,6 +47,7 @@ protected:
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
     void wheelEvent(QWheelEvent*) override;
+    void keyPressEvent(QKeyEvent*) override;
 
 private:
     MouseHandler m_mouse;
@@ -62,9 +55,12 @@ private:
     GFXDevice m_gfx;
     Camera m_camera;
 
-    std::deque<RasterData> m_layers;
-    std::vector<std::shared_ptr<RasterRootNode>> m_layerNodes;
-    std::shared_ptr<CompositorNode> m_compositor;
+    std::deque<RasterData> m_rawRasters;
+    std::vector<std::shared_ptr<RasterRootNode>> m_rasterNodes;
+    std::shared_ptr<MoveNode> m_moveNode;
+    std::shared_ptr<CompositorNode> m_masterCompositor;
+
+    std::unordered_set<uint64_t> m_deferredSyncKeys;
 
     size_t syncCompositedOutput(); // returns dirty-tile count, for perf logging
     void interpDraw(RasterData& inputRaster, RGBA color);
@@ -74,6 +70,7 @@ private:
     bool m_needsRender = false;
     void markDirty() { m_needsRender = true; }
 
+    // debug
     PerfStats m_perf;
     QElapsedTimer m_perfLogTimer;
     void logPerfIfDue();

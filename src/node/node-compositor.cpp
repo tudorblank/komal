@@ -28,6 +28,18 @@ void CompositorNode::buildTile(Chunk& out, int tileX, int tileY)
     int originX = tileX * Chunk::SIZE;
     int originY = tileY * Chunk::SIZE;
 
+    // skip tiles that don't overlap any layer content at all
+    BoundsI contentBounds = computeBounds();
+    bool overlapsContent = contentBounds.valid
+        && originX + Chunk::SIZE > contentBounds.minX && originX <= contentBounds.maxX
+        && originY + Chunk::SIZE > contentBounds.minY && originY <= contentBounds.maxY;
+    if(!overlapsContent)
+    {
+        for(int i = 0; i < Chunk::SIZE * Chunk::SIZE; i++)
+            out.data[i] = transparent();
+        return;
+    }
+
     for(int i = 0; i < Chunk::SIZE * Chunk::SIZE; i++)
         out.data[i] = transparent();
 
@@ -35,11 +47,17 @@ void CompositorNode::buildTile(Chunk& out, int tileX, int tileY)
     {
         if(!layer) continue;
 
+        // skip layers whose own bounds don't reach this tile
+        BoundsI layerBounds = layer->computeBounds();
+        bool layerOverlapsTile = layerBounds.valid
+            && originX + Chunk::SIZE > layerBounds.minX && originX <= layerBounds.maxX
+            && originY + Chunk::SIZE > layerBounds.minY && originY <= layerBounds.maxY;
+        if(!layerOverlapsTile) continue;
+
         float opacity = layer->m_opacity;
         float fill = layer->m_fill;
         bool needsAlphaAdjust = (opacity < 1.0f) || (fill < 1.0f);
 
-        // detect if raster root is tied directly to compositor for shortcut
         Chunk* fastChunk = layer->readSourceChunk(tileX, tileY);
         if(fastChunk != nullptr)
         {
@@ -52,7 +70,7 @@ void CompositorNode::buildTile(Chunk& out, int tileX, int tileY)
                     out.pixel(lx, ly) = over(out.pixel(lx, ly), c);
                 }
         }
-        else // fallback: no shortcut available, sample point-by-point
+        else
         {
             for(int ly = 0; ly < Chunk::SIZE; ly++)
                 for(int lx = 0; lx < Chunk::SIZE; lx++)

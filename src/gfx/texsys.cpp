@@ -2,7 +2,7 @@
 
 void TexSys::createRenderPipeline(WGPUBindGroupLayout camLayout)
 {
-    // geometry
+    // geometry (unchanged)
     TexVert vertsTex[] = {
         {{-0.5f,  0.5f}, {0.0f, 1.0f}},
         {{ 0.5f,  0.5f}, {1.0f, 1.0f}},
@@ -17,43 +17,36 @@ void TexSys::createRenderPipeline(WGPUBindGroupLayout camLayout)
     m_vertBuff = wgpuDeviceCreateBuffer(m_ctx.device, &texVertDesc);
     wgpuQueueWriteBuffer(m_ctx.queue, m_vertBuff, 0, vertsTex, sizeof(vertsTex));
 
-    // shader module
+    // shader module (unchanged)
     std::string texSource = readFile("shaders/texture.wgsl");
-
     WGPUShaderSourceWGSL texWgslDesc{};
     texWgslDesc.chain.sType = WGPUSType_ShaderSourceWGSL;
     texWgslDesc.code = sv(texSource.c_str());
-
     WGPUShaderModuleDescriptor texShaderDesc{};
     texShaderDesc.nextInChain = &texWgslDesc.chain;
     WGPUShaderModule texShaderModule = wgpuDeviceCreateShaderModule(m_ctx.device, &texShaderDesc);
     if(!texShaderModule) printf("Texture shader failed\n");
 
-    // bind group layout
-    WGPUBindGroupLayoutEntry entries[3]{};
+    // bind group layout — now just texture + sampler, no per-chunk uniform
+    WGPUBindGroupLayoutEntry entries[2]{};
 
     entries[0].binding = 0;
-    entries[0].visibility = WGPUShaderStage_Vertex;
-    entries[0].buffer.type = WGPUBufferBindingType_Uniform;
-    entries[0].buffer.minBindingSize = sizeof(ChunkUniform);
+    entries[0].visibility = WGPUShaderStage_Fragment;
+    entries[0].texture.sampleType = WGPUTextureSampleType_Float;
+    entries[0].texture.viewDimension = WGPUTextureViewDimension_2D;
 
     entries[1].binding = 1;
     entries[1].visibility = WGPUShaderStage_Fragment;
-    entries[1].texture.sampleType = WGPUTextureSampleType_Float;
-    entries[1].texture.viewDimension = WGPUTextureViewDimension_2D;
-
-    entries[2].binding = 2;
-    entries[2].visibility = WGPUShaderStage_Fragment;
-    entries[2].sampler.type = WGPUSamplerBindingType_Filtering;
+    entries[1].sampler.type = WGPUSamplerBindingType_Filtering;
 
     WGPUBindGroupLayoutDescriptor layoutDesc{};
     layoutDesc.label = sv("Texture Bind Group Layout");
-    layoutDesc.entryCount = 3;
+    layoutDesc.entryCount = 2;
     layoutDesc.entries = entries;
     m_bindGroupLayout = wgpuDeviceCreateBindGroupLayout(m_ctx.device, &layoutDesc);
 
     // pipeline
-    //// vertex
+    //// vertex buffer 0: shared quad geometry, per-vertex
     WGPUVertexAttribute vertAttribs[2]{};
     vertAttribs[0].shaderLocation = 0;
     vertAttribs[0].offset = offsetof(TexVert, pos);
@@ -64,16 +57,43 @@ void TexSys::createRenderPipeline(WGPUBindGroupLayout camLayout)
 
     WGPUVertexBufferLayout vbLayout{};
     vbLayout.arrayStride = sizeof(TexVert);
+    vbLayout.stepMode = WGPUVertexStepMode_Vertex;
     vbLayout.attributeCount = 2;
     vbLayout.attributes = vertAttribs;
+
+    //// vertex buffer 1: per-chunk instance data, per-instance
+    WGPUVertexAttribute instAttribs[5]{};
+    instAttribs[0].shaderLocation = 2;
+    instAttribs[0].offset = offsetof(ChunkInstance, posX);
+    instAttribs[0].format = WGPUVertexFormat_Float32x2;
+    instAttribs[1].shaderLocation = 3;
+    instAttribs[1].offset = offsetof(ChunkInstance, scaleX);
+    instAttribs[1].format = WGPUVertexFormat_Float32x2;
+    instAttribs[2].shaderLocation = 4;
+    instAttribs[2].offset = offsetof(ChunkInstance, uvOffset);
+    instAttribs[2].format = WGPUVertexFormat_Float32x2;
+    instAttribs[3].shaderLocation = 5;
+    instAttribs[3].offset = offsetof(ChunkInstance, uvScale);
+    instAttribs[3].format = WGPUVertexFormat_Float32x2;
+    instAttribs[4].shaderLocation = 6;
+    instAttribs[4].offset = offsetof(ChunkInstance, opacity);
+    instAttribs[4].format = WGPUVertexFormat_Float32;
+
+    WGPUVertexBufferLayout instLayout{};
+    instLayout.arrayStride = sizeof(ChunkInstance);
+    instLayout.stepMode = WGPUVertexStepMode_Instance;
+    instLayout.attributeCount = 5;
+    instLayout.attributes = instAttribs;
+
+    WGPUVertexBufferLayout vbLayouts[2] = { vbLayout, instLayout };
 
     WGPUVertexState vertState{};
     vertState.module = texShaderModule;
     vertState.entryPoint = sv("vs_main");
-    vertState.bufferCount = 1;
-    vertState.buffers = &vbLayout;
+    vertState.bufferCount = 2;
+    vertState.buffers = vbLayouts;
 
-    //// fragment
+    //// fragment (unchanged)
     WGPUBlendComponent colorBlend{};
     colorBlend.operation = WGPUBlendOperation_Add;
     colorBlend.srcFactor = WGPUBlendFactor_SrcAlpha;
@@ -104,7 +124,6 @@ void TexSys::createRenderPipeline(WGPUBindGroupLayout camLayout)
     primitiveState.frontFace = WGPUFrontFace_CCW;
     primitiveState.cullMode = WGPUCullMode_None;
 
-    // pipeline layout
     WGPUBindGroupLayout bgLayouts[2] = { camLayout, m_bindGroupLayout };
     WGPUPipelineLayoutDescriptor pipelineLayoutDesc{};
     pipelineLayoutDesc.label = sv("Texture Pipeline Layout");
@@ -134,37 +153,6 @@ ChunkObject TexSys::registerChunk(AtlasSet& atlas, uint64_t chunkKey,
 
     ChunkSlot slot = allocateSlot(atlas, chunkKey);
     writeChunkToAtlas(atlas.pages[slot.page], slot, pixels);
-
-    WGPUBufferDescriptor modelDesc{};
-    modelDesc.label = sv("Chunk Model Buffer");
-    modelDesc.size = sizeof(ChunkUniform);
-    modelDesc.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
-    obj.modelBuffer = wgpuDeviceCreateBuffer(m_ctx.device, &modelDesc);
-
-    WGPUBindGroupEntry entries[3]{};
-    entries[0].binding = 0; entries[0].buffer = obj.modelBuffer; entries[0].size = sizeof(ChunkUniform);
-    entries[1].binding = 1; entries[1].textureView = atlas.pages[slot.page].view;
-    entries[2].binding = 2; entries[2].sampler = m_atlasSampler;
-
-    WGPUBindGroupDescriptor groupDesc{};
-    groupDesc.layout = m_bindGroupLayout;
-    groupDesc.entryCount = 3;
-    groupDesc.entries = entries;
-    obj.bindGroup = wgpuDeviceCreateBindGroup(m_ctx.device, &groupDesc);
-
-    // update chunk uniform
-    QMatrix4x4 model;
-    model.translate(obj.x + obj.w / 2.0f, obj.y + obj.h / 2.0f, 0.0f);
-    model.scale(obj.w, obj.h, 1.0f);
-
-    ChunkUniform data{};
-    memcpy(data.model, model.constData(), sizeof(data.model));
-    data.uvOffset[0] = (float)(slot.slotX * Chunk::SIZE) / AtlasPage::PAGE_SIZE;
-    data.uvOffset[1] = (float)(slot.slotY * Chunk::SIZE) / AtlasPage::PAGE_SIZE;
-    data.uvScale[0] = (float)Chunk::SIZE / AtlasPage::PAGE_SIZE;
-    data.uvScale[1] = (float)Chunk::SIZE / AtlasPage::PAGE_SIZE;
-
-    wgpuQueueWriteBuffer(m_ctx.queue, obj.modelBuffer, 0, &data, sizeof(data));
 
     return obj;
 }
@@ -206,7 +194,13 @@ void TexSys::syncChunk(size_t layerIndex, uint64_t chunkKey, float worldX, float
         texMap.emplace(chunkKey,
             registerChunk(atlas, chunkKey, worldX, worldY, (float)Chunk::SIZE, (float)Chunk::SIZE, pixels));
     else
+    {
+        it->second.x = worldX;
+        it->second.y = worldY;
+        it->second.w = (float)Chunk::SIZE;
+        it->second.h = (float)Chunk::SIZE;
         updateChunkObject(chunkKey, it->second, atlas, pixels);
+    }
 }
 
 // atlas
@@ -244,6 +238,25 @@ AtlasPage TexSys::createAtlasPage()
     texDesc.sampleCount = 1;
     page.texture = wgpuDeviceCreateTexture(m_ctx.device, &texDesc);
     page.view = wgpuTextureCreateView(page.texture, nullptr);
+
+    // one bind group per page, shared by every chunk on it
+    WGPUBindGroupEntry entries[2]{};
+    entries[0].binding = 0; entries[0].textureView = page.view;
+    entries[1].binding = 1; entries[1].sampler = m_atlasSampler;
+
+    WGPUBindGroupDescriptor groupDesc{};
+    groupDesc.label = sv("Atlas Page Bind Group");
+    groupDesc.layout = m_bindGroupLayout;
+    groupDesc.entryCount = 2;
+    groupDesc.entries = entries;
+    page.bindGroup = wgpuDeviceCreateBindGroup(m_ctx.device, &groupDesc);
+
+    // per-page instance buffer, worst case = every slot occupied and visible
+    WGPUBufferDescriptor instDesc{};
+    instDesc.label = sv("Atlas Page Instance Buffer");
+    instDesc.size = sizeof(ChunkInstance) * AtlasPage::SLOTS_TOTAL;
+    instDesc.usage = WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst;
+    page.instanceBuffer = wgpuDeviceCreateBuffer(m_ctx.device, &instDesc);
 
     return page;
 }
@@ -293,17 +306,13 @@ void TexSys::freeSlot(AtlasSet& atlas, uint64_t chunkKey)
 // destructor
 void TexSys::releaseAll()
 {
-    for(auto& layerMap : m_chunkObjects)
-        for(auto& [key, texObj] : layerMap)
-        {
-            if(texObj.bindGroup)   wgpuBindGroupRelease(texObj.bindGroup);
-            if(texObj.modelBuffer) wgpuBufferRelease(texObj.modelBuffer);
-        }
     m_chunkObjects.clear();
 
     for(auto& atlas : m_atlases)
         for(auto& page : atlas.pages)
         {
+            if(page.bindGroup)      wgpuBindGroupRelease(page.bindGroup);
+            if(page.instanceBuffer) wgpuBufferRelease(page.instanceBuffer);
             if(page.view)    wgpuTextureViewRelease(page.view);
             if(page.texture) wgpuTextureRelease(page.texture);
         }

@@ -100,10 +100,10 @@ The compiled executable will be available inside the generated `build` directory
 
 ## To-do ☑️ [development]
 
-- [ ] Add `Move` node
 - [ ] GPU-based `Blur` node
 - [ ] Flesh out the UI
 - [ ] Import / export support
 - [ ] Artboard system
 - [ ] Additional canvas interaction tools
 - [ ] Undo / redo
+- [ ] Graph view

@@ -74,6 +74,7 @@ public:
     RGBA data[SIZE * SIZE] = {};
     bool dirty = false;
     RGBA& pixel(int lx, int ly) { return data[ly * SIZE + lx]; } // pixel access
+    const RGBA& pixel(int lx, int ly) const { return data[ly * SIZE + lx]; } // const pixel access (e.g. reading a cached const Chunk&)
     
     // chunk bounds
     BoundsI localBounds;

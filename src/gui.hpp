@@ -1,5 +1,4 @@
-#ifndef KOMAL_H
-#define KOMAL_H
+#pragma once
 
 #include <QMainWindow>
 #include <QDockWidget>
@@ -20,5 +19,3 @@ public:
 private:
     CanvasWindow *m_canvasWindow = nullptr;
 };
-
-#endif

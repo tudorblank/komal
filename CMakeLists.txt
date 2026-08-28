@@ -21,10 +21,12 @@ endif()
 
 set(PROJECT_SOURCES
     src/main.cpp
-    src/komal.cpp
-    src/komal.hpp
+    src/gui.cpp
+    src/gui.hpp
     src/canvas.cpp
     src/canvas.hpp
+    src/canvas-events.cpp
+    src/input.hpp
     src/raster.cpp
     src/raster.hpp
     src/node/node-base.hpp
