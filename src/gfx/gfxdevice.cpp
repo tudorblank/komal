@@ -232,51 +232,69 @@ void GFXDevice::renderPass(uint32_t width, uint32_t height, const Camera& cam)
 
     size_t visibleTileCount = (size_t)(maxCX - minCX + 1) * (size_t)(maxCY - minCY + 1);
 
+    bool viewChanged = m_TEXSYS.updateView(minCX, maxCX, minCY, maxCY);
+
     for(size_t layerIndex = 0; layerIndex < m_TEXSYS.m_chunkObjects.size(); layerIndex++)
     {
         auto& objMap = m_TEXSYS.m_chunkObjects[layerIndex];
         if(layerIndex >= m_TEXSYS.m_atlases.size()) continue;
         AtlasSet& atlas = m_TEXSYS.m_atlases[layerIndex];
 
-        std::vector<std::vector<ChunkInstance>> perPageInstances(atlas.pages.size());
+        bool needsRebuild = viewChanged || atlas.contentDirty ||
+                             atlas.cachedInstances.size() != atlas.pages.size();
 
-        auto addIfVisible = [&](uint64_t key, const ChunkObject& obj)
+        if(needsRebuild)
         {
-            if(obj.x + obj.w < viewMinX || obj.x > viewMaxX ||
-               obj.y + obj.h < viewMinY || obj.y > viewMaxY)
-                return;
+            atlas.cachedInstances.assign(atlas.pages.size(), {});
 
-            auto slotIt = atlas.chunkSlots.find(key);
-            if(slotIt == atlas.chunkSlots.end()) return;
+            auto addIfVisible = [&](uint64_t key, const ChunkObject& obj)
+            {
+                if(obj.x + obj.w < viewMinX || obj.x > viewMaxX ||
+                   obj.y + obj.h < viewMinY || obj.y > viewMaxY)
+                    return;
 
-            perPageInstances[slotIt->second.page].push_back(makeChunkInstance(obj, slotIt->second));
-        };
+                auto slotIt = atlas.chunkSlots.find(key);
+                if(slotIt == atlas.chunkSlots.end()) return;
 
-        if(objMap.size() <= visibleTileCount)
-        {
-            for(auto& [key, obj] : objMap)
-                addIfVisible(key, obj);
+                atlas.cachedInstances[slotIt->second.page].push_back(makeChunkInstance(obj, slotIt->second));
+            };
+
+            if(objMap.size() <= visibleTileCount)
+            {
+                for(auto& [key, obj] : objMap)
+                    addIfVisible(key, obj);
+            }
+            else
+            {
+                for(int cy = minCY; cy <= maxCY; cy++)
+                    for(int cx = minCX; cx <= maxCX; cx++)
+                    {
+                        auto it = objMap.find(Key::pack(cx, cy));
+                        if(it != objMap.end())
+                            addIfVisible(it->first, it->second);
+                    }
+            }
+
+            // only touch the GPU for pages that actually have visible instances
+            for(size_t p = 0; p < atlas.pages.size(); p++)
+            {
+                auto& instances = atlas.cachedInstances[p];
+                if(instances.empty()) continue;
+
+                wgpuQueueWriteBuffer(m_queue, atlas.pages[p].instanceBuffer, 0,
+                                      instances.data(), instances.size() * sizeof(ChunkInstance));
+            }
+
+            atlas.contentDirty = false;
         }
-        else
-        {
-            for(int cy = minCY; cy <= maxCY; cy++)
-                for(int cx = minCX; cx <= maxCX; cx++)
-                {
-                    auto it = objMap.find(Key::pack(cx, cy));
-                    if(it != objMap.end())
-                        addIfVisible(it->first, it->second);
-                }
-        }
 
+        // draw from cache every frame
         for(size_t p = 0; p < atlas.pages.size(); p++)
         {
-            auto& instances = perPageInstances[p];
+            auto& instances = atlas.cachedInstances[p];
             if(instances.empty()) continue;
 
             AtlasPage& page = atlas.pages[p];
-            wgpuQueueWriteBuffer(m_queue, page.instanceBuffer, 0,
-                                  instances.data(), instances.size() * sizeof(ChunkInstance));
-
             wgpuRenderPassEncoderSetBindGroup(pass, 1, page.bindGroup, 0, nullptr);
             wgpuRenderPassEncoderSetVertexBuffer(pass, 1, page.instanceBuffer, 0, WGPU_WHOLE_SIZE);
             wgpuRenderPassEncoderDrawIndexed(pass, 6, (uint32_t)instances.size(), 0, 0, 0);

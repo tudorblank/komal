@@ -114,6 +114,21 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
 }
 
 // raster data core
+void CanvasWindow::syncTileToGPU(uint64_t key)
+{
+    Key::XY pos = Key::unpack(key);
+    const Chunk& tile = m_masterCompositor->getCachedTile(pos.x, pos.y);
+    m_gfx.m_TEXSYS.syncChunk(0, key,
+        (float)(pos.x * Chunk::SIZE), (float)(pos.y * Chunk::SIZE), tile.data);
+}
+void CanvasWindow::syncTilesImmediate(const std::unordered_set<uint64_t>& keys)
+{
+    for(uint64_t key : keys)
+    {
+        syncTileToGPU(key);
+        m_deferredSyncKeys.erase(key);
+    }
+}
 size_t CanvasWindow::syncCompositedOutput()
 {
     for(size_t i = 0; i < m_rawRasters.size(); i++)

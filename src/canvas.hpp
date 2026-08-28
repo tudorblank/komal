@@ -60,10 +60,13 @@ private:
     std::shared_ptr<MoveNode> m_moveNode;
     std::shared_ptr<CompositorNode> m_masterCompositor;
 
-    std::unordered_set<uint64_t> m_deferredSyncKeys;
-
-    size_t syncCompositedOutput(); // returns dirty-tile count, for perf logging
     void interpDraw(RasterData& inputRaster, RGBA color);
+    
+    // sync
+    std::unordered_set<uint64_t> m_deferredSyncKeys;
+    size_t syncCompositedOutput(); // returns dirty-tile count, for perf logging
+    void syncTileToGPU(uint64_t key);
+    void syncTilesImmediate(const std::unordered_set<uint64_t>& keys);
     void renderFrame();
     
     QTimer* m_renderTimer = nullptr;

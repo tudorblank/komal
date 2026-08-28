@@ -201,6 +201,8 @@ void TexSys::syncChunk(size_t layerIndex, uint64_t chunkKey, float worldX, float
         it->second.h = (float)Chunk::SIZE;
         updateChunkObject(chunkKey, it->second, atlas, pixels);
     }
+
+    atlas.contentDirty = true;
 }
 
 // atlas
@@ -301,6 +303,8 @@ void TexSys::freeSlot(AtlasSet& atlas, uint64_t chunkKey)
     page.slotUsed[i] = false;
     page.usedSlots--;
     atlas.chunkSlots.erase(it);
+
+    atlas.contentDirty = true;
 }
 
 // destructor

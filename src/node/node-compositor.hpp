@@ -89,9 +89,9 @@ public:
         m_layers.erase(m_layers.begin() + index);
         invalidateBoundsTiles(b);
     }
-    void moveLayer(size_t fromIndex, size_t toIndex)
+    std::unordered_set<uint64_t> moveLayer(size_t fromIndex, size_t toIndex)
     {
-        if(fromIndex >= m_layers.size() || toIndex >= m_layers.size() || fromIndex == toIndex) return;
+        if(fromIndex >= m_layers.size() || toIndex >= m_layers.size() || fromIndex == toIndex) return {};
 
         size_t lo = std::min(fromIndex, toIndex);
         size_t hi = std::max(fromIndex, toIndex);
@@ -112,6 +112,7 @@ public:
         m_layers.insert(m_layers.begin() + toIndex, std::move(moved));
 
         for(uint64_t key : affected) { Key::XY p = Key::unpack(key); invalidateTile(p.x, p.y); }
+        return affected;
     }
     size_t layerCount() const { return m_layers.size(); }
 

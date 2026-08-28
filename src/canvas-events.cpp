@@ -136,19 +136,22 @@ void CanvasWindow::keyPressEvent(QKeyEvent* e)
     {
         if(m_rasterNodes.size() >= 2)
         {
-            m_masterCompositor->moveLayer(0, 1);
+            auto affected = m_masterCompositor->moveLayer(0, 1);
+            syncTilesImmediate(affected);
             markDirty();
         }
         qDebug() << "LAYERS MOVED";
     }
     if(e->key() == Qt::Key_Z)
     {
-        m_moveNode->setOffset(500, 500);
+        auto affected = m_moveNode->setOffset(500, 500);
+        syncTilesImmediate(affected);
         markDirty();
     }
     if(e->key() == Qt::Key_B)
     {
-        m_moveNode->setOffset(1000, 1000);
+        auto affected = m_moveNode->setOffset(1000, 1000);
+        syncTilesImmediate(affected);
         markDirty();
     }
 }

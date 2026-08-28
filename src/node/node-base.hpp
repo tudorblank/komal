@@ -196,9 +196,9 @@ public:
     int m_offsetX = 0;
     int m_offsetY = 0;
 
-    void setOffset(int offsetX, int offsetY)
+    std::unordered_set<uint64_t> setOffset(int offsetX, int offsetY)
     {
-        if(offsetX == m_offsetX && offsetY == m_offsetY) return;
+        if(offsetX == m_offsetX && offsetY == m_offsetY) return {};
 
         std::unordered_set<uint64_t> oldTiles;
         collectOccupiedTiles(oldTiles); // uses current (old) offset
@@ -211,6 +211,9 @@ public:
 
         for(uint64_t key : oldTiles) { Key::XY p = Key::unpack(key); propagateInvalidateTile(p.x, p.y); }
         for(uint64_t key : newTiles) { Key::XY p = Key::unpack(key); propagateInvalidateTile(p.x, p.y); }
+
+        oldTiles.insert(newTiles.begin(), newTiles.end());
+        return oldTiles;
     }
     void reset()
     {

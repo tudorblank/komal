@@ -70,6 +70,9 @@ inline ChunkInstance makeChunkInstance(const ChunkObject& obj, const ChunkSlot& 
 struct AtlasSet{
     std::vector<AtlasPage> pages;
     std::unordered_map<uint64_t, ChunkSlot> chunkSlots; // keyed by chunkKey
+
+    std::vector<std::vector<ChunkInstance>> cachedInstances; // per page
+    bool contentDirty = true;
 };
 
 class TexSys{
@@ -97,6 +100,16 @@ public:
 
     void updateChunkObject(uint64_t chunkKey, ChunkObject& obj, AtlasSet& atlas, const RGBA* pixels);
     void syncChunk(size_t layerIndex, uint64_t chunkKey, float worldX, float worldY, const RGBA* pixels);
+
+    int m_lastMinCX = INT32_MIN, m_lastMaxCX = INT32_MIN, m_lastMinCY = INT32_MIN, m_lastMaxCY = INT32_MIN;
+    bool updateView(int minCX, int maxCX, int minCY, int maxCY)
+    {
+        bool changed = (minCX != m_lastMinCX || maxCX != m_lastMaxCX ||
+                        minCY != m_lastMinCY || maxCY != m_lastMaxCY);
+        m_lastMinCX = minCX; m_lastMaxCX = maxCX;
+        m_lastMinCY = minCY; m_lastMaxCY = maxCY;
+        return changed;
+    }
 
     // destructor
     void releaseAll();
