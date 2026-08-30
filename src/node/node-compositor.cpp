@@ -6,7 +6,7 @@ Chunk& NodeCache::getOrCreateTile(CompositorNode& inputCompositor, int tileX, in
     if(existing) return *existing; // cache hit
 
     Chunk& tile = m_grid.accessOrCreateChunk(tileX, tileY); // access / create new
-    inputCompositor.buildTile(tile, tileX, tileY);           // build (through compositor)
+    inputCompositor.buildTile(tile, tileX, tileY); // build (through compositor)
     return tile;
 }
 RGBA NodeCache::lookupPixel(CompositorNode& inputCompositor, int worldX, int worldY)

@@ -59,6 +59,7 @@ private:
     std::deque<RasterData> m_rawRasters;
     std::vector<std::shared_ptr<RasterRootNode>> m_rasterNodes;
     std::shared_ptr<MoveNode> m_moveNode;
+    std::shared_ptr<BlurNode> m_blurNode;
     std::shared_ptr<CompositorNode> m_masterCompositor;
     void setupNodes();
 

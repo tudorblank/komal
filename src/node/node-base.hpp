@@ -1,10 +1,14 @@
 #pragma once
 #include "raster.hpp"
 
+#include "gfx/blursys.hpp"
+
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
 #include <memory>
+#include <cstring>
+#include <algorithm>
 
 inline RGBA transparent() { return {0, 0, 0, 0}; }
 inline RGBA applyOpacityFill(RGBA c, float fill, float opacity)
@@ -26,7 +30,7 @@ public:
     virtual Chunk* readSourceChunk(int /*tileX*/, int /*tileY*/) { return nullptr; } // RasterRootNode only
     virtual void collectOccupiedTiles(std::unordered_set<uint64_t>& out) // set of tile coords
     {
-        // fallback for nodes that don't track real occupancy: whole bounding rect
+        // fallback for nodes that don't track real occupancy
         BoundsI b = computeBounds();
         TileRange r = boundsToTileRange(b);
         if(!r.valid) return;
@@ -264,5 +268,140 @@ public:
         for(int ty = dstMinTY; ty <= dstMaxTY; ty++)
             for(int tx = dstMinTX; tx <= dstMaxTX; tx++)
                 propagateInvalidateTile(tx, ty); // may fire 1-4 times depending on offset alignment
+    }
+};
+
+// ==== BLUR NODE ====
+class BlurNode : public Node{
+private:
+    struct Private { explicit Private() = default; };
+
+public:
+    BlurNode(Private, std::shared_ptr<Node> input, int radius)
+        : m_inputNode(std::move(input)), m_radius(radius) {}
+    static std::shared_ptr<BlurNode> create(std::shared_ptr<Node> input, int radius)
+    {
+        auto node = std::make_shared<BlurNode>(Private{}, input, radius);
+        listenTo(input, node);
+        return node;
+    }
+
+    std::shared_ptr<Node> m_inputNode;
+    int m_radius;
+
+    BlurSys* m_blurSys = nullptr;
+    void setBlurSys(BlurSys* sys) { m_blurSys = sys; }
+
+    SparseRasterGrid m_cache; // one blurred Chunk per tile
+
+    BoundsI computeBounds() override
+    {
+        if(!m_inputNode) { BoundsI b; b.reset(); return b; }
+        BoundsI b = m_inputNode->computeBounds();
+        if(!b.valid) return b;
+        b.minX -= m_radius; b.maxX += m_radius;
+        b.minY -= m_radius; b.maxY += m_radius;
+        return b;
+    }
+
+    RGBA computePixel(int worldX, int worldY) override
+    {
+        Chunk& c = getOrBuildTile(Grid::worldToChunk(worldX), Grid::worldToChunk(worldY));
+        return c.pixel(Grid::worldToChunkLocal(worldX), Grid::worldToChunkLocal(worldY));
+    }
+    Chunk* readSourceChunk(int tileX, int tileY) override
+    { return &getOrBuildTile(tileX, tileY); } // lets the compositor take the fast copy path
+
+    void invalidateTile(int tileX, int tileY) override
+    {
+        int reach = (m_radius + Grid::CHUNK_SIZE - 1) / Grid::CHUNK_SIZE; // ceil(R / CHUNK_SIZE)
+        for(int dy = -reach; dy <= reach; dy++)
+            for(int dx = -reach; dx <= reach; dx++)
+                m_cache.freeChunk(tileX + dx, tileY + dy);
+        propagateInvalidateTile(tileX, tileY);
+    }
+
+private:
+    Chunk& getOrBuildTile(int tileX, int tileY)
+    {
+        Chunk* existing = m_cache.readChunk(tileX, tileY);
+        if(existing) return *existing;
+
+        Chunk& out = m_cache.accessOrCreateChunk(tileX, tileY);
+        gpuBlurTile(tileX, tileY, out);
+        return out;
+    }
+    void gpuBlurTile(int tileX, int tileY, Chunk& out)
+    {
+        if(!m_inputNode || !m_blurSys)
+        {
+            for(RGBA& px : out.data) px = transparent();
+            return;
+        }
+
+        int R = m_radius;
+        int paddedSize = Grid::CHUNK_SIZE + 2 * R;
+        std::vector<RGBA> padded(paddedSize * paddedSize, transparent());
+
+        // world-space bounds of the padded region
+        int worldX0 = tileX * Grid::CHUNK_SIZE - R;
+        int worldY0 = tileY * Grid::CHUNK_SIZE - R;
+        int worldX1 = worldX0 + paddedSize - 1;
+        int worldY1 = worldY0 + paddedSize - 1;
+
+        // which input chunks overlap that region
+        int minCX = Grid::worldToChunk(worldX0), maxCX = Grid::worldToChunk(worldX1);
+        int minCY = Grid::worldToChunk(worldY0), maxCY = Grid::worldToChunk(worldY1);
+
+        for(int cy = minCY; cy <= maxCY; cy++)
+        for(int cx = minCX; cx <= maxCX; cx++)
+        {
+            // world-space bounds of this input chunk
+            int chunkWorldX0 = cx * Grid::CHUNK_SIZE;
+            int chunkWorldY0 = cy * Grid::CHUNK_SIZE;
+            int chunkWorldX1 = chunkWorldX0 + Grid::CHUNK_SIZE - 1;
+            int chunkWorldY1 = chunkWorldY0 + Grid::CHUNK_SIZE - 1;
+
+            // overlap between chunk and the padded region, in world space
+            int ovMinX = std::max(worldX0, chunkWorldX0), ovMaxX = std::min(worldX1, chunkWorldX1);
+            int ovMinY = std::max(worldY0, chunkWorldY0), ovMaxY = std::min(worldY1, chunkWorldY1);
+            if(ovMinX > ovMaxX || ovMinY > ovMaxY) continue; // shouldn't happen given the range calc, but safe
+
+            Chunk* srcChunk = m_inputNode->readSourceChunk(cx, cy);
+            int rowLen = ovMaxX - ovMinX + 1;
+
+            if(srcChunk)
+            {
+                // fast path (source chunk)
+                for(int wy = ovMinY; wy <= ovMaxY; wy++)
+                {
+                    int ly = wy - chunkWorldY0;
+                    int lx0 = ovMinX - chunkWorldX0;
+                    int py = wy - worldY0;
+                    int px0 = ovMinX - worldX0;
+
+                    memcpy(&padded[py * paddedSize + px0],
+                        &srcChunk->data[ly * Grid::CHUNK_SIZE + lx0],
+                        rowLen * sizeof(RGBA));
+                }
+            }
+            else
+            {
+                // slow path (scoped only to this chunk's overlap)
+                for(int wy = ovMinY; wy <= ovMaxY; wy++)
+                    for(int wx = ovMinX; wx <= ovMaxX; wx++)
+                    {
+                        int py = wy - worldY0, px = wx - worldX0;
+                        padded[py * paddedSize + px] = m_inputNode->sampleBlended(wx, wy);
+                    }
+            }
+        }
+
+        m_blurSys->blurTile(padded.data(), paddedSize, R, out.data);
+
+        out.m_pixelCount = 0;
+        for(const RGBA& px : out.data)
+            if(px.a > 0) out.m_pixelCount++;
+        out.localBounds.dirty = true;
     }
 };

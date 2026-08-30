@@ -125,7 +125,17 @@ void GFXDevice::configSurface(uint32_t width, uint32_t height)
 
     WGPUSurfaceCapabilities caps{};
     wgpuSurfaceGetCapabilities(m_surface, m_adapter, &caps);
+
     m_surfaceFormat = caps.formats[0];
+    for(size_t i = 0; i < caps.formatCount; i++)
+    {
+        WGPUTextureFormat f = caps.formats[i];
+        if(f == WGPUTextureFormat_BGRA8Unorm || f == WGPUTextureFormat_RGBA8Unorm)
+        {
+            m_surfaceFormat = f;
+            break;
+        }
+    }
 
     WGPUPresentMode chosenMode = WGPUPresentMode_Fifo;
     for(size_t i = 0; i < caps.presentModeCount; i++)
@@ -149,10 +159,11 @@ void GFXDevice::configSurface(uint32_t width, uint32_t height)
 void GFXDevice::passContext(Camera& cam)
 {
     GFXContext ctx = context();
-    cam.m_ctx = ctx;      // camera
-    m_COLSYS.m_ctx = ctx; // color
-    m_TEXSYS.m_ctx = ctx; // texture
-    m_LINSYS.m_ctx = ctx; // line
+    cam.m_ctx = ctx;        // camera
+    m_COLSYS.m_ctx = ctx;   // color
+    m_TEXSYS.m_ctx = ctx;   // texture
+    m_LINSYS.m_ctx = ctx;   // line
+    m_BLURSYS.m_ctx = ctx;  // blur
 }
 
 // internal

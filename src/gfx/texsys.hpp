@@ -46,8 +46,11 @@ struct AtlasPage{
     WGPUBuffer instanceBuffer = nullptr;
     std::vector<bool> slotUsed; 
     int usedSlots = 0;
+
+    static constexpr int GUTTER = 1;
     static constexpr int PAGE_SIZE = 4096;
-    static constexpr int SLOTS_PER_ROW = PAGE_SIZE / Grid::CHUNK_SIZE;
+    static constexpr int SLOT_STRIDE = Grid::CHUNK_SIZE + 2 * GUTTER;
+    static constexpr int SLOTS_PER_ROW = PAGE_SIZE / SLOT_STRIDE;
     static constexpr int SLOTS_TOTAL = SLOTS_PER_ROW * SLOTS_PER_ROW;
     bool isFull() const { return usedSlots >= SLOTS_TOTAL; }
 };
@@ -55,12 +58,17 @@ struct AtlasPage{
 inline ChunkInstance makeChunkInstance(const ChunkObject& obj, const ChunkSlot& slot)
 {
     ChunkInstance inst{};
+
     inst.posX = obj.x + obj.w * 0.5f;
     inst.posY = obj.y + obj.h * 0.5f;
     inst.scaleX = obj.w;
     inst.scaleY = obj.h;
-    inst.uvOffset[0] = (float)(slot.slotX * Grid::CHUNK_SIZE) / AtlasPage::PAGE_SIZE;
-    inst.uvOffset[1] = (float)(slot.slotY * Grid::CHUNK_SIZE) / AtlasPage::PAGE_SIZE;
+
+    float originX = (float)(slot.slotX * AtlasPage::SLOT_STRIDE + AtlasPage::GUTTER);
+    float originY = (float)(slot.slotY * AtlasPage::SLOT_STRIDE + AtlasPage::GUTTER);
+
+    inst.uvOffset[0] = originX / AtlasPage::PAGE_SIZE;
+    inst.uvOffset[1] = originY / AtlasPage::PAGE_SIZE;
     inst.uvScale[0] = (float)Grid::CHUNK_SIZE / AtlasPage::PAGE_SIZE;
     inst.uvScale[1] = (float)Grid::CHUNK_SIZE / AtlasPage::PAGE_SIZE;
     inst.opacity = 1.0f;

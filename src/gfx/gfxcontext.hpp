@@ -9,6 +9,7 @@
 
 struct GFXContext
 {
+    WGPUInstance instance = nullptr;
     WGPUDevice device = nullptr;
     WGPUQueue queue = nullptr;
     WGPUTextureFormat surfaceFormat = WGPUTextureFormat_Undefined;

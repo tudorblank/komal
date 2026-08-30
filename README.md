@@ -100,7 +100,6 @@ The compiled executable will be available inside the generated `build` directory
 
 ## To-do ☑️ [development]
 
-- [ ] GPU-based `Blur` node
 - [ ] Flesh out the UI
 - [ ] Import / export support
 - [ ] Artboard system

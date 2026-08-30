@@ -50,6 +50,7 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
     m_gfx.m_TEXSYS.initAtlasSampler();
     m_gfx.m_TEXSYS.createRenderPipeline(m_camera.m_bindLayout);
     m_gfx.m_LINSYS.createRenderPipeline(m_camera.m_screenBindLayout); 
+    m_gfx.m_BLURSYS.createComputePipeline();
     
     // nodes
     setupNodes();
@@ -87,6 +88,7 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
     });
     m_renderTimer->start();
 }
+// nodes
 void CanvasWindow::setupNodes()
 {
     m_rawRasters.emplace_back();
@@ -107,7 +109,11 @@ void CanvasWindow::setupNodes()
     }
 
     m_moveNode = MoveNode::create(m_rasterNodes[0], 50, 50);
-    m_masterCompositor->addLayer(m_moveNode);
+
+    m_blurNode = BlurNode::create(m_moveNode, 30); // node, radius
+    m_blurNode->setBlurSys(&m_gfx.m_BLURSYS);
+
+    m_masterCompositor->addLayer(m_blurNode);
     m_masterCompositor->addLayer(m_rasterNodes[1]);
 
     m_rasterNodes[1]->m_opacity = 0.5f;

@@ -43,6 +43,8 @@ set(PROJECT_SOURCES
     src/gfx/texsys.hpp
     src/gfx/linsys.cpp
     src/gfx/linsys.hpp
+    src/gfx/blursys.cpp
+    src/gfx/blursys.hpp
 )
 
 qt_add_executable(Komal

@@ -27,7 +27,7 @@ void TexSys::createRenderPipeline(WGPUBindGroupLayout camLayout)
     WGPUShaderModule texShaderModule = wgpuDeviceCreateShaderModule(m_ctx.device, &texShaderDesc);
     if(!texShaderModule) printf("Texture shader failed\n");
 
-    // bind group layout — now just texture + sampler, no per-chunk uniform
+    // bind group layout
     WGPUBindGroupLayoutEntry entries[2]{};
 
     entries[0].binding = 0;
@@ -93,7 +93,7 @@ void TexSys::createRenderPipeline(WGPUBindGroupLayout camLayout)
     vertState.bufferCount = 2;
     vertState.buffers = vbLayouts;
 
-    //// fragment (unchanged)
+    //// fragment
     WGPUBlendComponent colorBlend{};
     colorBlend.operation = WGPUBlendOperation_Add;
     colorBlend.srcFactor = WGPUBlendFactor_SrcAlpha;
@@ -161,15 +161,68 @@ void TexSys::updateChunkObject(uint64_t chunkKey, ChunkObject& obj, AtlasSet& at
     const ChunkSlot& slot = atlas.chunkSlots.at(chunkKey);
     writeChunkToAtlas(atlas.pages[slot.page], slot, pixels);
 }
+namespace {
+    void writeGutterBorder(const GFXContext& ctx, WGPUTexture texture,
+                            uint32_t originX, uint32_t originY, const RGBA* pixels)
+    {
+        constexpr int N = Grid::CHUNK_SIZE;
+
+        std::vector<RGBA> topRow(N + 2);
+        std::vector<RGBA> bottomRow(N + 2);
+        std::vector<RGBA> leftCol(N);
+        std::vector<RGBA> rightCol(N);
+
+        topRow[0]      = pixels[0];
+        bottomRow[0]   = pixels[(N - 1) * N + 0];
+        for(int i = 0; i < N; i++)
+        {
+            topRow[i + 1]    = pixels[i];
+            bottomRow[i + 1] = pixels[(N - 1) * N + i];
+            leftCol[i]       = pixels[i * N + 0];
+            rightCol[i]      = pixels[i * N + (N - 1)];
+        }
+        topRow[N + 1]    = pixels[N - 1];
+        bottomRow[N + 1] = pixels[(N - 1) * N + (N - 1)];
+
+        auto writeRow = [&](uint32_t x, uint32_t y, uint32_t w, const RGBA* data)
+        {
+            WGPUTexelCopyTextureInfo dst{};
+            dst.texture = texture;
+            dst.origin = {x, y, 0};
+            WGPUTexelCopyBufferLayout layout{};
+            layout.bytesPerRow = w * sizeof(RGBA);
+            layout.rowsPerImage = 1;
+            WGPUExtent3D size = {w, 1, 1};
+            wgpuQueueWriteTexture(ctx.queue, &dst, data, (size_t)w * sizeof(RGBA), &layout, &size);
+        };
+        auto writeCol = [&](uint32_t x, uint32_t y, uint32_t h, const RGBA* data)
+        {
+            WGPUTexelCopyTextureInfo dst{};
+            dst.texture = texture;
+            dst.origin = {x, y, 0};
+            WGPUTexelCopyBufferLayout layout{};
+            layout.bytesPerRow = sizeof(RGBA);
+            layout.rowsPerImage = h;
+            WGPUExtent3D size = {1, h, 1};
+            wgpuQueueWriteTexture(ctx.queue, &dst, data, (size_t)h * sizeof(RGBA), &layout, &size);
+        };
+
+        writeRow(originX - 1, originY - 1, N + 2, topRow.data());
+        writeRow(originX - 1, originY + N,  N + 2, bottomRow.data());
+        writeCol(originX - 1, originY,      N,     leftCol.data());
+        writeCol(originX + N, originY,      N,     rightCol.data());
+    }
+}
+
 void TexSys::writeChunkToAtlas(AtlasPage& page, ChunkSlot slot, const RGBA* pixels)
 {
-    uint32_t pixelX = slot.slotX * Grid::CHUNK_SIZE;
-    uint32_t pixelY = slot.slotY * Grid::CHUNK_SIZE;
+    uint32_t originX = slot.slotX * AtlasPage::SLOT_STRIDE + AtlasPage::GUTTER;
+    uint32_t originY = slot.slotY * AtlasPage::SLOT_STRIDE + AtlasPage::GUTTER;
 
     WGPUTexelCopyTextureInfo dst{};
     dst.texture = page.texture;
     dst.mipLevel = 0;
-    dst.origin = {pixelX, pixelY, 0};
+    dst.origin = {originX, originY, 0};
 
     WGPUTexelCopyBufferLayout layout{};
     layout.offset = 0;
@@ -177,9 +230,11 @@ void TexSys::writeChunkToAtlas(AtlasPage& page, ChunkSlot slot, const RGBA* pixe
     layout.rowsPerImage = Grid::CHUNK_SIZE;
 
     WGPUExtent3D writeSize = {Grid::CHUNK_SIZE, Grid::CHUNK_SIZE, 1};
-    wgpuQueueWriteTexture(m_ctx.queue, &dst, pixels, 
-                            (size_t)Grid::CHUNK_SIZE * Grid::CHUNK_SIZE * sizeof(RGBA), 
+    wgpuQueueWriteTexture(m_ctx.queue, &dst, pixels,
+                            (size_t)Grid::CHUNK_SIZE * Grid::CHUNK_SIZE * sizeof(RGBA),
                             &layout, &writeSize);
+
+    writeGutterBorder(m_ctx, page.texture, originX, originY, pixels);
 }
 void TexSys::syncChunk(size_t layerIndex, uint64_t chunkKey, float worldX, float worldY, const RGBA* pixels)
 {
@@ -253,7 +308,6 @@ AtlasPage TexSys::createAtlasPage()
     groupDesc.entries = entries;
     page.bindGroup = wgpuDeviceCreateBindGroup(m_ctx.device, &groupDesc);
 
-    // per-page instance buffer, worst case = every slot occupied and visible
     WGPUBufferDescriptor instDesc{};
     instDesc.label = sv("Atlas Page Instance Buffer");
     instDesc.size = sizeof(ChunkInstance) * AtlasPage::SLOTS_TOTAL;

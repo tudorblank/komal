@@ -10,6 +10,7 @@
 #include "colsys.hpp"
 #include "texsys.hpp"
 #include "linsys.hpp"
+#include "blursys.hpp"
 
 class GFXDevice{
 public:
@@ -24,7 +25,7 @@ public:
     WGPUQueue    m_queue    = nullptr;
     WGPUTextureFormat m_surfaceFormat = WGPUTextureFormat_Undefined;
 
-    GFXContext context() const { return { m_device, m_queue, m_surfaceFormat }; }
+    GFXContext context() const { return { m_instance, m_device, m_queue, m_surfaceFormat }; }
     void passContext(Camera& cam);
     bool m_initialized = false;
 
@@ -33,6 +34,7 @@ public:
     TexSys m_TEXSYS;
     LinSys m_LINSYS;
     bool m_showBBOXs = false;
+    BlurSys m_BLURSYS;
 
     // init
 #ifdef _WIN32
@@ -55,6 +57,7 @@ public:
         m_LINSYS.releaseAll();
         m_TEXSYS.releaseAll();
         m_COLSYS.releaseAll();
+        m_BLURSYS.releaseAll();
 
         if(m_indexBuffer){
             wgpuBufferRelease(m_indexBuffer);
