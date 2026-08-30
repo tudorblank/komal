@@ -7,27 +7,13 @@ class CompositorNode;
 
 class NodeCache{
 public:
-    ChunkPool m_tilePool;
-    std::unordered_map<uint64_t, uint32_t> tileIndexMap; // key, tile index
+    SparseRasterGrid m_grid;
 
     Chunk& getOrCreateTile(CompositorNode& inputCompositor, int tileX, int tileY);
     RGBA lookupPixel(CompositorNode& inputCompositor, int worldX, int worldY);
 
-    void invalidateAll()
-    {
-        for(auto& [key, idx] : tileIndexMap)
-            m_tilePool.freeIndex(idx);
-        tileIndexMap.clear();
-    }
-    void invalidateTile(int tx, int ty)
-    {
-        uint64_t key = Key::pack(tx, ty);
-        auto it = tileIndexMap.find(key);
-        if(it == tileIndexMap.end()) return;
-
-        m_tilePool.freeIndex(it->second);
-        tileIndexMap.erase(it);
-    }
+    void invalidateAllTiles() { m_grid.clearAll(); }
+    void invalidateTile(int tx, int ty) { m_grid.freeChunk(tx, ty); }
 };
 
 // ==== COMPOSITOR NODE ====
@@ -63,9 +49,6 @@ private:
         };
     }
 
-    std::vector<std::pair<int,int>> m_pendingSyncTiles;
-    std::unordered_set<uint64_t> m_pendingSyncKeys;
-
 public:
     // init
     explicit CompositorNode(Private) {}
@@ -74,20 +57,36 @@ public:
 
     // layer stack
     std::vector<std::shared_ptr<Node>> m_layers;
+
     void addLayer(std::shared_ptr<Node> input)
     {
         listenTo(input, shared_from_this());
-        BoundsI b = input->computeBounds();
-        m_layers.push_back(std::move(input));
-        invalidateBoundsTiles(b);
-    }
 
+        std::unordered_set<uint64_t> occupied;
+        if(input) input->collectOccupiedTiles(occupied);
+
+        m_layers.push_back(std::move(input));
+
+        for(uint64_t key : occupied)
+        {
+            Key::XY p = Key::unpack(key);
+            invalidateTile(p.x, p.y);
+        }
+    }
     void removeLayer(size_t index)
     {
         if(index >= m_layers.size()) return;
-        BoundsI b = m_layers[index] ? m_layers[index]->computeBounds() : BoundsI{};
+
+        std::unordered_set<uint64_t> occupied;
+        if(m_layers[index]) m_layers[index]->collectOccupiedTiles(occupied);
+
         m_layers.erase(m_layers.begin() + index);
-        invalidateBoundsTiles(b);
+
+        for(uint64_t key : occupied)
+        {
+            Key::XY p = Key::unpack(key);
+            invalidateTile(p.x, p.y);
+        }
     }
     std::unordered_set<uint64_t> moveLayer(size_t fromIndex, size_t toIndex)
     {
@@ -148,6 +147,16 @@ public:
         }
         return result;
     }
+    void collectOccupiedTiles(std::unordered_set<uint64_t>& out) override
+    {
+        for(auto& layer : m_layers)
+            if(layer) layer->collectOccupiedTiles(out);
+    }
+
+    // gpu bake
+    bool m_gpuBakeDirty = true;
+    bool needsGPUBake() const { return m_gpuBakeDirty; }
+    void markGPUBaked()       { m_gpuBakeDirty = false; }
 
     // caching
     std::unique_ptr<NodeCache> m_cache;
@@ -155,14 +164,24 @@ public:
 
     void enableCache(bool enable)
     {
+        if(enable == m_enableCache) return;
+
         m_enableCache = enable;
-        if(enable && !m_cache) m_cache = std::make_unique<NodeCache>();
-        if(!enable) m_cache.reset();
+        m_gpuBakeDirty = true;
+
+        if(enable) m_cache = std::make_unique<NodeCache>();
+        else m_cache.reset();
     }
-    void invalidate() override
+    const Chunk& getCachedTile(int tileX, int tileY)
     {
-        if(m_cache) m_cache->invalidateAll();
-        Node::invalidate();
+        if(!m_cache) enableCache(true);
+        return m_cache->getOrCreateTile(*this, tileX, tileY);
+    }
+    void invalidateNode() override
+    {
+        m_gpuBakeDirty = true;
+        if(m_cache) m_cache->invalidateAllTiles();
+        Node::invalidateNode();
     }
     void invalidateTile(int tx, int ty) override
     {
@@ -173,33 +192,14 @@ public:
         if(m_cache) m_cache->invalidateTile(tx, ty);
         Node::invalidateTile(tx, ty);
     }
-    void invalidateBoundsTiles(const BoundsI& b)
-    {
-        TileRange r = boundsToTileRange(b);
-        if(!r.valid) return;
-
-        for(int ty = r.minTY; ty <= r.maxTY; ty++)
-            for(int tx = r.minTX; tx <= r.maxTX; tx++)
-                invalidateTile(tx, ty);
-    }
-    void collectOccupiedTiles(std::unordered_set<uint64_t>& out) override
-    {
-        for(auto& layer : m_layers)
-            if(layer) layer->collectOccupiedTiles(out);
-    }
-
+    std::vector<std::pair<int,int>> m_pendingSyncTiles;
+    std::unordered_set<uint64_t> m_pendingSyncKeys;
     std::vector<std::pair<int,int>> drainDirtySyncTiles()
     {
         auto result = std::move(m_pendingSyncTiles);
         m_pendingSyncTiles.clear();
         m_pendingSyncKeys.clear();
         return result;
-    }
-
-    const Chunk& getCachedTile(int tileX, int tileY)
-    {
-        if(!m_cache) enableCache(true);
-        return m_cache->getOrCreateTile(*this, tileX, tileY);
     }
 
     void buildTile(Chunk& out, int tileX, int tileY);

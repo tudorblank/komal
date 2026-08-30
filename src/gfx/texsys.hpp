@@ -47,7 +47,7 @@ struct AtlasPage{
     std::vector<bool> slotUsed; 
     int usedSlots = 0;
     static constexpr int PAGE_SIZE = 4096;
-    static constexpr int SLOTS_PER_ROW = PAGE_SIZE / Chunk::SIZE;
+    static constexpr int SLOTS_PER_ROW = PAGE_SIZE / Grid::CHUNK_SIZE;
     static constexpr int SLOTS_TOTAL = SLOTS_PER_ROW * SLOTS_PER_ROW;
     bool isFull() const { return usedSlots >= SLOTS_TOTAL; }
 };
@@ -59,10 +59,10 @@ inline ChunkInstance makeChunkInstance(const ChunkObject& obj, const ChunkSlot& 
     inst.posY = obj.y + obj.h * 0.5f;
     inst.scaleX = obj.w;
     inst.scaleY = obj.h;
-    inst.uvOffset[0] = (float)(slot.slotX * Chunk::SIZE) / AtlasPage::PAGE_SIZE;
-    inst.uvOffset[1] = (float)(slot.slotY * Chunk::SIZE) / AtlasPage::PAGE_SIZE;
-    inst.uvScale[0] = (float)Chunk::SIZE / AtlasPage::PAGE_SIZE;
-    inst.uvScale[1] = (float)Chunk::SIZE / AtlasPage::PAGE_SIZE;
+    inst.uvOffset[0] = (float)(slot.slotX * Grid::CHUNK_SIZE) / AtlasPage::PAGE_SIZE;
+    inst.uvOffset[1] = (float)(slot.slotY * Grid::CHUNK_SIZE) / AtlasPage::PAGE_SIZE;
+    inst.uvScale[0] = (float)Grid::CHUNK_SIZE / AtlasPage::PAGE_SIZE;
+    inst.uvScale[1] = (float)Grid::CHUNK_SIZE / AtlasPage::PAGE_SIZE;
     inst.opacity = 1.0f;
     return inst;
 }

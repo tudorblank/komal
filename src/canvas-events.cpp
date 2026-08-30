@@ -85,14 +85,14 @@ void CanvasWindow::mouseMoveEvent(QMouseEvent* e)
     if(m_mouse.leftDown)
     {
         QElapsedTimer t; t.start();
-        interpDraw(m_rawRasters[1], {255,255,255,255});
+        interpDraw(*m_rasterNodes[1], {255,255,255,255});
         m_perf.interpDrawNs += t.nsecsElapsed();
         m_perf.interpDrawCalls++;
         markDirty();
     }
     else if(m_mouse.rightDown)
     {
-        m_rawRasters[1].erasePixel((int)m_mouse.world.x, (int)m_mouse.world.y);
+        m_rasterNodes[1]->erasePixel((int)m_mouse.world.x, (int)m_mouse.world.y);
         markDirty();
     }
 

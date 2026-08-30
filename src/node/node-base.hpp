@@ -24,21 +24,7 @@ public:
     virtual RGBA computePixel(int worldX, int worldY) = 0;
     virtual BoundsI computeBounds() = 0;
     virtual Chunk* readSourceChunk(int /*tileX*/, int /*tileY*/) { return nullptr; } // RasterRootNode only
-
-    // opacity
-    float m_opacity = 1.0f;
-    float m_fill = 1.0f;
-    RGBA sampleBlended(int worldX, int worldY)
-    {
-        RGBA c = computePixel(worldX, worldY);
-        return applyOpacityFill(c, m_fill, m_opacity);
-    }
-
-    // gpu bake
-    bool m_gpuBakeDirty = true;
-    bool needsGPUBake() const { return m_gpuBakeDirty; }
-    void markGPUBaked()       { m_gpuBakeDirty = false; }
-    virtual void collectOccupiedTiles(std::unordered_set<uint64_t>& out)
+    virtual void collectOccupiedTiles(std::unordered_set<uint64_t>& out) // set of tile coords
     {
         // fallback for nodes that don't track real occupancy: whole bounding rect
         BoundsI b = computeBounds();
@@ -49,23 +35,29 @@ public:
                 out.insert(Key::pack(tx, ty));
     }
 
+    // opacity
+    float m_opacity = 1.0f;
+    float m_fill = 1.0f;
+    RGBA sampleBlended(int worldX, int worldY)
+    {
+        RGBA c = computePixel(worldX, worldY);
+        return applyOpacityFill(c, m_fill, m_opacity);
+    }
+
     // caching
     std::vector<std::weak_ptr<Node>> m_listeners;
     static void listenTo(const std::shared_ptr<Node>& input, const std::shared_ptr<Node>& listener)
     { if(input) input->m_listeners.push_back(listener); }
-
-    virtual void invalidate()
+    virtual void invalidateNode()
     {
-        m_gpuBakeDirty = true;
         std::erase_if(m_listeners, [](const std::weak_ptr<Node>& w){ return w.expired(); });
         for(auto& weak : m_listeners)
             if(auto listener = weak.lock())
-                listener->invalidate();
+                listener->invalidateNode();
     }
     virtual void invalidateTile(int tileX, int tileY)
-    {
-        propagateInvalidateTile(tileX, tileY);
-    }
+    { propagateInvalidateTile(tileX, tileY); }
+
 protected:
     void propagateInvalidateTile(int tileX, int tileY)
     {
@@ -97,10 +89,10 @@ public:
     { return std::make_shared<RasterRootNode>(Private{}, raster); }
 
     RasterData* m_inputRaster;
+
+    // compute
     Chunk* readSourceChunk(int tileX, int tileY) override
     { return m_inputRaster ? m_inputRaster->readChunk(tileX, tileY) : nullptr; }
-    
-    // compute
     RGBA computePixel(int worldX, int worldY) override
     {
         if(!m_inputRaster) return transparent();
@@ -111,7 +103,7 @@ public:
         Chunk* readChunk = readSourceChunk(cx, cy);
         if(!readChunk) return transparent();
 
-        return readChunk->pixel(Grid::worldToLocal(worldX), Grid::worldToLocal(worldY));
+        return readChunk->pixel(Grid::worldToChunkLocal(worldX), Grid::worldToChunkLocal(worldY));
     }
     BoundsI computeBounds() override
     {
@@ -119,18 +111,14 @@ public:
         { BoundsI b; b.reset(); return b; }
         return m_inputRaster->getPixelBounds();
     }
-
-    // pixel editing
     void collectOccupiedTiles(std::unordered_set<uint64_t>& out) override
     {
         if(!m_inputRaster) return;
-        for(auto& [key, idx] : m_inputRaster->m_chunkIndexMap)
-        {
-            Chunk& chunk = m_inputRaster->m_chunkPool.getChunk(idx);
-            if(chunk.getLocalBounds().valid) // skip chunks that exist but are fully transparent
-                out.insert(key);
-        }
+        for(Key::XY pos : m_inputRaster->m_grid.listOccupiedChunks())
+            out.insert(Key::pack(pos.x, pos.y));
     }
+
+    // pixel editing
     void paintPixel(int worldX, int worldY, RGBA color)
     {
         if(m_inputRaster) m_inputRaster->setPixel(worldX, worldY, color);
@@ -215,10 +203,7 @@ public:
         oldTiles.insert(newTiles.begin(), newTiles.end());
         return oldTiles;
     }
-    void reset()
-    {
-        setOffset(0, 0);
-    }
+    void reset() { setOffset(0, 0); }
 
     // compute
     RGBA computePixel(int worldX, int worldY) override
@@ -244,16 +229,17 @@ public:
     {
         if(!m_inputNode) return;
 
-        std::unordered_set<uint64_t> inputTiles;
-        m_inputNode->collectOccupiedTiles(inputTiles);
+        std::unordered_set<uint64_t> rawTiles;
+        m_inputNode->collectOccupiedTiles(rawTiles);
 
-        for(uint64_t key : inputTiles)
+        for(uint64_t key : rawTiles)
         {
-            Key::XY pos = Key::unpack(key);
-            int worldMinX = pos.x * Chunk::SIZE + m_offsetX;
-            int worldMinY = pos.y * Chunk::SIZE + m_offsetY;
-            int worldMaxX = worldMinX + Chunk::SIZE - 1;
-            int worldMaxY = worldMinY + Chunk::SIZE - 1;
+            Key::XY t = Key::unpack(key);
+
+            int worldMinX = t.x * Grid::CHUNK_SIZE + m_offsetX;
+            int worldMinY = t.y * Grid::CHUNK_SIZE + m_offsetY;
+            int worldMaxX = worldMinX + Grid::CHUNK_SIZE - 1;
+            int worldMaxY = worldMinY + Grid::CHUNK_SIZE - 1;
 
             int dstMinTX = Grid::worldToChunk(worldMinX), dstMaxTX = Grid::worldToChunk(worldMaxX);
             int dstMinTY = Grid::worldToChunk(worldMinY), dstMaxTY = Grid::worldToChunk(worldMaxY);
@@ -267,10 +253,10 @@ public:
     {
         if(!m_inputNode) { propagateInvalidateTile(tileX, tileY); return; }
 
-        int worldMinX = tileX * Chunk::SIZE + m_offsetX;
-        int worldMinY = tileY * Chunk::SIZE + m_offsetY;
-        int worldMaxX = worldMinX + Chunk::SIZE - 1;
-        int worldMaxY = worldMinY + Chunk::SIZE - 1;
+        int worldMinX = tileX * Grid::CHUNK_SIZE + m_offsetX;
+        int worldMinY = tileY * Grid::CHUNK_SIZE + m_offsetY;
+        int worldMaxX = worldMinX + Grid::CHUNK_SIZE - 1;
+        int worldMaxY = worldMinY + Grid::CHUNK_SIZE - 1;
 
         int dstMinTX = Grid::worldToChunk(worldMinX), dstMaxTX = Grid::worldToChunk(worldMaxX);
         int dstMinTY = Grid::worldToChunk(worldMinY), dstMaxTY = Grid::worldToChunk(worldMaxY);
@@ -278,14 +264,5 @@ public:
         for(int ty = dstMinTY; ty <= dstMaxTY; ty++)
             for(int tx = dstMinTX; tx <= dstMaxTX; tx++)
                 propagateInvalidateTile(tx, ty); // may fire 1-4 times depending on offset alignment
-    }
-    void invalidateBoundsTiles(const BoundsI& b)
-    {
-        TileRange r = boundsToTileRange(b);
-        if(!r.valid) return;
-
-        for(int ty = r.minTY; ty <= r.maxTY; ty++)
-            for(int tx = r.minTX; tx <= r.maxTX; tx++)
-                propagateInvalidateTile(tx, ty);
     }
 };

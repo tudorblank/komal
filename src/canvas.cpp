@@ -7,10 +7,11 @@
   #include <qpa/qplatformnativeinterface.h>
 #endif
 
+//// setup
 // constructor
 CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
 {
-    // init WGPU
+// init WGPU
 #ifdef _WIN32
     setSurfaceType(QWindow::RasterSurface);
     m_gfx.init((HWND)winId());
@@ -50,34 +51,8 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
     m_gfx.m_TEXSYS.createRenderPipeline(m_camera.m_bindLayout);
     m_gfx.m_LINSYS.createRenderPipeline(m_camera.m_screenBindLayout); 
     
-    // layers
-    m_rawRasters.emplace_back();
-    RasterData& backgroundSquare = m_rawRasters[0];
-    for(int y = 0; y < 200; y++)
-        for(int x = 0; x < 200; x++)
-            backgroundSquare.setPixel(x, y, RGBA{245, 40, 145, 255});
-
-    m_rawRasters.emplace_back(); // layer 1 - draw
-
-    m_masterCompositor = CompositorNode::create();
-    m_masterCompositor->enableCache(true);
-
-    for(auto& raster : m_rawRasters)
-    {
-        auto node = RasterRootNode::create(&raster);
-        m_rasterNodes.push_back(node);
-    }
-
-    m_moveNode = MoveNode::create(m_rasterNodes[0], 50, 50);
-    m_masterCompositor->addLayer(m_moveNode);
-    m_masterCompositor->addLayer(m_rasterNodes[1]);
-
-    m_rasterNodes[1]->m_opacity = 0.5f;
-
-    syncCompositedOutput();
-
-    // first render
-    renderFrame(); 
+    // nodes
+    setupNodes();
 
     // timer
     m_perfLogTimer.start();
@@ -112,42 +87,56 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
     });
     m_renderTimer->start();
 }
+void CanvasWindow::setupNodes()
+{
+    m_rawRasters.emplace_back();
+    RasterData& backgroundSquare = m_rawRasters[0];
+    for(int y = 0; y < 200; y++)
+        for(int x = 0; x < 200; x++)
+            backgroundSquare.setPixel(x, y, RGBA{245, 40, 145, 255});
 
-// raster data core
+    m_rawRasters.emplace_back(); // layer 1 - draw
+
+    m_masterCompositor = CompositorNode::create();
+    m_masterCompositor->enableCache(true);
+
+    for(auto& raster : m_rawRasters)
+    {
+        auto node = RasterRootNode::create(&raster);
+        m_rasterNodes.push_back(node);
+    }
+
+    m_moveNode = MoveNode::create(m_rasterNodes[0], 50, 50);
+    m_masterCompositor->addLayer(m_moveNode);
+    m_masterCompositor->addLayer(m_rasterNodes[1]);
+
+    m_rasterNodes[1]->m_opacity = 0.5f;
+
+    syncCompositedOutput(); // update changes
+
+    renderFrame(); // first render
+}
+
+//// raster data core
 void CanvasWindow::syncTileToGPU(uint64_t key)
 {
     Key::XY pos = Key::unpack(key);
     const Chunk& tile = m_masterCompositor->getCachedTile(pos.x, pos.y);
     m_gfx.m_TEXSYS.syncChunk(0, key,
-        (float)(pos.x * Chunk::SIZE), (float)(pos.y * Chunk::SIZE), tile.data);
+        (float)(pos.x * Grid::CHUNK_SIZE), (float)(pos.y * Grid::CHUNK_SIZE), tile.data);
 }
 void CanvasWindow::syncTilesImmediate(const std::unordered_set<uint64_t>& keys)
 {
     for(uint64_t key : keys)
     {
         syncTileToGPU(key);
-        m_deferredSyncKeys.erase(key);
+        m_deferredSyncKeysMaster.erase(key);
     }
 }
 size_t CanvasWindow::syncCompositedOutput()
 {
-    for(size_t i = 0; i < m_rawRasters.size(); i++)
-    {
-        RasterData& raster = m_rawRasters[i];
-        for(uint64_t key : raster.m_dirtyChunkKeys)
-        {
-            Key::XY pos = Key::unpack(key);
-            m_rasterNodes[i]->invalidateTile(pos.x, pos.y);
-
-            auto it = raster.m_chunkIndexMap.find(key);
-            if(it != raster.m_chunkIndexMap.end())
-                raster.m_chunkPool.getChunk(it->second).dirty = false;
-        }
-        raster.m_dirtyChunkKeys.clear();
-    }
-
     for(auto [cx, cy] : m_masterCompositor->drainDirtySyncTiles())
-        m_deferredSyncKeys.insert(Key::pack(cx, cy));
+        m_deferredSyncKeysMaster.insert(Key::pack(cx, cy));
 
     if(m_masterCompositor->needsGPUBake())
     {
@@ -160,7 +149,7 @@ size_t CanvasWindow::syncCompositedOutput()
             int maxCY = Grid::worldToChunk(bounds.maxY);
             for(int cy = minCY; cy <= maxCY; cy++)
                 for(int cx = minCX; cx <= maxCX; cx++)
-                    m_deferredSyncKeys.insert(Key::pack(cx, cy));
+                    m_deferredSyncKeysMaster.insert(Key::pack(cx, cy));
         }
         m_masterCompositor->markGPUBaked();
     }
@@ -175,7 +164,7 @@ size_t CanvasWindow::syncCompositedOutput()
     constexpr qint64 kSyncBudgetMs = 4; // leave headroom in the ~8ms tick for render + overhead
 
     size_t processed = 0;
-    for(auto it = m_deferredSyncKeys.begin(); it != m_deferredSyncKeys.end(); )
+    for(auto it = m_deferredSyncKeysMaster.begin(); it != m_deferredSyncKeysMaster.end(); )
     {
         if(budgetTimer.elapsed() >= kSyncBudgetMs) break;
 
@@ -187,19 +176,19 @@ size_t CanvasWindow::syncCompositedOutput()
 
         const Chunk& tile = m_masterCompositor->getCachedTile(pos.x, pos.y);
         m_gfx.m_TEXSYS.syncChunk(0, *it,
-            (float)(pos.x * Chunk::SIZE), (float)(pos.y * Chunk::SIZE), tile.data);
+            (float)(pos.x * Grid::CHUNK_SIZE), (float)(pos.y * Grid::CHUNK_SIZE), tile.data);
 
         processed++;
-        it = m_deferredSyncKeys.erase(it);
+        it = m_deferredSyncKeysMaster.erase(it);
     }
 
-    if(!m_deferredSyncKeys.empty())
+    if(!m_deferredSyncKeysMaster.empty())
         markDirty(); // keep draining the backlog next tick
 
     return processed;
 }
 
-void CanvasWindow::interpDraw(RasterData& inputRaster, RGBA color)
+void CanvasWindow::interpDraw(RasterRootNode& targetNode, RGBA color)
 {
     int x0 = (int)std::floor(m_mouse.prevWorld.x);
     int y0 = (int)std::floor(m_mouse.prevWorld.y);
@@ -213,7 +202,7 @@ void CanvasWindow::interpDraw(RasterData& inputRaster, RGBA color)
     int x = x0, y = y0;
     while(true)
     {
-        inputRaster.setPixel(x, y, color);
+        targetNode.paintPixel(x, y, color);
         if(x == x1 && y == y1) break;
 
         int e2 = 2 * err;
@@ -263,8 +252,6 @@ void CanvasWindow::logPerfIfDue()
            m_perf.frameCalls, syncAvgMsPerFrame,
            m_perf.syncTileCount, syncAvgMsPerTile,
            renderAvgMs);
-    qDebug() << "raster1 chunk count:" << m_rawRasters[1].m_chunkIndexMap.size();
-    qDebug() << "raster0 chunk count:" << m_rawRasters[0].m_chunkIndexMap.size();
 
     m_perf = PerfStats{};
     m_perfLogTimer.restart();

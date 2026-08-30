@@ -7,8 +7,8 @@ void Chunk::recomputeLocalBounds()
 
     localBounds.reset();
 
-    for(int ly = 0; ly < SIZE; ly++)
-        for(int lx = 0; lx < SIZE; lx++)
+    for(int ly = 0; ly < Grid::CHUNK_SIZE; ly++)
+        for(int lx = 0; lx < Grid::CHUNK_SIZE; lx++)
             if(pixel(lx, ly).a > 0)
                 localBounds.expand(lx, ly);
 
@@ -49,89 +49,179 @@ void ChunkPool::freeIndex(uint32_t idx)
     m_freeList.push_back(idx);
 }
 
+// ==== SPARSE RASTER GRID ====
+// index page functions
+SparseRasterGrid::IndexPage* SparseRasterGrid::readPage(uint64_t inputKey)
+{
+    if(inputKey == m_lastPageKey && m_lastPage) return m_lastPage; // cache hit
+
+    auto it = m_pages.find(inputKey);
+    if(it == m_pages.end()) return nullptr; // not found => nothing
+
+    // update cache
+    m_lastPageKey = inputKey;
+    m_lastPage = it->second.get();
+    return m_lastPage;
+}
+SparseRasterGrid::IndexPage& SparseRasterGrid::accessOrCreatePage(uint64_t inputKey)
+{
+    if(inputKey == m_lastPageKey && m_lastPage) return *m_lastPage; // cache hit
+
+    auto it = m_pages.find(inputKey);
+    if(it == m_pages.end()) // not found => create
+        it = m_pages.emplace(inputKey, std::make_unique<IndexPage>()).first;
+
+    // update cache
+    m_lastPageKey = inputKey;
+    m_lastPage = it->second.get();
+    return *m_lastPage;
+}
+void SparseRasterGrid::sweepEmptyPages()
+{
+    for(uint64_t key : m_keysToEmptyPages)
+    {
+        auto it = m_pages.find(key);
+        if(it == m_pages.end()) continue; // not found
+        if(it->second->liveCount != 0) continue; // repopulated before sweep
+
+        if(key == m_lastPageKey) { m_lastPageKey = ~0ull; m_lastPage = nullptr; } // no dangling cache
+        m_pages.erase(it);
+    }
+    m_keysToEmptyPages.clear();
+}
+void SparseRasterGrid::clearAll()
+{
+    // free pool
+    for(auto& [pageKey, page] : m_pages)
+        for(uint32_t idx : page->m_slots)
+            if(idx != EMPTY_SLOT)
+                m_pool.freeIndex(idx);
+    // free indexes
+    m_pages.clear();
+    m_keysToEmptyPages.clear();
+    // free cache
+    m_lastPageKey = ~0ull;
+    m_lastPage = nullptr;
+}
+// chunk functions
+Chunk* SparseRasterGrid::readChunk(int chunkX, int chunkY)
+{
+    int pageX = Grid::chunkToPage(chunkX);
+    int pageY = Grid::chunkToPage(chunkY);
+
+    IndexPage* page = readPage(Key::pack(pageX, pageY));
+    if(!page) return nullptr;
+
+    int lx = Grid::chunkToPageLocal(chunkX);
+    int ly = Grid::chunkToPageLocal(chunkY);
+
+    uint32_t idx = page->m_slots[ly * Grid::IDXPAGE_SIZE + lx];
+    return (idx == EMPTY_SLOT) ? nullptr : &m_pool.getChunk(idx);
+}
+Chunk& SparseRasterGrid::accessOrCreateChunk(int chunkX, int chunkY)
+{
+    int pageX = Grid::chunkToPage(chunkX);
+    int pageY = Grid::chunkToPage(chunkY);
+
+    IndexPage& page = accessOrCreatePage(Key::pack(pageX, pageY));
+
+    int lx = Grid::chunkToPageLocal(chunkX);
+    int ly = Grid::chunkToPageLocal(chunkY);
+
+    uint32_t& slot = page.m_slots[ly * Grid::IDXPAGE_SIZE + lx];
+    if(slot == EMPTY_SLOT)
+    {
+        slot = m_pool.allocateIndex();
+        page.liveCount++;
+    }
+    return m_pool.getChunk(slot);
+}
+void SparseRasterGrid::freeChunk(int chunkX, int chunkY)
+{
+    int pageX = Grid::chunkToPage(chunkX);
+    int pageY = Grid::chunkToPage(chunkY);
+
+    uint64_t pageKey = Key::pack(pageX, pageY);
+    IndexPage* page = readPage(pageKey);
+    if(!page) return;
+
+    int lx = Grid::chunkToPageLocal(chunkX);
+    int ly = Grid::chunkToPageLocal(chunkY);
+
+    uint32_t& slot = page->m_slots[ly * Grid::IDXPAGE_SIZE + lx];
+    if(slot == EMPTY_SLOT) return;
+
+    m_pool.freeIndex(slot);
+    slot = EMPTY_SLOT;
+    page->liveCount--;
+
+    if(page->liveCount == 0)
+        m_keysToEmptyPages.push_back(pageKey); // queue
+}
+std::vector<Key::XY> SparseRasterGrid::listOccupiedChunks()
+{
+    std::vector<Key::XY> result;
+
+    for(auto& [pageKey, page] : m_pages)
+    {
+        Key::XY pagePos = Key::unpack(pageKey);
+
+        for(int ly = 0; ly < Grid::IDXPAGE_SIZE; ly++)
+            for(int lx = 0; lx < Grid::IDXPAGE_SIZE; lx++)
+            {
+                uint32_t idx = page->m_slots[ly * Grid::IDXPAGE_SIZE + lx];
+                if(idx == EMPTY_SLOT) continue; // no chunk allocated -> skip
+
+                Chunk& chunk = m_pool.getChunk(idx);
+                if(chunk.isEmpty()) continue;   // a chunk exists, but empty -> skip
+
+                int chunkX = pagePos.x * Grid::IDXPAGE_SIZE + lx;
+                int chunkY = pagePos.y * Grid::IDXPAGE_SIZE + ly;
+                result.push_back({chunkX, chunkY});
+            }
+    }
+
+    return result;
+}
+
 // ==== RASTER DATA ====
-Chunk* RasterData::readChunk(int chunkX, int chunkY)
-{
-    uint64_t key = Key::pack(chunkX, chunkY);
-    auto it = m_chunkIndexMap.find(key); // search it by key
-
-    if(it == m_chunkIndexMap.end()) return nullptr; // not found
-    return &m_chunkPool.getChunk(it->second);
-}
-Chunk& RasterData::accessChunk(int chunkX, int chunkY)
-{
-    uint64_t key = Key::pack(chunkX, chunkY);
-    auto it = m_chunkIndexMap.find(key);
-
-    if(it != m_chunkIndexMap.end()) return m_chunkPool.getChunk(it->second); // found
-
-    // not found -> create
-    uint32_t idx = m_chunkPool.allocateIndex(); 
-    m_chunkIndexMap.emplace(key, idx);
-    return m_chunkPool.getChunk(idx);
-}
-void RasterData::freeChunk(int chunkX, int chunkY)
-{
-    uint64_t key = Key::pack(chunkX, chunkY);
-    auto it = m_chunkIndexMap.find(key);
-    if(it == m_chunkIndexMap.end()) return; // wasn't allocated, nothing to do
-
-    m_chunkPool.freeIndex(it->second);
-    m_chunkIndexMap.erase(it);
-
-    std::erase(m_dirtyChunkKeys, key);
-}
-
 void RasterData::setPixel(int worldX, int worldY, RGBA color)
 {
-    if(color.a == 0)
-    {
-        erasePixel(worldX, worldY);
-        return;
-    }
-    
-    // convert coords
+    if(color.a == 0) { erasePixel(worldX, worldY); return; }
+
     int chunkX = Grid::worldToChunk(worldX);
     int chunkY = Grid::worldToChunk(worldY);
-    int pxLocalX = Grid::worldToLocal(worldX);
-    int pxLocalY = Grid::worldToLocal(worldY);
+    int clX = Grid::worldToChunkLocal(worldX);
+    int clY = Grid::worldToChunkLocal(worldY);
 
-    // set pixel
     Chunk& accessedChunk = accessChunk(chunkX, chunkY);
-    accessedChunk.pixel(pxLocalX, pxLocalY) = color;
 
-    // dirty
-    if(!accessedChunk.dirty)
-    {
-        accessedChunk.dirty = true;
-        m_dirtyChunkKeys.push_back(Key::pack(chunkX, chunkY));
-    }
-    
+    RGBA& px = accessedChunk.pixel(clX, clY);
+    if(px.a == 0) accessedChunk.m_pixelCount++; // update occupancy
+    px = color;
+
     // bounds
-    accessedChunk.localBounds.expand(pxLocalX, pxLocalY); // local chunk
-    m_pixelBounds.expand(worldX, worldY);
+    accessedChunk.localBounds.expand(clX, clY); // local (chunk)
+    m_pixelBounds.expand(worldX, worldY); // global (raster)
 }
 void RasterData::erasePixel(int worldX, int worldY)
 {
-    // convert coords
     int chunkX = Grid::worldToChunk(worldX);
     int chunkY = Grid::worldToChunk(worldY);
-    int pxLocalX = Grid::worldToLocal(worldX);
-    int pxLocalY = Grid::worldToLocal(worldY);
+    int clX = Grid::worldToChunkLocal(worldX);
+    int clY = Grid::worldToChunkLocal(worldY);
 
     Chunk* chunk = readChunk(chunkX, chunkY);
     if(!chunk) return;
 
-    if(chunk->pixel(pxLocalX, pxLocalY).a == 0) return;
-    chunk->pixel(pxLocalX, pxLocalY) = {0, 0, 0, 0};
+    if(chunk->pixel(clX, clY).a == 0) return; // already transparent
 
-    if(!chunk->dirty)
-    {
-        chunk->dirty = true;
-        m_dirtyChunkKeys.push_back(Key::pack(chunkX, chunkY));
-    }
+    chunk->pixel(clX, clY) = {0, 0, 0, 0};
+    chunk->m_pixelCount--;
 
-    markPixelErased(*chunk, chunkX, chunkY, pxLocalX, pxLocalY);
+    markPixelErased(*chunk, chunkX, chunkY, clX, clY);
+
+    // if(chunk->isEmpty()) freeChunk(chunkX, chunkY); // self-cleaning
 }
 void RasterData::markPixelErased(Chunk& chunk, int chunkX, int chunkY, int lx, int ly)
 {
@@ -167,14 +257,15 @@ void RasterData::recomputePixelBounds()
 {
     m_pixelBounds.reset();
 
-    for(auto& [key, idx] : m_chunkIndexMap)
+    for(Key::XY pos : m_grid.listOccupiedChunks())
     {
-        Chunk& chunk = m_chunkPool.getChunk(idx);
-        const BoundsI& local = chunk.getLocalBounds();
-        if(!local.valid) continue; // empty chunk, skip
+        Chunk* chunk = m_grid.readChunk(pos.x, pos.y);
+        if(!chunk) continue;
+
+        const BoundsI& local = chunk->getLocalBounds();
+        if(!local.valid) continue;
 
         // convert coords
-        Key::XY pos = Key::unpack(key);
         int worldMinX = Grid::chunkToWorld(pos.x, local.minX);
         int worldMaxX = Grid::chunkToWorld(pos.x, local.maxX);
         int worldMinY = Grid::chunkToWorld(pos.y, local.minY);

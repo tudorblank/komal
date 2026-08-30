@@ -55,15 +55,17 @@ private:
     GFXDevice m_gfx;
     Camera m_camera;
 
+    // nodes - rasters
     std::deque<RasterData> m_rawRasters;
     std::vector<std::shared_ptr<RasterRootNode>> m_rasterNodes;
     std::shared_ptr<MoveNode> m_moveNode;
     std::shared_ptr<CompositorNode> m_masterCompositor;
+    void setupNodes();
 
-    void interpDraw(RasterData& inputRaster, RGBA color);
+    void interpDraw(RasterRootNode& targetNode, RGBA color);
     
     // sync
-    std::unordered_set<uint64_t> m_deferredSyncKeys;
+    std::unordered_set<uint64_t> m_deferredSyncKeysMaster;
     size_t syncCompositedOutput(); // returns dirty-tile count, for perf logging
     void syncTileToGPU(uint64_t key);
     void syncTilesImmediate(const std::unordered_set<uint64_t>& keys);

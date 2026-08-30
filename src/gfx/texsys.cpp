@@ -163,8 +163,8 @@ void TexSys::updateChunkObject(uint64_t chunkKey, ChunkObject& obj, AtlasSet& at
 }
 void TexSys::writeChunkToAtlas(AtlasPage& page, ChunkSlot slot, const RGBA* pixels)
 {
-    uint32_t pixelX = slot.slotX * Chunk::SIZE;
-    uint32_t pixelY = slot.slotY * Chunk::SIZE;
+    uint32_t pixelX = slot.slotX * Grid::CHUNK_SIZE;
+    uint32_t pixelY = slot.slotY * Grid::CHUNK_SIZE;
 
     WGPUTexelCopyTextureInfo dst{};
     dst.texture = page.texture;
@@ -173,12 +173,12 @@ void TexSys::writeChunkToAtlas(AtlasPage& page, ChunkSlot slot, const RGBA* pixe
 
     WGPUTexelCopyBufferLayout layout{};
     layout.offset = 0;
-    layout.bytesPerRow = Chunk::SIZE * sizeof(RGBA);
-    layout.rowsPerImage = Chunk::SIZE;
+    layout.bytesPerRow = Grid::CHUNK_SIZE * sizeof(RGBA);
+    layout.rowsPerImage = Grid::CHUNK_SIZE;
 
-    WGPUExtent3D writeSize = {Chunk::SIZE, Chunk::SIZE, 1};
+    WGPUExtent3D writeSize = {Grid::CHUNK_SIZE, Grid::CHUNK_SIZE, 1};
     wgpuQueueWriteTexture(m_ctx.queue, &dst, pixels, 
-                            (size_t)Chunk::SIZE * Chunk::SIZE * sizeof(RGBA), 
+                            (size_t)Grid::CHUNK_SIZE * Grid::CHUNK_SIZE * sizeof(RGBA), 
                             &layout, &writeSize);
 }
 void TexSys::syncChunk(size_t layerIndex, uint64_t chunkKey, float worldX, float worldY, const RGBA* pixels)
@@ -192,13 +192,13 @@ void TexSys::syncChunk(size_t layerIndex, uint64_t chunkKey, float worldX, float
     auto it = texMap.find(chunkKey);
     if(it == texMap.end())
         texMap.emplace(chunkKey,
-            registerChunk(atlas, chunkKey, worldX, worldY, (float)Chunk::SIZE, (float)Chunk::SIZE, pixels));
+            registerChunk(atlas, chunkKey, worldX, worldY, (float)Grid::CHUNK_SIZE, (float)Grid::CHUNK_SIZE, pixels));
     else
     {
         it->second.x = worldX;
         it->second.y = worldY;
-        it->second.w = (float)Chunk::SIZE;
-        it->second.h = (float)Chunk::SIZE;
+        it->second.w = (float)Grid::CHUNK_SIZE;
+        it->second.h = (float)Grid::CHUNK_SIZE;
         updateChunkObject(chunkKey, it->second, atlas, pixels);
     }
 
