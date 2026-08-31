@@ -10,12 +10,16 @@
 
 #include <webgpu.h>
 #include "gfx/gfxdevice.hpp"
+
 #include "input.hpp"
-#include "raster.hpp"
+
+#include "raster/raster-utils.hpp"
+#include "raster/raster-base.hpp"
+
 #include "node/node-base.hpp"
 #include "node/node-compositor.hpp"
 
-#include "nodegraphview.hpp"
+#include "graphview.hpp"
 
 #include <vector>
 #include <algorithm>

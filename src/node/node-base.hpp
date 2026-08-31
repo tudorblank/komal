@@ -1,5 +1,7 @@
 #pragma once
-#include "raster.hpp"
+
+#include "raster/raster-utils.hpp"
+#include "raster/raster-base.hpp"
 
 #include "gfx/blursys.hpp"
 

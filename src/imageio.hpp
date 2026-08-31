@@ -1,5 +1,7 @@
 #pragma once
-#include "raster.hpp"
+
+#include "raster/raster-utils.hpp"
+#include "raster/raster-base.hpp"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"

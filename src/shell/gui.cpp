@@ -1,6 +1,6 @@
 #include "gui.hpp"
 #include "canvas.hpp"
-#include "nodegraphview.hpp"
+#include "graphview.hpp"
 
 #include <QApplication>
 #include <QWidget>

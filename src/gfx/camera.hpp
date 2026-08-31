@@ -2,7 +2,7 @@
 
 #include <QMatrix4x4>
 #include <webgpu.h>
-#include "raster.hpp"
+#include "raster/raster-utils.hpp"
 #include "gfxcontext.hpp"
 
 // CAMERA

@@ -1,4 +1,4 @@
-#include "raster.hpp"
+#include "raster-base.hpp"
 
 // ==== CHUNK ====
 void Chunk::recomputeLocalBounds()

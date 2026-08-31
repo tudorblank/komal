@@ -21,20 +21,25 @@ endif()
 
 set(PROJECT_SOURCES
     src/main.cpp
-    src/gui.cpp
-    src/gui.hpp
-    src/canvas.cpp
-    src/canvas.hpp
-    src/canvas-events.cpp
     src/input.hpp
-    src/raster.cpp
-    src/raster.hpp
+    src/imageio.hpp
+
+    src/shell/gui.cpp
+    src/shell/gui.hpp
+    src/shell/canvas.cpp
+    src/shell/canvas.hpp
+    src/shell/canvas-events.cpp
+    src/shell/graphview.cpp
+    src/shell/graphview.hpp
+
+    src/raster/raster-base.cpp
+    src/raster/raster-base.hpp
+    src/raster/raster-utils.hpp
+
     src/node/node-base.hpp
     src/node/node-compositor.cpp
     src/node/node-compositor.hpp
-    src/imageio.hpp
-    src/nodegraphview.cpp
-    src/nodegraphview.hpp
+
     src/gfx/gfxcontext.hpp
     src/gfx/gfxdevice.cpp
     src/gfx/gfxdevice.hpp

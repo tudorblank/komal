@@ -1,4 +1,4 @@
-#include "nodegraphview.hpp"
+#include "graphview.hpp"
 
 #include <QGraphicsRectItem>
 #include <QGraphicsTextItem>

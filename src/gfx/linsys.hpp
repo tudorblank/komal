@@ -4,7 +4,7 @@
 
 #include <webgpu.h>
 #include "gfxcontext.hpp"
-#include "raster.hpp"
+#include "raster/raster-utils.hpp"
 
 #include <vector>
 #include <unordered_map>
