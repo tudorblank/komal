@@ -13,6 +13,7 @@ struct Vec2{
 struct RGBA{
     uint8_t r, g, b, a;
 };
+inline RGBA transparent() { return {0, 0, 0, 0}; }
 
 class Grid{
 public:

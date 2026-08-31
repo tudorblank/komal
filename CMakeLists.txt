@@ -32,6 +32,7 @@ set(PROJECT_SOURCES
     src/node/node-base.hpp
     src/node/node-compositor.cpp
     src/node/node-compositor.hpp
+    src/imageio.hpp
     src/gfx/gfxcontext.hpp
     src/gfx/gfxdevice.cpp
     src/gfx/gfxdevice.hpp
@@ -56,12 +57,12 @@ target_link_libraries(Komal PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
 )
 
-# --- wgpu-native (auto-downloaded, see cmake/FetchWgpuNative.cmake) ---
 include(${CMAKE_SOURCE_DIR}/cmake/FetchWgpuNative.cmake)
 
 target_include_directories(Komal PRIVATE
     "${WGPU_NATIVE_INCLUDE_DIR}"
-    "${CMAKE_SOURCE_DIR}/include"
+    "${CMAKE_SOURCE_DIR}/external"
+    "${CMAKE_SOURCE_DIR}/external/stb"
     "${CMAKE_SOURCE_DIR}/src"
 )
 

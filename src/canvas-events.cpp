@@ -1,4 +1,5 @@
 #include "canvas.hpp"
+#include "imageio.hpp"
 
 void CanvasWindow::resizeEvent(QResizeEvent*)
 {
@@ -153,5 +154,20 @@ void CanvasWindow::keyPressEvent(QKeyEvent* e)
         auto affected = m_moveNode->setOffset(1000, 1000);
         syncTilesImmediate(affected);
         markDirty();
+    }
+    if(e->key() == Qt::Key_I)
+    {
+        loadImageIntoRaster("test.png", m_rawRasters[1], 0, 0);
+
+        m_rasterNodes[1]->invalidateNode();
+
+        std::unordered_set<uint64_t> affected;
+        m_rasterNodes[1]->collectOccupiedTiles(affected);
+        syncTilesImmediate(affected);
+        markDirty();
+    }
+    if(e->key() == Qt::Key_E) // export test
+    {
+        exportRasterToImage(m_rawRasters[1], "output.png");
     }
 }

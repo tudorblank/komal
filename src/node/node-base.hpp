@@ -10,7 +10,6 @@
 #include <cstring>
 #include <algorithm>
 
-inline RGBA transparent() { return {0, 0, 0, 0}; }
 inline RGBA applyOpacityFill(RGBA c, float fill, float opacity)
 {
     if(fill < 1.0f)    c.a = (uint8_t)(c.a * fill + 0.5f);
