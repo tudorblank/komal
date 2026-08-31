@@ -1,5 +1,6 @@
 #include "gui.hpp"
 #include "canvas.hpp"
+#include "nodegraphview.hpp"
 
 #include <QApplication>
 #include <QWidget>
@@ -115,6 +116,17 @@ komal::komal(QWidget *parent)
                 font-size: 11px;
             }
         )");
+    //
+
+    // --- Node Graph View ---
+        NodeGraphView* graphView = new NodeGraphView();
+        graphView->setSnapshot(m_canvasWindow->buildGraphSnapshot());
+
+        QDockWidget* graphDock = new QDockWidget("Node Graph", this);
+        graphDock->setObjectName("GraphDock");
+        graphDock->setWidget(graphView);
+        addDockWidget(Qt::LeftDockWidgetArea, graphDock);
+        graphDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
     //
 
     // --- Toolbar ---

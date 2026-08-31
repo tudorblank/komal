@@ -15,6 +15,8 @@
 #include "node/node-base.hpp"
 #include "node/node-compositor.hpp"
 
+#include "nodegraphview.hpp"
+
 #include <vector>
 #include <algorithm>
 #include <cstdint>
@@ -39,6 +41,8 @@ public:
     explicit CanvasWindow(QWindow* parent = nullptr);
     // destructor
     ~CanvasWindow() { if(m_renderTimer) m_renderTimer->stop(); }
+
+    GraphSnapshot buildGraphSnapshot() const;
 
 protected:
     // events

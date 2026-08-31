@@ -33,6 +33,8 @@ set(PROJECT_SOURCES
     src/node/node-compositor.cpp
     src/node/node-compositor.hpp
     src/imageio.hpp
+    src/nodegraphview.cpp
+    src/nodegraphview.hpp
     src/gfx/gfxcontext.hpp
     src/gfx/gfxdevice.cpp
     src/gfx/gfxdevice.hpp

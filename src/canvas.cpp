@@ -262,3 +262,22 @@ void CanvasWindow::logPerfIfDue()
     m_perf = PerfStats{};
     m_perfLogTimer.restart();
 }
+
+// graph view snapshop
+GraphSnapshot CanvasWindow::buildGraphSnapshot() const
+{
+    GraphSnapshot snap;
+
+    snap.nodes.push_back({"raster0", "Raster (bg)", 0, 0});
+    snap.nodes.push_back({"move", "Move", 220, 0});
+    snap.nodes.push_back({"blur", "Blur", 440, 0});
+    snap.nodes.push_back({"raster1", "Raster (draw)", 220, 150});
+    snap.nodes.push_back({"compositor", "Compositor", 660, 75});
+
+    snap.edges.push_back({"raster0", "move"});
+    snap.edges.push_back({"move", "blur"});
+    snap.edges.push_back({"blur", "compositor"});
+    snap.edges.push_back({"raster1", "compositor"});
+
+    return snap;
+}
