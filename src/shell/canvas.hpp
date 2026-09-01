@@ -4,9 +4,9 @@
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QMatrix4x4>
-
 #include <QMouseEvent>
 #include <QWheelEvent>
+#include <QExposeEvent>
 
 #include <webgpu.h>
 #include "gfx/gfxdevice.hpp"
@@ -20,7 +20,9 @@
 
 #include "input.hpp"
 #include "graphview.hpp"
+#include "project.hpp"
 
+#include <memory>
 #include <vector>
 #include <algorithm>
 #include <cstdint>
@@ -41,25 +43,17 @@ struct PerfStats{
 class CanvasWindow : public QWindow{
     Q_OBJECT
 public:
-    // constructor
-    explicit CanvasWindow(QWindow* parent = nullptr);
-    // destructor
+    explicit CanvasWindow(std::shared_ptr<Project> project, QWindow* parent = nullptr);
     ~CanvasWindow() { if(m_renderTimer) m_renderTimer->stop(); }
-
-    GraphSnapshot buildGraphSnapshot() const;
 
 private:
     MouseHandler m_mouse;
 
     GFXDevice m_gfx;
     Camera m_camera;
+    std::shared_ptr<Project> m_project;
 
     // nodes - rasters
-    std::deque<RasterData> m_rawRasters;
-    std::vector<std::shared_ptr<RasterRootNode>> m_rasterNodes;
-    std::shared_ptr<MoveNode> m_moveNode;
-    std::shared_ptr<BlurNode> m_blurNode;
-    std::shared_ptr<CompositorNode> m_masterCompositor;
     void setupNodes();
 
     void interpDraw(RasterRootNode& targetNode, RGBA color);
@@ -70,10 +64,12 @@ private:
     void syncTileToGPU(uint64_t key);
     void syncTilesImmediate(const std::unordered_set<uint64_t>& keys);
     void renderFrame();
+    void reconfigureSurface();
     
     QTimer* m_renderTimer = nullptr;
     bool m_needsRender = false;
     void markDirty() { m_needsRender = true; }
+    QTimer* m_resizeDebounce = nullptr;
 
     // debug
     PerfStats m_perf;
@@ -84,15 +80,19 @@ protected:
     // events
     void resizeEvent(QResizeEvent* e) override
     {
+        Q_UNUSED(e);
         if(!m_gfx.m_initialized) return;
         if(width() <= 0 || height() <= 0) return;
 
-        m_gfx.configSurface(width(), height());
+        m_resizeDebounce->start();
+    }
+    void exposeEvent(QExposeEvent* e) override
+    {
+        Q_UNUSED(e);
+        if(!m_gfx.m_initialized) return;
 
-        m_camera.update((float)width(), (float)height());
-        m_camera.updateScreen(width(), height());
-        
-        markDirty();
+        if(isExposed())
+            reconfigureSurface();
     }
     void mousePressEvent(QMouseEvent* e) override
     {
@@ -165,15 +165,21 @@ protected:
 
         if(m_mouse.leftDown)
         {
-            QElapsedTimer t; t.start();
-            interpDraw(*m_rasterNodes[1], {255,255,255,255});
-            m_perf.interpDrawNs += t.nsecsElapsed();
-            m_perf.interpDrawCalls++;
-            markDirty();
+            auto raster1 = std::dynamic_pointer_cast<RasterRootNode>(m_project->nodes["raster1"]);
+            if(raster1)
+            {
+                QElapsedTimer t; t.start();
+                interpDraw(*raster1, {255,255,255,255});
+                m_perf.interpDrawNs += t.nsecsElapsed();
+                m_perf.interpDrawCalls++;
+                markDirty();
+            }
         }
         else if(m_mouse.rightDown)
         {
-            m_rasterNodes[1]->erasePixel((int)m_mouse.world.x, (int)m_mouse.world.y);
+            auto raster1 = std::dynamic_pointer_cast<RasterRootNode>(m_project->nodes["raster1"]);
+            if(raster1)
+                raster1->erasePixel((int)m_mouse.world.x, (int)m_mouse.world.y);
             markDirty();
         }
 
@@ -212,11 +218,15 @@ protected:
     }
     void keyPressEvent(QKeyEvent* e) override
     {
+        auto raster0 = std::dynamic_pointer_cast<RasterRootNode>(m_project->nodes["raster0"]);
+        auto raster1 = std::dynamic_pointer_cast<RasterRootNode>(m_project->nodes["raster1"]);
+        auto moveNode = std::dynamic_pointer_cast<MoveNode>(m_project->nodes["move"]);
+
         if(e->key() == Qt::Key_A)
         {
-            if(m_rasterNodes.size() >= 2)
+            if(raster0 && raster1)
             {
-                auto affected = m_masterCompositor->moveLayer(0, 1);
+                auto affected = m_project->masterCompositor->moveLayer(0, 1);
                 syncTilesImmediate(affected);
                 markDirty();
             }
@@ -224,30 +234,39 @@ protected:
         }
         if(e->key() == Qt::Key_Z)
         {
-            auto affected = m_moveNode->setOffset(500, 500);
-            syncTilesImmediate(affected);
-            markDirty();
+            if(moveNode)
+            {
+                auto affected = moveNode->setOffset(500, 500);
+                syncTilesImmediate(affected);
+                markDirty();
+            }
         }
         if(e->key() == Qt::Key_B)
         {
-            auto affected = m_moveNode->setOffset(1000, 1000);
-            syncTilesImmediate(affected);
-            markDirty();
+            if(moveNode)
+            {
+                auto affected = moveNode->setOffset(1000, 1000);
+                syncTilesImmediate(affected);
+                markDirty();
+            }
         }
         if(e->key() == Qt::Key_I)
         {
-            loadImageIntoRaster("test.png", m_rawRasters[1], 0, 0);
+            loadImageIntoRaster("test.png", m_project->rawRasters[1], 0, 0);
 
-            m_rasterNodes[1]->invalidateNode();
+            if(raster1)
+            {
+                raster1->invalidateNode();
 
-            std::unordered_set<uint64_t> affected;
-            m_rasterNodes[1]->collectOccupiedTiles(affected);
-            syncTilesImmediate(affected);
-            markDirty();
+                std::unordered_set<uint64_t> affected;
+                raster1->collectOccupiedTiles(affected);
+                syncTilesImmediate(affected);
+                markDirty();
+            }
         }
         if(e->key() == Qt::Key_E) // export test
         {
-            exportRasterToImage(m_rawRasters[1], "output.png");
+            exportRasterToImage(m_project->rawRasters[1], "output.png");
         }
     }
 };

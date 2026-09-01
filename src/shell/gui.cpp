@@ -1,6 +1,4 @@
 #include "gui.hpp"
-#include "canvas.hpp"
-#include "graphview.hpp"
 
 #include <QApplication>
 #include <QWidget>
@@ -16,11 +14,25 @@
 #include <QHBoxLayout>
 #include <QLabel>
 
-komal::komal(QWidget *parent)
+UserInterface::UserInterface(QWidget *parent)
     : QMainWindow(parent)
 {
     setWindowTitle("Komal Studio");
     resize(1400, 860);
+    setStyleSheet(R"(
+        QDockWidget
+        {
+            color: #d0d0d0;
+            font-size: 11px;
+        }
+
+        QDockWidget::title
+        {
+            background: #111;
+            padding: 4px;
+        }
+    )");
+    m_project = std::make_shared<Project>();
 
     // --- Menu Bar ---
         //File
@@ -86,7 +98,7 @@ komal::komal(QWidget *parent)
     //
 
     // --- Canvas Window ---
-        m_canvasWindow = new CanvasWindow();
+        m_canvasWindow = new CanvasWindow(m_project);
 
         QWidget *canvasContainer = QWidget::createWindowContainer(m_canvasWindow, this);
         canvasContainer->setMinimumSize(400, 300);
@@ -99,7 +111,7 @@ komal::komal(QWidget *parent)
         canvasContainer->setPalette(pal);
 
         // dock
-        QDockWidget *canvasDock = new QDockWidget("Canvas", this);
+        QDockWidget *canvasDock = new QDockWidget("Canvas View", this);
         canvasDock->setObjectName("CanvasDock");
         canvasDock->setWidget(canvasContainer);
         canvasDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
@@ -108,26 +120,19 @@ komal::komal(QWidget *parent)
         addDockWidget(Qt::RightDockWidgetArea, canvasDock);
 
         connect(showRightPanel, &QAction::toggled, canvasDock, &QDockWidget::setVisible);
-
-        canvasDock->setStyleSheet(R"(
-            QDockWidget
-            {
-                color: #d0d0d0;
-                font-size: 11px;
-            }
-        )");
     //
 
     // --- Node Graph View ---
-        NodeGraphView* graphView = new NodeGraphView();
-        graphView->setSnapshot(m_canvasWindow->buildGraphSnapshot());
+        m_graphView = new NodeGraphView(m_project);
 
-        QDockWidget* graphDock = new QDockWidget("Node Graph", this);
+        QDockWidget* graphDock = new QDockWidget("Graph View", this);
         graphDock->setObjectName("GraphDock");
-        graphDock->setWidget(graphView);
+        graphDock->setWidget(m_graphView);
         addDockWidget(Qt::LeftDockWidgetArea, graphDock);
         graphDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
     //
+    // even split for canvas + graph views
+    resizeDocks({graphDock, canvasDock}, {width() / 2, width() / 2}, Qt::Horizontal);
 
     // --- Toolbar ---
         QToolBar *toolbar = new QToolBar("Toolbar", this);
@@ -160,9 +165,9 @@ komal::komal(QWidget *parent)
             return a;
         };
 
-        addTool("edit-cut",     "Select");
-        addTool("edit-cut",     "Draw");
-        addTool("edit-cut",     "Cut");
+        addTool("edit-cut", "Select");
+        addTool("edit-cut", "Draw");
+        addTool("edit-cut", "Cut");
 
         toolbar->addSeparator();
 
@@ -225,4 +230,4 @@ komal::komal(QWidget *parent)
     //
 }
 
-komal::~komal() {}
+UserInterface::~UserInterface() {}

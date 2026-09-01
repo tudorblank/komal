@@ -1,4 +1,5 @@
 #include "graphview.hpp"
+#include "project.hpp"
 
 #include <QGraphicsRectItem>
 #include <QGraphicsTextItem>
@@ -172,8 +173,8 @@ void MiniMapWidget::mousePressEvent(QMouseEvent* event)
 }
 
 // ==== NodeGraphView ====
-NodeGraphView::NodeGraphView(QWidget* parent)
-    : QGraphicsView(parent)
+NodeGraphView::NodeGraphView(std::shared_ptr<Project> project, QWidget* parent)
+    : QGraphicsView(parent), m_project(std::move(project))
 {
     m_scene = new QGraphicsScene(this);
     setScene(m_scene);
@@ -198,6 +199,8 @@ NodeGraphView::NodeGraphView(QWidget* parent)
         m_miniMap->move(width() - m_miniMap->width() - kMargin,
                         height() - m_miniMap->height() - kMargin);
     });
+    connect(m_project.get(), &Project::nodeGraphChanged, this, &NodeGraphView::refreshFromProject);
+    refreshFromProject();
 
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -243,6 +246,13 @@ void NodeGraphView::paintEvent(QPaintEvent* event)
 {
     QGraphicsView::paintEvent(event);
     updateMiniMap();
+}
+void NodeGraphView::mouseReleaseEvent(QMouseEvent* event)
+{
+    QGraphicsView::mouseReleaseEvent(event);
+
+    for(auto& [id, node] : m_nodeItems)
+        m_project->setNodePosition(id, (float)node->pos().x(), (float)node->pos().y());
 }
 
 void NodeGraphView::frameAllNodes()
@@ -296,10 +306,14 @@ void NodeGraphView::drawBackground(QPainter* painter, const QRectF& rect)
         painter->drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y));
 }
 
+void NodeGraphView::showEvent(QShowEvent* event)
+{
+    QGraphicsView::showEvent(event);
+    frameAllNodes();
+}
+
 void NodeGraphView::setSnapshot(const GraphSnapshot& snapshot)
 {
-    auto* edge = new EdgeItem();
-
     for(auto& [id, node] : m_nodeItems)
     {
         for(EdgeItem* edge : node->m_connectedEdges)
@@ -368,6 +382,10 @@ void NodeGraphView::setSnapshot(const GraphSnapshot& snapshot)
     frameAllNodes();
 
     updateMiniMap();
+}
+void NodeGraphView::refreshFromProject()
+{
+    setSnapshot(m_project->buildGraphSnapshot());
 }
 
 void NodeGraphView::updateMiniMap()

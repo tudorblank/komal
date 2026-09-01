@@ -10,6 +10,8 @@
 #include <QKeyEvent>
 #include <QString>
 
+class Project;
+
 #include <vector>
 #include <unordered_map>
 #include <algorithm>
@@ -89,8 +91,9 @@ private:
 class NodeGraphView : public QGraphicsView{
     Q_OBJECT
 public:
-    explicit NodeGraphView(QWidget* parent = nullptr);
+    explicit NodeGraphView(std::shared_ptr<Project> project, QWidget* parent = nullptr);
     void setSnapshot(const GraphSnapshot& snapshot);
+    void refreshFromProject();
     void frameAllNodes();
 
 protected:
@@ -99,8 +102,11 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void showEvent(QShowEvent* event) override;
 
 private:
+    std::shared_ptr<Project> m_project;
     QGraphicsScene* m_scene;
     std::unordered_map<QString, NodeItem*> m_nodeItems;
     std::vector<EdgeItem*> m_edgeItems;

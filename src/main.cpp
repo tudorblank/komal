@@ -10,7 +10,7 @@ int main(int argc, char *argv[])
     qputenv("QT_QPA_PLATFORM", "xcb");
 #endif
     QApplication app(argc, argv);
-    komal w;
+    UserInterface w;
     w.show();
     app.setWindowIcon(QIcon("komal.ico"));
     return QApplication::exec();

@@ -12,6 +12,8 @@
 #include <cstring>
 #include <algorithm>
 
+#include <QString>
+
 inline RGBA applyOpacityFill(RGBA c, float fill, float opacity)
 {
     if(fill < 1.0f)    c.a = (uint8_t)(c.a * fill + 0.5f);
@@ -25,6 +27,12 @@ struct TileRange { int minTX, maxTX, minTY, maxTY; bool valid; };
 class Node : public std::enable_shared_from_this<Node>{
 public:
     virtual ~Node() {}
+
+    struct Meta{
+        float x, y;
+        QString label;
+    };
+    Meta m_meta;
 
     virtual RGBA computePixel(int worldX, int worldY) = 0;
     virtual BoundsI computeBounds() = 0;

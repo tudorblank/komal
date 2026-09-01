@@ -7,15 +7,21 @@
 #include <QStatusBar>
 #include <QAction>
 
-class CanvasWindow;
+#include <memory>
 
-class komal : public QMainWindow
+#include "canvas.hpp"
+#include "graphview.hpp"
+#include "project.hpp"
+
+class UserInterface : public QMainWindow
 {
     Q_OBJECT
 public:
-    komal(QWidget *parent = nullptr);
-    ~komal();
+    UserInterface(QWidget *parent = nullptr);
+    ~UserInterface();
 
 private:
-    CanvasWindow *m_canvasWindow = nullptr;
+    std::shared_ptr<Project> m_project = nullptr;
+    CanvasWindow* m_canvasWindow = nullptr;
+    NodeGraphView* m_graphView = nullptr;
 };

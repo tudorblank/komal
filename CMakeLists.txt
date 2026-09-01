@@ -21,6 +21,8 @@ endif()
 
 set(PROJECT_SOURCES
     src/main.cpp
+    src/project.hpp
+    src/project.cpp
 
     src/shell/gui.cpp
     src/shell/gui.hpp

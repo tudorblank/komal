@@ -9,7 +9,8 @@
 
 //// setup
 // constructor
-CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
+CanvasWindow::CanvasWindow(std::shared_ptr<Project> project, QWindow* parent)
+    : QWindow(parent), m_project(std::move(project))
 {
 // init WGPU
 #ifdef _WIN32
@@ -34,6 +35,13 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
         m_gfx.init("xcb", display, xwindow);
     }
 #endif
+
+    m_resizeDebounce = new QTimer(this);
+    m_resizeDebounce->setSingleShot(true);
+    m_resizeDebounce->setInterval(80);
+    connect(m_resizeDebounce, &QTimer::timeout, this, [this]() {
+        reconfigureSurface();
+    });
 
     if(!m_gfx.m_initialized) return;
     m_gfx.configSurface(width(), height());
@@ -91,43 +99,51 @@ CanvasWindow::CanvasWindow(QWindow* parent) : QWindow(parent)
 // nodes
 void CanvasWindow::setupNodes()
 {
-    m_rawRasters.emplace_back();
-    RasterData& backgroundSquare = m_rawRasters[0];
+    m_project->rawRasters.emplace_back();
+    RasterData& backgroundSquare = m_project->rawRasters[0];
     for(int y = 0; y < 200; y++)
         for(int x = 0; x < 200; x++)
             backgroundSquare.setPixel(x, y, RGBA{245, 40, 145, 255});
 
-    m_rawRasters.emplace_back(); // layer 1 - draw
+    m_project->rawRasters.emplace_back(); // layer 1 - draw
 
-    m_masterCompositor = CompositorNode::create();
-    m_masterCompositor->enableCache(true);
+    m_project->masterCompositor = CompositorNode::create();
+    m_project->masterCompositor->enableCache(true);
 
-    for(auto& raster : m_rawRasters)
-    {
-        auto node = RasterRootNode::create(&raster);
-        m_rasterNodes.push_back(node);
-    }
+    std::vector<std::shared_ptr<RasterRootNode>> rasterNodes;
+    for(auto& raster : m_project->rawRasters)
+        rasterNodes.push_back(RasterRootNode::create(&raster));
 
-    m_moveNode = MoveNode::create(m_rasterNodes[0], 50, 50);
+    auto moveNode = MoveNode::create(rasterNodes[0], 50, 50);
+    auto blurNode = BlurNode::create(moveNode, 30);
+    blurNode->setBlurSys(&m_gfx.m_BLURSYS);
 
-    m_blurNode = BlurNode::create(m_moveNode, 30); // node, radius
-    m_blurNode->setBlurSys(&m_gfx.m_BLURSYS);
+    m_project->masterCompositor->addLayer(blurNode);
+    m_project->masterCompositor->addLayer(rasterNodes[1]);
+    rasterNodes[1]->m_opacity = 0.5f;
 
-    m_masterCompositor->addLayer(m_blurNode);
-    m_masterCompositor->addLayer(m_rasterNodes[1]);
+    m_project->addNode("raster0", rasterNodes[0], "Raster (bg)", 0, 0);
+    m_project->addNode("move", moveNode, "Move", 220, 0);
+    m_project->addNode("blur", blurNode, "Blur", 440, 0);
+    m_project->addNode("raster1", rasterNodes[1], "Raster (draw)", 220, 150);
+    m_project->addNode("compositor", m_project->masterCompositor, "Compositor", 660, 75);
 
-    m_rasterNodes[1]->m_opacity = 0.5f;
+    m_project->addEdge("raster0", "move");
+    m_project->addEdge("move", "blur");
+    m_project->addEdge("blur", "compositor");
+    m_project->addEdge("raster1", "compositor");
 
-    syncCompositedOutput(); // update changes
+    syncCompositedOutput();
+    renderFrame();
 
-    renderFrame(); // first render
+    emit m_project->nodeGraphChanged();
 }
 
 //// raster data core
 void CanvasWindow::syncTileToGPU(uint64_t key)
 {
     Key::XY pos = Key::unpack(key);
-    const Chunk& tile = m_masterCompositor->getCachedTile(pos.x, pos.y);
+    const Chunk& tile = m_project->masterCompositor->getCachedTile(pos.x, pos.y);
     m_gfx.m_TEXSYS.syncChunk(0, key,
         (float)(pos.x * Grid::CHUNK_SIZE), (float)(pos.y * Grid::CHUNK_SIZE), tile.data);
 }
@@ -141,12 +157,12 @@ void CanvasWindow::syncTilesImmediate(const std::unordered_set<uint64_t>& keys)
 }
 size_t CanvasWindow::syncCompositedOutput()
 {
-    for(auto [cx, cy] : m_masterCompositor->drainDirtySyncTiles())
+    for(auto [cx, cy] : m_project->masterCompositor->drainDirtySyncTiles())
         m_deferredSyncKeysMaster.insert(Key::pack(cx, cy));
 
-    if(m_masterCompositor->needsGPUBake())
+    if(m_project->masterCompositor->needsGPUBake())
     {
-        BoundsI bounds = m_masterCompositor->computeBounds();
+        BoundsI bounds = m_project->masterCompositor->computeBounds();
         if(bounds.valid)
         {
             int minCX = Grid::worldToChunk(bounds.minX);
@@ -157,7 +173,7 @@ size_t CanvasWindow::syncCompositedOutput()
                 for(int cx = minCX; cx <= maxCX; cx++)
                     m_deferredSyncKeysMaster.insert(Key::pack(cx, cy));
         }
-        m_masterCompositor->markGPUBaked();
+        m_project->masterCompositor->markGPUBaked();
     }
 
     int viewMinCX = Grid::worldToChunk((int)std::floor(-m_camera.pan.x / m_camera.zoom));
@@ -180,7 +196,7 @@ size_t CanvasWindow::syncCompositedOutput()
 
         if(!visible) { ++it; continue; }
 
-        const Chunk& tile = m_masterCompositor->getCachedTile(pos.x, pos.y);
+        const Chunk& tile = m_project->masterCompositor->getCachedTile(pos.x, pos.y);
         m_gfx.m_TEXSYS.syncChunk(0, *it,
             (float)(pos.x * Grid::CHUNK_SIZE), (float)(pos.y * Grid::CHUNK_SIZE), tile.data);
 
@@ -223,10 +239,10 @@ void CanvasWindow::renderFrame()
     if(!m_gfx.m_initialized) return;
 
     std::vector<BoundsI> boxes;
-    boxes.reserve(m_rawRasters.size()); // boxes count = layer count
+    boxes.reserve(m_project->rawRasters.size()); // boxes count = layer count
 
     // for each layer, store rasterdata bounds in [boxes]
-    for(RasterData& layer : m_rawRasters)
+    for(RasterData& layer : m_project->rawRasters)
     {
         BoundsI& b = layer.getPixelBounds();
         if(b.valid) boxes.push_back(b);
@@ -236,6 +252,14 @@ void CanvasWindow::renderFrame()
     m_gfx.m_showBBOXs = !boxes.empty();
 
     m_gfx.renderPass(width(), height(), m_camera);
+}
+void CanvasWindow::reconfigureSurface()
+{
+    if(!m_gfx.m_initialized || width() <= 0 || height() <= 0) return;
+    m_gfx.configSurface(width(), height());
+    m_camera.update((float)width(), (float)height());
+    m_camera.updateScreen(width(), height());
+    markDirty();
 }
 
 // debug
@@ -261,23 +285,4 @@ void CanvasWindow::logPerfIfDue()
 
     m_perf = PerfStats{};
     m_perfLogTimer.restart();
-}
-
-// graph view snapshop
-GraphSnapshot CanvasWindow::buildGraphSnapshot() const
-{
-    GraphSnapshot snap;
-
-    snap.nodes.push_back({"raster0", "Raster (bg)", 0, 0});
-    snap.nodes.push_back({"move", "Move", 220, 0});
-    snap.nodes.push_back({"blur", "Blur", 440, 0});
-    snap.nodes.push_back({"raster1", "Raster (draw)", 220, 150});
-    snap.nodes.push_back({"compositor", "Compositor", 660, 75});
-
-    snap.edges.push_back({"raster0", "move"});
-    snap.edges.push_back({"move", "blur"});
-    snap.edges.push_back({"blur", "compositor"});
-    snap.edges.push_back({"raster1", "compositor"});
-
-    return snap;
 }
