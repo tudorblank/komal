@@ -1,7 +1,4 @@
-#pragma once
-
-#include "raster/raster-utils.hpp"
-#include "raster/raster-base.hpp"
+#include "raster/raster-imgio.hpp"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -25,6 +22,7 @@ void loadImageIntoRaster(const char* path, RasterData& target, int offsetX, int 
 
     stbi_image_free(data);
 }
+
 bool exportRasterToImage(RasterData& source, const char* path)
 {
     BoundsI b = source.getPixelBounds();

@@ -74,22 +74,8 @@ void MiniMapWidget::recomputeSize()
 {
     if(m_sceneBounds.isEmpty()) return;
 
-    float aspect = m_sceneBounds.width() / m_sceneBounds.height();
-
-    int w, h;
-    if(aspect >= 1.0f) // wider than tall => fit to max width
-    {
-        w = kMaxW;
-        h = (int)(kMaxW / aspect);
-    }
-    else // taller than wide => fit to max height
-    {
-        h = kMaxH;
-        w = (int)(kMaxH * aspect);
-    }
-
-    w = std::clamp(w, kMinW, kMaxW);
-    h = std::clamp(h, kMinH, kMaxH);
+    int w = std::clamp((int)(m_sceneBounds.width()  / 4.0f), kMinW, kMaxW);
+    int h = std::clamp((int)(m_sceneBounds.height() / 4.0f), kMinH, kMaxH);
 
     if(w != width() || h != height())
     {
@@ -109,11 +95,12 @@ QTransform MiniMapWidget::sceneToWidgetTransform() const
     QRectF target = rect().adjusted(4, 4, -4, -4);
     if(m_sceneBounds.isEmpty() || target.isEmpty()) return QTransform();
 
-    float s = target.width() / m_sceneBounds.width();
+    float sx = target.width()  / m_sceneBounds.width();
+    float sy = target.height() / m_sceneBounds.height();
 
     QTransform t;
     t.translate(target.left(), target.top());
-    t.scale(s, s);
+    t.scale(sx, sy);
     t.translate(-m_sceneBounds.left(), -m_sceneBounds.top());
     return t;
 }
