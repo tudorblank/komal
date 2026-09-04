@@ -52,7 +52,11 @@ class CanvasView : public QWindow{
     Q_OBJECT
 public:
     explicit CanvasView(std::shared_ptr<Project> project, QWindow* parent = nullptr);
-    ~CanvasView() { if(m_renderTimer) m_renderTimer->stop(); }
+    ~CanvasView() 
+    { 
+        if(m_renderTimer) m_renderTimer->stop();
+        if(m_resizeDebounce) m_resizeDebounce->stop();
+    }
 
 private:
     MouseHandler m_mouse;

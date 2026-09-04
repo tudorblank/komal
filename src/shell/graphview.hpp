@@ -77,6 +77,7 @@ class NodeGraphView : public QGraphicsView{
     Q_OBJECT
 public:
     explicit NodeGraphView(std::shared_ptr<Project> project, QWidget* parent = nullptr);
+    ~NodeGraphView() {}
 
     struct ConnectDrag{
         bool active = false;

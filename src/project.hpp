@@ -18,14 +18,15 @@ class Project : public QObject
 {
     Q_OBJECT
 public:
+    ~Project() { m_rawRasters.clear(); }
+    void init();
+    
     std::deque<RasterData> m_rawRasters;
     std::unordered_map<QString, std::shared_ptr<Node>> m_nodes;
     std::shared_ptr<CompositorNode> m_masterCompositor;
     std::shared_ptr<RasterRootNode> m_activeRaster;
 
     uint32_t m_rasterNodeCount = 0; // never decreases
-
-    void init();
 
     void setNodePosition(const QString& id, float x, float y);
     void setActiveRaster(std::shared_ptr<RasterRootNode> layer) { m_activeRaster = layer; }

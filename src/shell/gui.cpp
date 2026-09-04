@@ -217,4 +217,14 @@ UserInterface::UserInterface(QWidget *parent)
     //
 }
 
-UserInterface::~UserInterface() {}
+UserInterface::~UserInterface() 
+{
+    if(m_canvasView) {
+        delete m_canvasView;
+        m_canvasView = nullptr;
+    }
+    if(m_graphView) {
+        delete m_graphView;
+        m_graphView = nullptr;
+    }
+}
