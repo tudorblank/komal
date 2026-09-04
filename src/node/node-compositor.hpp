@@ -17,43 +17,34 @@ public:
 };
 
 // ==== COMPOSITOR NODE ====
+enum class CompositorType { Default, Master };
+
 class CompositorNode : public Node{
 private:
     struct Private { explicit Private() = default; };
 
-    static uint8_t clamp255(int v)
-    { return (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v)); }
-
-    static uint8_t mixChannel(uint8_t s, uint8_t d, float srcA, float dstA, float outA)
-    {
-        float out = (s * srcA + d * dstA * (1.0f - srcA)) / outA;
-        return clamp255((int)(out + 0.5f));
-    }
-
-    // standard "src over dst", non-premultiplied
-    static RGBA over(RGBA dst, RGBA src)
-    {
-        if(src.a == 0) return dst;
-        if(src.a == 255) return src;
-
-        float srcA = src.a / 255.0f;
-        float dstA = dst.a / 255.0f;
-        float outA = srcA + dstA * (1.0f - srcA);
-        if(outA <= 0.0f) return transparent();
-
-        return {
-            mixChannel(src.r, dst.r, srcA, dstA, outA),
-            mixChannel(src.g, dst.g, srcA, dstA, outA),
-            mixChannel(src.b, dst.b, srcA, dstA, outA),
-            clamp255((int)(outA * 255.0f + 0.5f))
-        };
-    }
-
 public:
     // init
     explicit CompositorNode(Private) {}
-    static std::shared_ptr<CompositorNode> create()
-    { return std::make_shared<CompositorNode>(Private{}); }
+    static std::shared_ptr<CompositorNode> create(CompositorType ctype)
+    { 
+        auto node = std::make_shared<CompositorNode>(Private{});
+        node->m_meta.type = NodeType::Compositor;
+        switch(ctype)
+        {
+            case CompositorType::Default:
+                node->compType = CompositorType::Default;
+                node->m_meta.label = "Compositor";
+                break;
+            case CompositorType::Master:
+                node->compType = CompositorType::Master;
+                node->m_meta.label = "Master Compositor";
+                break;
+        }
+        return node;
+    }
+    CompositorType compType = CompositorType::Default;
+    std::vector<std::shared_ptr<Node>> getInputs() const override { return m_layers; }
 
     // layer stack
     std::vector<std::shared_ptr<Node>> m_layers;
@@ -72,6 +63,15 @@ public:
             Key::XY p = Key::unpack(key);
             invalidateTile(p.x, p.y);
         }
+    }
+    void addLayerAt(std::shared_ptr<Node> input, size_t index)
+    {
+        listenTo(input, shared_from_this());
+        std::unordered_set<uint64_t> occupied;
+        if(input) input->collectOccupiedTiles(occupied);
+        index = std::min(index, m_layers.size());
+        m_layers.insert(m_layers.begin() + index, std::move(input));
+        for(uint64_t key : occupied) { auto p = Key::unpack(key); invalidateTile(p.x, p.y); }
     }
     void removeLayer(size_t index)
     {
@@ -203,4 +203,33 @@ public:
     }
 
     void buildTile(Chunk& out, int tileX, int tileY);
+
+private:
+    static uint8_t clamp255(int v)
+    { return (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v)); }
+
+    static uint8_t mixChannel(uint8_t s, uint8_t d, float srcA, float dstA, float outA)
+    {
+        float out = (s * srcA + d * dstA * (1.0f - srcA)) / outA;
+        return clamp255((int)(out + 0.5f));
+    }
+
+    // standard "src over dst", non-premultiplied
+    static RGBA over(RGBA dst, RGBA src)
+    {
+        if(src.a == 0) return dst;
+        if(src.a == 255) return src;
+
+        float srcA = src.a / 255.0f;
+        float dstA = dst.a / 255.0f;
+        float outA = srcA + dstA * (1.0f - srcA);
+        if(outA <= 0.0f) return transparent();
+
+        return {
+            mixChannel(src.r, dst.r, srcA, dstA, outA),
+            mixChannel(src.g, dst.g, srcA, dstA, outA),
+            mixChannel(src.b, dst.b, srcA, dstA, outA),
+            clamp255((int)(outA * 255.0f + 0.5f))
+        };
+    }
 };

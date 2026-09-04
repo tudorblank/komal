@@ -13,6 +13,12 @@
 #include <algorithm>
 
 #include <QString>
+#include <QUuid>
+
+enum class NodeType { Raster, Move, GaussianBlur, ChannelSplit, Compositor };
+
+inline QString genNodeID()
+{ return QUuid::createUuid().toString(QUuid::WithoutBraces); }
 
 inline RGBA applyOpacityFill(RGBA c, float fill, float opacity)
 {
@@ -26,13 +32,17 @@ struct TileRange { int minTX, maxTX, minTY, maxTY; bool valid; };
 // ==== BASE NODE CLASS ====
 class Node : public std::enable_shared_from_this<Node>{
 public:
+    Node() { m_meta.id = genNodeID(); }
     virtual ~Node() {}
 
     struct Meta{
-        float x, y;
+        float x = 0.0f, y = 0.0f;
+        NodeType type;
+        QString id;
         QString label;
     };
     Meta m_meta;
+    virtual std::vector<std::shared_ptr<Node>> getInputs() const { return {}; }
 
     virtual RGBA computePixel(int worldX, int worldY) = 0;
     virtual BoundsI computeBounds() = 0;
@@ -90,6 +100,35 @@ protected:
     }
 };
 
+class ReferenceNode : public Node{
+private:
+    struct Private { explicit Private() = default; };
+
+public:
+    ReferenceNode(Private, std::shared_ptr<Node> target) : m_target(std::move(target)) {}
+    static std::shared_ptr<ReferenceNode> create(std::shared_ptr<Node> target)
+    {
+        auto node = std::make_shared<ReferenceNode>(Private{}, target);
+        node->m_meta.type = target ? target->m_meta.type : NodeType::Raster; // cosmetic only
+        node->m_meta.label = target ? QString("%1 (copy)").arg(target->m_meta.label) : "Reference";
+        listenTo(target, node); // target changing invalidates this node's listeners too
+        return node;
+    }
+
+    std::shared_ptr<Node> m_target;
+    std::vector<std::shared_ptr<Node>> getInputs() const override
+    { return m_target ? std::vector<std::shared_ptr<Node>>{ m_target } : std::vector<std::shared_ptr<Node>>{}; }
+
+    RGBA computePixel(int worldX, int worldY) override
+    { return m_target ? m_target->computePixel(worldX, worldY) : transparent(); }
+    BoundsI computeBounds() override
+    { return m_target ? m_target->computeBounds() : BoundsI{}; }
+    Chunk* readSourceChunk(int tileX, int tileY) override
+    { return m_target ? m_target->readSourceChunk(tileX, tileY) : nullptr; }
+    void collectOccupiedTiles(std::unordered_set<uint64_t>& out) override
+    { if(m_target) m_target->collectOccupiedTiles(out); }
+};
+
 // ==== RASTER ROOT NODE ====
 class RasterRootNode : public Node{
 private:
@@ -98,10 +137,17 @@ private:
 public:
     // init
     RasterRootNode(Private, RasterData* sampledRaster) : m_inputRaster(sampledRaster) {}
-    static std::shared_ptr<RasterRootNode> create(RasterData* raster)
-    { return std::make_shared<RasterRootNode>(Private{}, raster); }
+    static std::shared_ptr<RasterRootNode> create(RasterData* raster, uint32_t number)
+    {
+        auto node = std::make_shared<RasterRootNode>(Private{}, raster);
+        node->m_count = number;
+        node->m_meta.type = NodeType::Raster;
+        node->m_meta.label = QString("Raster %1").arg(number);
+        return node;
+    }
 
     RasterData* m_inputRaster;
+    uint32_t m_count = 0;
 
     // compute
     Chunk* readSourceChunk(int tileX, int tileY) override
@@ -157,11 +203,14 @@ public:
     static std::shared_ptr<ChannelSplitNode> create(std::shared_ptr<Node> input, Channel channel)
     {
         auto node = std::make_shared<ChannelSplitNode>(Private{}, input, channel);
+        node->m_meta.type = NodeType::ChannelSplit;
+        node->m_meta.label = "Channel Split";
         listenTo(input, node);
         return node;
     }
 
     std::shared_ptr<Node> m_inputNode;
+    std::vector<std::shared_ptr<Node>> getInputs() const override { return { m_inputNode }; }
     Channel m_channel;
 
     // compute
@@ -188,12 +237,15 @@ public:
     static std::shared_ptr<MoveNode> create(std::shared_ptr<Node> input, int offsetX = 0, int offsetY = 0)
     {
         auto node = std::make_shared<MoveNode>(Private{}, input, offsetX, offsetY);
+        node->m_meta.type = NodeType::Move;
+        node->m_meta.label = "Move";
         listenTo(input, node);
         return node;
     }
 
     // functionality
     std::shared_ptr<Node> m_inputNode;
+    std::vector<std::shared_ptr<Node>> getInputs() const override { return { m_inputNode }; }
     int m_offsetX = 0;
     int m_offsetY = 0;
 
@@ -291,11 +343,14 @@ public:
     static std::shared_ptr<BlurNode> create(std::shared_ptr<Node> input, int radius)
     {
         auto node = std::make_shared<BlurNode>(Private{}, input, radius);
+        node->m_meta.type = NodeType::GaussianBlur;
+        node->m_meta.label = "Gaussian Blur";
         listenTo(input, node);
         return node;
     }
 
     std::shared_ptr<Node> m_inputNode;
+    std::vector<std::shared_ptr<Node>> getInputs() const override { return { m_inputNode }; }
     int m_radius;
 
     BlurSys* m_blurSys = nullptr;

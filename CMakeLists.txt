@@ -26,11 +26,14 @@ set(PROJECT_SOURCES
 
     src/shell/gui.cpp
     src/shell/gui.hpp
-    src/shell/canvas.cpp
-    src/shell/canvas.hpp
-    src/shell/input.hpp
+    src/shell/canvasview.cpp
+    src/shell/canvasview.hpp
     src/shell/graphview.cpp
     src/shell/graphview.hpp
+    src/shell/graphview-minimap.cpp
+    src/shell/graphview-minimap.hpp
+    src/shell/graphview-masterwidget.cpp
+    src/shell/graphview-masterwidget.hpp
 
     src/raster/raster-base.cpp
     src/raster/raster-base.hpp

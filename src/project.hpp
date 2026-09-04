@@ -1,42 +1,50 @@
+// project.hpp
 #pragma once
-
 #include <QObject>
 #include <QString>
 #include <deque>
 #include <unordered_map>
 #include <memory>
+#include <unordered_set>
 
 #include "raster/raster-utils.hpp"
 #include "raster/raster-base.hpp"
 #include "node/node-base.hpp"
 #include "node/node-compositor.hpp"
+#include "gfx/blursys.hpp"
 #include "shell/graphview.hpp"
 
 class Project : public QObject
 {
     Q_OBJECT
 public:
-    std::deque<RasterData> rawRasters;
-    std::unordered_map<QString, std::shared_ptr<Node>> nodes;
-    std::vector<std::pair<QString, QString>> edges;
-    std::shared_ptr<CompositorNode> masterCompositor;
+    std::deque<RasterData> m_rawRasters;
+    std::unordered_map<QString, std::shared_ptr<Node>> m_nodes;
+    std::shared_ptr<CompositorNode> m_masterCompositor;
+    std::shared_ptr<RasterRootNode> m_activeRaster;
 
-    void addNode(const QString& id, std::shared_ptr<Node> node, const QString& label, float x, float y);
-    void addEdge(const QString& fromId, const QString& toId) { edges.push_back({fromId, toId}); }
+    uint32_t m_rasterNodeCount = 0; // never decreases
+
+    void init();
 
     void setNodePosition(const QString& id, float x, float y);
+    void setActiveRaster(std::shared_ptr<RasterRootNode> layer) { m_activeRaster = layer; }
 
-    GraphSnapshot buildGraphSnapshot() const
-    {
-        GraphSnapshot snap;
-        for(auto& [id, node] : nodes)
-            snap.nodes.push_back({id, node->m_meta.label, node->m_meta.x, node->m_meta.y});
-        for(auto& [fromId, toId] : edges)
-            snap.edges.push_back({fromId, toId});
-        return snap;
-    }
+    void addNodeToMaster(const QString& id);
+    void addNodeToMasterAt(const QString& id, size_t index);
+    void removeMasterLayerByNodeId(const QString& id);
+    void moveMasterLayer(const QString& id, size_t newIndex);
+
+    GraphSnapshot buildGraphSnapshot() const;
+
+    // nodes
+    void createRasterNode(float x, float y);
+    QString duplicateNode(const QString& id, float x, float y);
+
+private:
+    void addNode(std::shared_ptr<Node> node, float x, float y);
+    void walkNode(const std::shared_ptr<Node>& node, GraphSnapshot& snap, std::unordered_set<Node*>& visited) const;
 
 signals:
     void nodeGraphChanged();
-    void nodeMoved(QString id, float x, float y);
 };

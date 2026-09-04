@@ -18,8 +18,6 @@
 #include "node/node-base.hpp"
 #include "node/node-compositor.hpp"
 
-#include "input.hpp"
-#include "graphview.hpp"
 #include "project.hpp"
 
 #include <memory>
@@ -31,20 +29,30 @@
 
 struct PerfStats{
     qint64 interpDrawNs = 0;
-    int    interpDrawCalls = 0;
+    int interpDrawCalls = 0;
 
     qint64 syncNs = 0;
     size_t syncTileCount = 0;
 
     qint64 renderNs = 0;
-    int    frameCalls = 0;
+    int frameCalls = 0;
 };
 
-class CanvasWindow : public QWindow{
+struct MouseHandler{
+    Vec2 screen;
+    Vec2 world;
+    Vec2 prevWorld;
+
+    bool leftDown = false;
+    bool rightDown = false;
+    bool middleDown = false;
+};
+
+class CanvasView : public QWindow{
     Q_OBJECT
 public:
-    explicit CanvasWindow(std::shared_ptr<Project> project, QWindow* parent = nullptr);
-    ~CanvasWindow() { if(m_renderTimer) m_renderTimer->stop(); }
+    explicit CanvasView(std::shared_ptr<Project> project, QWindow* parent = nullptr);
+    ~CanvasView() { if(m_renderTimer) m_renderTimer->stop(); }
 
 private:
     MouseHandler m_mouse;
@@ -52,9 +60,6 @@ private:
     GFXDevice m_gfx;
     Camera m_camera;
     std::shared_ptr<Project> m_project;
-
-    // nodes - rasters
-    void setupNodes();
 
     void interpDraw(RasterRootNode& targetNode, RGBA color);
     
@@ -165,21 +170,16 @@ protected:
 
         if(m_mouse.leftDown)
         {
-            auto raster1 = std::dynamic_pointer_cast<RasterRootNode>(m_project->nodes["raster1"]);
-            if(raster1)
+            if(m_project->m_activeRaster)
             {
-                QElapsedTimer t; t.start();
-                interpDraw(*raster1, {255,255,255,255});
-                m_perf.interpDrawNs += t.nsecsElapsed();
-                m_perf.interpDrawCalls++;
+                interpDraw(*m_project->m_activeRaster, {255,255,255,255});
                 markDirty();
             }
         }
         else if(m_mouse.rightDown)
         {
-            auto raster1 = std::dynamic_pointer_cast<RasterRootNode>(m_project->nodes["raster1"]);
-            if(raster1)
-                raster1->erasePixel((int)m_mouse.world.x, (int)m_mouse.world.y);
+            if(m_project->m_activeRaster)
+                m_project->m_activeRaster->erasePixel((int)m_mouse.world.x, (int)m_mouse.world.y);
             markDirty();
         }
 
@@ -214,59 +214,6 @@ protected:
 
             m_camera.update((float)width(), (float)height());
             markDirty();
-        }
-    }
-    void keyPressEvent(QKeyEvent* e) override
-    {
-        auto raster0 = std::dynamic_pointer_cast<RasterRootNode>(m_project->nodes["raster0"]);
-        auto raster1 = std::dynamic_pointer_cast<RasterRootNode>(m_project->nodes["raster1"]);
-        auto moveNode = std::dynamic_pointer_cast<MoveNode>(m_project->nodes["move"]);
-
-        if(e->key() == Qt::Key_A)
-        {
-            if(raster0 && raster1)
-            {
-                auto affected = m_project->masterCompositor->moveLayer(0, 1);
-                syncTilesImmediate(affected);
-                markDirty();
-            }
-            qDebug() << "LAYERS MOVED";
-        }
-        if(e->key() == Qt::Key_Z)
-        {
-            if(moveNode)
-            {
-                auto affected = moveNode->setOffset(500, 500);
-                syncTilesImmediate(affected);
-                markDirty();
-            }
-        }
-        if(e->key() == Qt::Key_B)
-        {
-            if(moveNode)
-            {
-                auto affected = moveNode->setOffset(1000, 1000);
-                syncTilesImmediate(affected);
-                markDirty();
-            }
-        }
-        if(e->key() == Qt::Key_I)
-        {
-            loadImageIntoRaster("test.png", m_project->rawRasters[1], 0, 0);
-
-            if(raster1)
-            {
-                raster1->invalidateNode();
-
-                std::unordered_set<uint64_t> affected;
-                raster1->collectOccupiedTiles(affected);
-                syncTilesImmediate(affected);
-                markDirty();
-            }
-        }
-        if(e->key() == Qt::Key_E) // export test
-        {
-            exportRasterToImage(m_project->rawRasters[1], "output.png");
         }
     }
 };

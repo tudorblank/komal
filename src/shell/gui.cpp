@@ -1,19 +1,5 @@
 #include "gui.hpp"
 
-#include <QApplication>
-#include <QWidget>
-#include <QMenuBar>
-#include <QToolBar>
-#include <QDockWidget>
-#include <QStatusBar>
-#include <QAction>
-#include <QActionGroup>
-#include <QKeySequence>
-#include <QStyle>
-#include <QSizePolicy>
-#include <QHBoxLayout>
-#include <QLabel>
-
 UserInterface::UserInterface(QWidget *parent)
     : QMainWindow(parent)
 {
@@ -33,6 +19,7 @@ UserInterface::UserInterface(QWidget *parent)
         }
     )");
     m_project = std::make_shared<Project>();
+    m_project->init();
 
     // --- Menu Bar ---
         //File
@@ -98,9 +85,9 @@ UserInterface::UserInterface(QWidget *parent)
     //
 
     // --- Canvas Window ---
-        m_canvasWindow = new CanvasWindow(m_project);
+        m_canvasView = new CanvasView(m_project);
 
-        QWidget *canvasContainer = QWidget::createWindowContainer(m_canvasWindow, this);
+        QWidget *canvasContainer = QWidget::createWindowContainer(m_canvasView, this);
         canvasContainer->setMinimumSize(400, 300);
         canvasContainer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         canvasContainer->setFocusPolicy(Qt::WheelFocus);
@@ -179,7 +166,7 @@ UserInterface::UserInterface(QWidget *parent)
             statusBar()->showMessage("Tool: " + active->text());
 
             canvasContainer->setFocus();
-            m_canvasWindow->requestActivate();
+            m_canvasView->requestActivate();
         });
 
         toolbar->setStyleSheet(R"(
