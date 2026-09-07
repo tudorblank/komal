@@ -97,6 +97,7 @@ public:
     void setPixel(int worldX, int worldY, RGBA color);
     void erasePixel(int worldX, int worldY);
     void markPixelErased(Chunk& chunk, int chunkX, int chunkY, int lx, int ly);
+    bool loadImageFromPath(const char* path, int offsetX, int offsetY);
 
     // bounds
     BoundsI m_pixelBounds;

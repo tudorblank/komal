@@ -1,0 +1,34 @@
+// ==== CHANNEL SPLIT NODE ====
+enum class Channel { R, G, B, A };
+class ChannelSplitNode : public Node{
+private:
+    struct Private { explicit Private() = default; };
+
+public:
+    // init
+    ChannelSplitNode(Private, std::shared_ptr<Node> input, Channel channel)
+        : m_inputNode(std::move(input)), m_channel(channel) {}
+    static std::shared_ptr<ChannelSplitNode> create(std::shared_ptr<Node> input, Channel channel)
+    {
+        auto node = std::make_shared<ChannelSplitNode>(Private{}, input, channel);
+        node->m_meta.type = NodeType::ChannelSplit;
+        node->m_meta.label = "Channel Split";
+        listenTo(input, node);
+        return node;
+    }
+
+    std::shared_ptr<Node> m_inputNode;
+    std::vector<std::shared_ptr<Node>> getInputs() const override { return { m_inputNode }; }
+    Channel m_channel;
+
+    // compute
+    RGBA computePixel(int worldX, int worldY) override
+    {
+        if(!m_inputNode) return transparent();
+        RGBA c = m_inputNode->sampleBlended(worldX, worldY);
+        uint8_t v = (m_channel == Channel::R) ? c.r : (m_channel == Channel::G) ? c.g : (m_channel == Channel::B) ? c.b : c.a;
+        return { v, v, v, 255 };
+    }
+    BoundsI computeBounds() override
+    { return m_inputNode ? m_inputNode->computeBounds() : BoundsI{}; }
+};

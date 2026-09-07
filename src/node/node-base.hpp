@@ -11,11 +11,13 @@
 #include <memory>
 #include <cstring>
 #include <algorithm>
+#include <functional>
 
 #include <QString>
 #include <QUuid>
+#include <QtGlobal>
 
-enum class NodeType { Raster, Move, GaussianBlur, ChannelSplit, Compositor };
+enum class NodeType { Reference, Raster, Move, GaussianBlur, ChannelSplit, Compositor };
 
 inline QString genNodeID()
 { return QUuid::createUuid().toString(QUuid::WithoutBraces); }
@@ -35,6 +37,8 @@ public:
     Node() { m_meta.id = genNodeID(); }
     virtual ~Node() {}
 
+    //// utils
+    // meta
     struct Meta{
         float x = 0.0f, y = 0.0f;
         NodeType type;
@@ -42,8 +46,21 @@ public:
         QString label;
     };
     Meta m_meta;
-    virtual std::vector<std::shared_ptr<Node>> getInputs() const { return {}; }
 
+    // opacity
+    float m_opacity = 1.0f;
+    float m_fill = 1.0f;
+    RGBA sampleBlended(int worldX, int worldY)
+    {
+        RGBA c = computePixel(worldX, worldY);
+        return applyOpacityFill(c, m_fill, m_opacity);
+    }
+
+    // inputs
+    virtual std::vector<std::shared_ptr<Node>> getInputs() const { return {}; }
+    virtual void replaceInputInstance(const std::shared_ptr<Node>& oldOne, const std::shared_ptr<Node>& newOne) {}
+
+    // compute
     virtual RGBA computePixel(int worldX, int worldY) = 0;
     virtual BoundsI computeBounds() = 0;
     virtual Chunk* readSourceChunk(int /*tileX*/, int /*tileY*/) { return nullptr; } // RasterRootNode only
@@ -58,28 +75,33 @@ public:
                 out.insert(Key::pack(tx, ty));
     }
 
-    // opacity
-    float m_opacity = 1.0f;
-    float m_fill = 1.0f;
-    RGBA sampleBlended(int worldX, int worldY)
-    {
-        RGBA c = computePixel(worldX, worldY);
-        return applyOpacityFill(c, m_fill, m_opacity);
-    }
-
-    // caching
+    //// caching
     std::vector<std::weak_ptr<Node>> m_listeners;
     static void listenTo(const std::shared_ptr<Node>& input, const std::shared_ptr<Node>& listener)
     { if(input) input->m_listeners.push_back(listener); }
+
+    static void unlisten(const std::shared_ptr<Node>& input, const std::shared_ptr<Node>& listener)
+    {
+        if(!input) return;
+        std::erase_if(input->m_listeners, [&](const std::weak_ptr<Node>& w){
+            auto locked = w.lock();
+            return !locked || locked.get() == listener.get();
+        });
+    }
+    static inline std::function<void(Node*)> s_onNodeDirty;
     virtual void invalidateNode()
     {
+        if(s_onNodeDirty) s_onNodeDirty(this);
         std::erase_if(m_listeners, [](const std::weak_ptr<Node>& w){ return w.expired(); });
         for(auto& weak : m_listeners)
             if(auto listener = weak.lock())
                 listener->invalidateNode();
     }
     virtual void invalidateTile(int tileX, int tileY)
-    { propagateInvalidateTile(tileX, tileY); }
+    {
+        if(s_onNodeDirty) s_onNodeDirty(this);
+        propagateInvalidateTile(tileX, tileY);
+    }
 
 protected:
     void propagateInvalidateTile(int tileX, int tileY)
@@ -100,33 +122,58 @@ protected:
     }
 };
 
+// ==== REFERENCE NODE ====
 class ReferenceNode : public Node{
 private:
     struct Private { explicit Private() = default; };
 
 public:
-    ReferenceNode(Private, std::shared_ptr<Node> target) : m_target(std::move(target)) {}
-    static std::shared_ptr<ReferenceNode> create(std::shared_ptr<Node> target)
+    ReferenceNode(Private, std::shared_ptr<Node> reference) : m_inputNode(std::move(reference)) {}
+    static std::shared_ptr<ReferenceNode> create(std::shared_ptr<Node> reference)
     {
-        auto node = std::make_shared<ReferenceNode>(Private{}, target);
-        node->m_meta.type = target ? target->m_meta.type : NodeType::Raster; // cosmetic only
-        node->m_meta.label = target ? QString("%1 (copy)").arg(target->m_meta.label) : "Reference";
-        listenTo(target, node); // target changing invalidates this node's listeners too
+        Q_ASSERT(reference);
+        auto node = std::make_shared<ReferenceNode>(Private{}, reference);
+        node->m_meta.type = NodeType::Reference;
+        node->m_meta.label = "Reference";
+        listenTo(reference, node);
         return node;
     }
 
-    std::shared_ptr<Node> m_target;
+    // input
+    std::shared_ptr<Node> m_inputNode;
     std::vector<std::shared_ptr<Node>> getInputs() const override
-    { return m_target ? std::vector<std::shared_ptr<Node>>{ m_target } : std::vector<std::shared_ptr<Node>>{}; }
+    { return m_inputNode ? std::vector<std::shared_ptr<Node>>{ m_inputNode } : std::vector<std::shared_ptr<Node>>{}; }
+    void setInput(std::shared_ptr<Node> input)
+    {
+        if(input == m_inputNode) return;
 
+        std::unordered_set<uint64_t> oldTiles;
+        collectOccupiedTiles(oldTiles);
+
+        if(m_inputNode) Node::unlisten(m_inputNode, shared_from_this());
+        m_inputNode = std::move(input);
+        if(m_inputNode) Node::listenTo(m_inputNode, shared_from_this());
+
+        std::unordered_set<uint64_t> newTiles;
+        collectOccupiedTiles(newTiles);
+
+        for(uint64_t key : oldTiles) { Key::XY p = Key::unpack(key); propagateInvalidateTile(p.x, p.y); }
+        for(uint64_t key : newTiles) { Key::XY p = Key::unpack(key); propagateInvalidateTile(p.x, p.y); }
+    }
+    void clearInput()
+    { setInput(nullptr); }
+    void replaceInputInstance(const std::shared_ptr<Node>& oldOne, const std::shared_ptr<Node>& newOne) override
+    { if(m_inputNode == oldOne) setInput(newOne); }
+
+    // compute
     RGBA computePixel(int worldX, int worldY) override
-    { return m_target ? m_target->computePixel(worldX, worldY) : transparent(); }
+    { return m_inputNode ? m_inputNode->computePixel(worldX, worldY) : transparent(); }
     BoundsI computeBounds() override
-    { return m_target ? m_target->computeBounds() : BoundsI{}; }
+    { return m_inputNode ? m_inputNode->computeBounds() : BoundsI{}; }
     Chunk* readSourceChunk(int tileX, int tileY) override
-    { return m_target ? m_target->readSourceChunk(tileX, tileY) : nullptr; }
+    { return m_inputNode ? m_inputNode->readSourceChunk(tileX, tileY) : nullptr; }
     void collectOccupiedTiles(std::unordered_set<uint64_t>& out) override
-    { if(m_target) m_target->collectOccupiedTiles(out); }
+    { if(m_inputNode) m_inputNode->collectOccupiedTiles(out); }
 };
 
 // ==== RASTER ROOT NODE ====
@@ -139,6 +186,7 @@ public:
     RasterRootNode(Private, RasterData* sampledRaster) : m_inputRaster(sampledRaster) {}
     static std::shared_ptr<RasterRootNode> create(RasterData* raster, uint32_t number)
     {
+        Q_ASSERT(raster);
         auto node = std::make_shared<RasterRootNode>(Private{}, raster);
         node->m_count = number;
         node->m_meta.type = NodeType::Raster;
@@ -190,41 +238,6 @@ public:
     }
 };
 
-// ==== CHANNEL SPLIT NODE ====
-enum class Channel { R, G, B, A };
-class ChannelSplitNode : public Node{
-private:
-    struct Private { explicit Private() = default; };
-
-public:
-    // init
-    ChannelSplitNode(Private, std::shared_ptr<Node> input, Channel channel)
-        : m_inputNode(std::move(input)), m_channel(channel) {}
-    static std::shared_ptr<ChannelSplitNode> create(std::shared_ptr<Node> input, Channel channel)
-    {
-        auto node = std::make_shared<ChannelSplitNode>(Private{}, input, channel);
-        node->m_meta.type = NodeType::ChannelSplit;
-        node->m_meta.label = "Channel Split";
-        listenTo(input, node);
-        return node;
-    }
-
-    std::shared_ptr<Node> m_inputNode;
-    std::vector<std::shared_ptr<Node>> getInputs() const override { return { m_inputNode }; }
-    Channel m_channel;
-
-    // compute
-    RGBA computePixel(int worldX, int worldY) override
-    {
-        if(!m_inputNode) return transparent();
-        RGBA c = m_inputNode->sampleBlended(worldX, worldY);
-        uint8_t v = (m_channel == Channel::R) ? c.r : (m_channel == Channel::G) ? c.g : (m_channel == Channel::B) ? c.b : c.a;
-        return { v, v, v, 255 };
-    }
-    BoundsI computeBounds() override
-    { return m_inputNode ? m_inputNode->computeBounds() : BoundsI{}; }
-};
-
 // ==== MOVE NODE ====
 class MoveNode : public Node{
 private:
@@ -232,23 +245,43 @@ private:
 
 public:
     // init
-    MoveNode(Private, std::shared_ptr<Node> input, int offsetX, int offsetY)
-        : m_inputNode(std::move(input)), m_offsetX(offsetX), m_offsetY(offsetY) {}
-    static std::shared_ptr<MoveNode> create(std::shared_ptr<Node> input, int offsetX = 0, int offsetY = 0)
+    MoveNode(Private) {}
+    static std::shared_ptr<MoveNode> create()
     {
-        auto node = std::make_shared<MoveNode>(Private{}, input, offsetX, offsetY);
+        auto node = std::make_shared<MoveNode>(Private{});
         node->m_meta.type = NodeType::Move;
         node->m_meta.label = "Move";
-        listenTo(input, node);
         return node;
     }
 
-    // functionality
+    // input
     std::shared_ptr<Node> m_inputNode;
+    void setInput(std::shared_ptr<Node> input)
+    {
+        if(input == m_inputNode) return;
+
+        std::unordered_set<uint64_t> oldTiles;
+        collectOccupiedTiles(oldTiles);
+
+        if(m_inputNode) Node::unlisten(m_inputNode, shared_from_this());
+        m_inputNode = std::move(input);
+        if(m_inputNode) Node::listenTo(m_inputNode, shared_from_this());
+
+        std::unordered_set<uint64_t> newTiles;
+        collectOccupiedTiles(newTiles);
+
+        for(uint64_t key : oldTiles) { Key::XY p = Key::unpack(key); propagateInvalidateTile(p.x, p.y); }
+        for(uint64_t key : newTiles) { Key::XY p = Key::unpack(key); propagateInvalidateTile(p.x, p.y); }
+    }
+    void clearInput()
+    { setInput(nullptr); }
+    void replaceInputInstance(const std::shared_ptr<Node>& oldOne, const std::shared_ptr<Node>& newOne) override
+    { if(m_inputNode == oldOne) setInput(newOne); }
     std::vector<std::shared_ptr<Node>> getInputs() const override { return { m_inputNode }; }
+
+    // offset
     int m_offsetX = 0;
     int m_offsetY = 0;
-
     std::unordered_set<uint64_t> setOffset(int offsetX, int offsetY)
     {
         if(offsetX == m_offsetX && offsetY == m_offsetY) return {};
@@ -288,8 +321,6 @@ public:
         b.minY += m_offsetY; b.maxY += m_offsetY;
         return b;
     }
-
-    // caching
     void collectOccupiedTiles(std::unordered_set<uint64_t>& out) override
     {
         if(!m_inputNode) return;
@@ -314,8 +345,12 @@ public:
                     out.insert(Key::pack(tx, ty));
         }
     }
+
+    // caching
     void invalidateTile(int tileX, int tileY) override
     {
+        if(s_onNodeDirty) s_onNodeDirty(this);
+        
         if(!m_inputNode) { propagateInvalidateTile(tileX, tileY); return; }
 
         int worldMinX = tileX * Grid::CHUNK_SIZE + m_offsetX;
@@ -338,26 +373,67 @@ private:
     struct Private { explicit Private() = default; };
 
 public:
-    BlurNode(Private, std::shared_ptr<Node> input, int radius)
-        : m_inputNode(std::move(input)), m_radius(radius) {}
-    static std::shared_ptr<BlurNode> create(std::shared_ptr<Node> input, int radius)
+    BlurNode(Private) {}
+    static std::shared_ptr<BlurNode> create()
     {
-        auto node = std::make_shared<BlurNode>(Private{}, input, radius);
+        auto node = std::make_shared<BlurNode>(Private{});
         node->m_meta.type = NodeType::GaussianBlur;
         node->m_meta.label = "Gaussian Blur";
-        listenTo(input, node);
         return node;
     }
 
     std::shared_ptr<Node> m_inputNode;
+    void setInput(std::shared_ptr<Node> input)
+    {
+        if(input == m_inputNode) return;
+
+        std::unordered_set<uint64_t> oldTiles;
+        collectOccupiedTiles(oldTiles); // uses current (old) m_inputNode
+
+        if(m_inputNode) Node::unlisten(m_inputNode, shared_from_this());
+        m_inputNode = std::move(input);
+        if(m_inputNode) Node::listenTo(m_inputNode, shared_from_this());
+
+        m_cache.clearAll(); // every cached tile was built from the old input's content
+
+        std::unordered_set<uint64_t> newTiles;
+        collectOccupiedTiles(newTiles);
+
+        for(uint64_t key : oldTiles) { Key::XY p = Key::unpack(key); propagateInvalidateTile(p.x, p.y); }
+        for(uint64_t key : newTiles) { Key::XY p = Key::unpack(key); propagateInvalidateTile(p.x, p.y); }
+    }
+    void clearInput()
+    { setInput(nullptr); }
+    void replaceInputInstance(const std::shared_ptr<Node>& oldOne, const std::shared_ptr<Node>& newOne) override
+    { if(m_inputNode == oldOne) setInput(newOne); }
     std::vector<std::shared_ptr<Node>> getInputs() const override { return { m_inputNode }; }
-    int m_radius;
+    
+    int m_radius = 0;
+    void setRadius(int inputRadius)
+    {
+        if(inputRadius == m_radius) return;
 
-    BlurSys* m_blurSys = nullptr;
-    void setBlurSys(BlurSys* sys) { m_blurSys = sys; }
+        std::unordered_set<uint64_t> oldTiles;
+        collectOccupiedTiles(oldTiles);
 
-    SparseRasterGrid m_cache; // one blurred Chunk per tile
+        m_radius = inputRadius;
+        m_cache.clearAll();
 
+        std::unordered_set<uint64_t> newTiles;
+        collectOccupiedTiles(newTiles);
+        
+        for(uint64_t key : oldTiles) { Key::XY p = Key::unpack(key); propagateInvalidateTile(p.x, p.y); }
+        for(uint64_t key : newTiles) { Key::XY p = Key::unpack(key); propagateInvalidateTile(p.x, p.y); }
+    }
+
+    // compute
+    RGBA computePixel(int worldX, int worldY) override
+    {
+        Chunk& c = getOrBuildTile(Grid::worldToChunk(worldX), Grid::worldToChunk(worldY));
+        return c.pixel(Grid::worldToChunkLocal(worldX), Grid::worldToChunkLocal(worldY));
+    }
+    Chunk* readSourceChunk(int tileX, int tileY) override
+    { return &getOrBuildTile(tileX, tileY); } // lets the compositor take the fast copy path
     BoundsI computeBounds() override
     {
         if(!m_inputNode) { BoundsI b; b.reset(); return b; }
@@ -367,23 +443,37 @@ public:
         b.minY -= m_radius; b.maxY += m_radius;
         return b;
     }
-
-    RGBA computePixel(int worldX, int worldY) override
+    void collectOccupiedTiles(std::unordered_set<uint64_t>& out) override
     {
-        Chunk& c = getOrBuildTile(Grid::worldToChunk(worldX), Grid::worldToChunk(worldY));
-        return c.pixel(Grid::worldToChunkLocal(worldX), Grid::worldToChunkLocal(worldY));
+        if(!m_inputNode) return;
+        std::unordered_set<uint64_t> rawTiles;
+        m_inputNode->collectOccupiedTiles(rawTiles);
+        int reach = (m_radius + Grid::CHUNK_SIZE - 1) / Grid::CHUNK_SIZE;
+        for(uint64_t key : rawTiles)
+        {
+            Key::XY t = Key::unpack(key);
+            for(int dy = -reach; dy <= reach; dy++)
+                for(int dx = -reach; dx <= reach; dx++)
+                    out.insert(Key::pack(t.x + dx, t.y + dy));
+        }
     }
-    Chunk* readSourceChunk(int tileX, int tileY) override
-    { return &getOrBuildTile(tileX, tileY); } // lets the compositor take the fast copy path
 
+    // caching
+    SparseRasterGrid m_cache; // one blurred Chunk per tile
     void invalidateTile(int tileX, int tileY) override
     {
+        if(s_onNodeDirty) s_onNodeDirty(this);
+        
         int reach = (m_radius + Grid::CHUNK_SIZE - 1) / Grid::CHUNK_SIZE; // ceil(R / CHUNK_SIZE)
         for(int dy = -reach; dy <= reach; dy++)
             for(int dx = -reach; dx <= reach; dx++)
                 m_cache.freeChunk(tileX + dx, tileY + dy);
         propagateInvalidateTile(tileX, tileY);
     }
+
+    // blur sys (gpu)
+    BlurSys* m_blurSys = nullptr;
+    void setBlurSys(BlurSys* sys) { m_blurSys = sys; }
 
 private:
     Chunk& getOrBuildTile(int tileX, int tileY)

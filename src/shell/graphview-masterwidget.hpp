@@ -5,10 +5,10 @@
 #include <QPainterPath>
 #include <vector>
 
-class MasterLayerStackWidget : public QWidget{
+class MasterCompositorWidget : public QWidget{
     Q_OBJECT
 public:
-    explicit MasterLayerStackWidget(QWidget* parent = nullptr);
+    explicit MasterCompositorWidget(QWidget* parent = nullptr);
 
     struct Row { QString nodeId; QString label; };
     void setRows(std::vector<Row> rows);
@@ -19,16 +19,6 @@ public:
     void updateGhostPosition(QPoint widgetLocalPos, bool isNewLayer);
     void clearGhost();
     int ghostInsertIndex() const { return m_ghostInsertIndex; }
-
-signals:
-    void geometryUpdated();
-    void layerActivated(QString nodeId);
-
-    void rowDragStarted(QString nodeId, QPoint globalPos);
-    void rowDragMoved(QPoint globalPos);
-    void rowDragEnded(QPoint globalPos);
-
-    void layerReordered(QString nodeId, int newIndex);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -59,4 +49,15 @@ private:
     static bool pointNearSegment(QPointF p, QPointF a, QPointF b, qreal tol);
     static QPointF stubEndPoint(QPointF portPt);
     static QPainterPath stubPath(QPointF portPt);
+
+signals:
+    void geometryUpdated();
+    void layerActivated(QString nodeId);
+
+    void rowDragStarted(QString nodeId, QPoint globalPos);
+    void rowDragMoved(QPoint globalPos);
+    void rowDragEnded(QPoint globalPos);
+
+    void layerReordered(QString nodeId, int newIndex);
+    void rowLayoutChanged();
 };

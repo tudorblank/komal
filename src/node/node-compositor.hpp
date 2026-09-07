@@ -33,17 +33,17 @@ public:
         switch(ctype)
         {
             case CompositorType::Default:
-                node->compType = CompositorType::Default;
+                node->m_compType = CompositorType::Default;
                 node->m_meta.label = "Compositor";
                 break;
             case CompositorType::Master:
-                node->compType = CompositorType::Master;
+                node->m_compType = CompositorType::Master;
                 node->m_meta.label = "Master Compositor";
                 break;
         }
         return node;
     }
-    CompositorType compType = CompositorType::Default;
+    CompositorType m_compType = CompositorType::Default;
     std::vector<std::shared_ptr<Node>> getInputs() const override { return m_layers; }
 
     // layer stack
@@ -77,10 +77,13 @@ public:
     {
         if(index >= m_layers.size()) return;
 
+        auto removed = m_layers[index];
+
         std::unordered_set<uint64_t> occupied;
-        if(m_layers[index]) m_layers[index]->collectOccupiedTiles(occupied);
+        if(removed) removed->collectOccupiedTiles(occupied);
 
         m_layers.erase(m_layers.begin() + index);
+        if(removed) Node::unlisten(removed, shared_from_this());
 
         for(uint64_t key : occupied)
         {
@@ -114,6 +117,40 @@ public:
         return affected;
     }
     size_t layerCount() const { return m_layers.size(); }
+    void replaceInputInstance(const std::shared_ptr<Node>& oldOne, const std::shared_ptr<Node>& newOne) override
+    {
+        for(size_t i = 0; i < m_layers.size(); i++)
+        {
+            if(m_layers[i] != oldOne) continue;
+
+            std::unordered_set<uint64_t> occupied;
+            if(oldOne) oldOne->collectOccupiedTiles(occupied);
+            if(newOne) newOne->collectOccupiedTiles(occupied);
+
+            Node::unlisten(oldOne, shared_from_this());
+
+            // NEW: don't introduce a duplicate if newOne is already a layer elsewhere
+            bool alreadyPresent = false;
+            if(newOne)
+            {
+                for(size_t j = 0; j < m_layers.size(); j++)
+                    if(j != i && m_layers[j] == newOne) { alreadyPresent = true; break; }
+            }
+
+            if(newOne && !alreadyPresent)
+            {
+                m_layers[i] = newOne;
+                Node::listenTo(newOne, shared_from_this());
+            }
+            else
+            {
+                m_layers.erase(m_layers.begin() + i); // newOne is null, or already present -- just remove this slot
+            }
+
+            for(uint64_t key : occupied) { Key::XY p = Key::unpack(key); invalidateTile(p.x, p.y); }
+            return;
+        }
+    }
 
     // compute
     RGBA computePixel(int worldX, int worldY) override
@@ -179,12 +216,14 @@ public:
     }
     void invalidateNode() override
     {
+        if(s_onNodeDirty) s_onNodeDirty(this);
         m_gpuBakeDirty = true;
         if(m_cache) m_cache->invalidateAllTiles();
         Node::invalidateNode();
     }
     void invalidateTile(int tx, int ty) override
     {
+        if(s_onNodeDirty) s_onNodeDirty(this);
         uint64_t key = Key::pack(tx, ty);
         if(m_pendingSyncKeys.insert(key).second)
             m_pendingSyncTiles.emplace_back(tx, ty);

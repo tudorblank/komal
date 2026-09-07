@@ -13,7 +13,6 @@
 
 #include "raster/raster-utils.hpp"
 #include "raster/raster-base.hpp"
-#include "raster/raster-imgio.hpp"
 
 #include "node/node-base.hpp"
 #include "node/node-compositor.hpp"

@@ -4,17 +4,17 @@
 #include <QMouseEvent>
 #include <cmath>
 
-MasterLayerStackWidget::MasterLayerStackWidget(QWidget* parent) : QWidget(parent)
+MasterCompositorWidget::MasterCompositorWidget(QWidget* parent) : QWidget(parent)
 { setMouseTracking(true); }
 
-void MasterLayerStackWidget::setRows(std::vector<Row> rows)
+void MasterCompositorWidget::setRows(std::vector<Row> rows)
 {
     m_rows = std::move(rows);
     recomputeSize();
     update();
 }
 
-void MasterLayerStackWidget::recomputeSize()
+void MasterCompositorWidget::recomputeSize()
 {
     int rowCount = (int)m_rows.size() + (m_ghostActive ? 1 : 0) - (m_dragRowIndex >= 0 ? 1 : 0);
     int h = kRowH * rowCount + 30;
@@ -25,7 +25,7 @@ void MasterLayerStackWidget::recomputeSize()
     }
 }
 
-QRectF MasterLayerStackWidget::rowGeometry(int index) const
+QRectF MasterCompositorWidget::rowGeometry(int index) const
 {
     int visualIndex = index;
     if(m_dragRowIndex >= 0 && index > m_dragRowIndex)
@@ -35,13 +35,13 @@ QRectF MasterLayerStackWidget::rowGeometry(int index) const
     return QRectF(kStubMargin, 26 + visualIndex * kRowH, kRowBoxWidth, kRowH - 4);
 }
 
-QPointF MasterLayerStackWidget::portPosFor(int rowIndex) const
+QPointF MasterCompositorWidget::portPosFor(int rowIndex) const
 {
     QRectF r = rowGeometry(rowIndex);
     return QPointF(r.left(), r.center().y());
 }
 
-void MasterLayerStackWidget::updateGhostPosition(QPoint pos, bool isNewLayer)
+void MasterCompositorWidget::updateGhostPosition(QPoint pos, bool isNewLayer)
 {
     int slotCount = (int)m_rows.size() - (m_dragRowIndex >= 0 ? 1 : 0);
     int newIndex = slotCount;
@@ -57,18 +57,20 @@ void MasterLayerStackWidget::updateGhostPosition(QPoint pos, bool isNewLayer)
         m_ghostInsertIndex = newIndex;
         recomputeSize();
         update();
+        emit rowLayoutChanged();
     }
 }
-void MasterLayerStackWidget::clearGhost()
+void MasterCompositorWidget::clearGhost()
 {
     bool wasActive = m_ghostActive;
     m_ghostActive = false;
     m_ghostInsertIndex = -1;
     if(wasActive) recomputeSize();
     update();
+    if(wasActive) emit rowLayoutChanged();
 }
 
-void MasterLayerStackWidget::paintEvent(QPaintEvent*)
+void MasterCompositorWidget::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
@@ -106,7 +108,7 @@ void MasterLayerStackWidget::paintEvent(QPaintEvent*)
     }
 }
 
-bool MasterLayerStackWidget::pointNearSegment(QPointF p, QPointF a, QPointF b, qreal tol)
+bool MasterCompositorWidget::pointNearSegment(QPointF p, QPointF a, QPointF b, qreal tol)
 {
     QPointF ab = b - a;
     qreal lenSq = QPointF::dotProduct(ab, ab);
@@ -115,7 +117,7 @@ bool MasterLayerStackWidget::pointNearSegment(QPointF p, QPointF a, QPointF b, q
     return QLineF(p, proj).length() < tol;
 }
 
-QPointF MasterLayerStackWidget::stubEndPoint(QPointF portPt)
+QPointF MasterCompositorWidget::stubEndPoint(QPointF portPt)
 {
     QLineF dir(0, 0, kStubLength, 0);
     dir.setAngle(200.0);
@@ -123,7 +125,7 @@ QPointF MasterLayerStackWidget::stubEndPoint(QPointF portPt)
     return dir.p2();
 }
 
-QPainterPath MasterLayerStackWidget::stubPath(QPointF portPt)
+QPainterPath MasterCompositorWidget::stubPath(QPointF portPt)
 {
     QPointF end = stubEndPoint(portPt);
     QPointF delta = end - portPt;
@@ -140,7 +142,7 @@ QPainterPath MasterLayerStackWidget::stubPath(QPointF portPt)
     return path;
 }
 
-void MasterLayerStackWidget::mousePressEvent(QMouseEvent* event)
+void MasterCompositorWidget::mousePressEvent(QMouseEvent* event)
 {
     for(int i = 0; i < (int)m_rows.size(); i++)
     {
@@ -152,9 +154,19 @@ void MasterLayerStackWidget::mousePressEvent(QMouseEvent* event)
             return;
         }
     }
+
+    for(int i = 0; i < (int)m_rows.size(); i++)
+    {
+        if(rowGeometry(i).contains(event->pos()))
+        {
+            m_pendingPressRow = i;
+            m_pressPos = event->pos();
+            return;
+        }
+    }
 }
 
-void MasterLayerStackWidget::mouseMoveEvent(QMouseEvent* event)
+void MasterCompositorWidget::mouseMoveEvent(QMouseEvent* event)
 {
     if(m_dragRowIndex >= 0)
     {
@@ -200,7 +212,7 @@ void MasterLayerStackWidget::mouseMoveEvent(QMouseEvent* event)
     }
 }
 
-void MasterLayerStackWidget::mouseReleaseEvent(QMouseEvent* event)
+void MasterCompositorWidget::mouseReleaseEvent(QMouseEvent* event)
 {
     if(m_dragRowIndex >= 0)
     {

@@ -21,46 +21,64 @@
 #include <QBrush>
 #include <QColor>
 #include <QWheelEvent>
+#include <QRubberBand>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
+#include <QMimeData>
+#include <QFileInfo>
+#include <QUrl>
+#include <QGraphicsPixmapItem>
+#include <QFont>
+#include <QTimer>
+#include <QElapsedTimer>
+#include <QImage>
+#include <QPixmap>
+#include <QGraphicsEllipseItem>
+#include <QScrollBar>
+#include <QDir>
+#include <QDebug>
+#include <QFontDatabase>
 
 #include "graphview-minimap.hpp"
 #include "graphview-masterwidget.hpp"
 class Project;
+class Node;
 
 #include <memory>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
+#include <deque>
 #include <cmath>
 
-// GRAPH SNAPSHOT
-
-struct GraphNodeDesc{
-    QString id;
-    QString label;
-    float x, y;
-};
-struct GraphEdgeDesc{
-    QString fromId;
-    QString toId;
-};
-struct GraphSnapshot{
-    std::vector<GraphNodeDesc> nodes;
-    std::vector<GraphEdgeDesc> edges;
-};
-
-// Q NODE-GRAPH ITEMMS
+// Q "GRAPH ITEMS"
 
 class EdgeItem;
 
 class NodeItem : public QGraphicsItemGroup{
 public:
     QString m_id;
+
     QRectF m_localRect;
+    QRectF m_thumbnailRect;
+    QGraphicsPixmapItem* m_thumbnailItem = nullptr;
+
+    QGraphicsEllipseItem* m_inputPort = nullptr;
+    QGraphicsEllipseItem* m_outputPort = nullptr;
+    QGraphicsRectItem* m_selectionOutline = nullptr;
+
     std::vector<EdgeItem*> m_connectedEdges;
 
-    void updateConnectedEdges();
+    QPointF outputPortLocal() const { return { m_localRect.right(), m_localRect.center().y() }; }
+    QPointF inputPortLocal()  const { return { m_localRect.left(),  m_localRect.center().y() }; }
+    QPointF outputPortScene() const { return pos() + outputPortLocal(); }
+    QPointF inputPortScene()  const { return pos() + inputPortLocal(); }
 
+    void updateConnectedEdges();
 protected:
     QVariant itemChange(GraphicsItemChange change, const QVariant& value) override;
+    void paint(QPainter* painter, const QStyleOptionGraphicsItem* option, QWidget* widget) override;
 };
 
 class EdgeItem : public QGraphicsPathItem{
@@ -71,7 +89,7 @@ public:
     void updatePath();
 };
 
-// Q NODE-GRAPH
+// Q "NODE GRAPH"
 
 class NodeGraphView : public QGraphicsView{
     Q_OBJECT
@@ -83,31 +101,70 @@ public:
         bool active = false;
         QString sourceNodeId;
         QPointF currentScreenPos;
+        QString hoverInputNodeId;
     };
     ConnectDrag m_connectDrag;
 
 private:
+    // project
     std::shared_ptr<Project> m_project;
+    // scene
     QGraphicsScene* m_scene;
+
+    // rubber band select
+    bool m_ctrlClickPending = false;
+    bool m_plainClickPending = false;
+    bool m_rubberBandAdditive = false;
+    bool m_spaceHeld = false;
+    bool m_panning = false;
+    QPoint m_lastPanPos;
+    bool m_rubberBandSelecting = false;
+    QPoint m_rubberBandOrigin;
+    QRubberBand* m_rubberBand = nullptr;
+    std::unordered_set<QString> m_rubberBandBaseSelected;
+
+    // graph item maps
     std::unordered_map<QString, NodeItem*> m_nodeItems;
-    std::vector<EdgeItem*> m_edgeItems;
+    std::unordered_map<QString, EdgeItem*> m_edgeItems;
+    static QString edgeKey(const QString& fromID, const QString& toID)
+    { return fromID + QStringLiteral("->") + toID; }
+
     MiniMapWidget* m_miniMap = nullptr;
-    MasterLayerStackWidget* m_layerStack = nullptr;
+    MasterCompositorWidget* m_masterWidget = nullptr;
     std::vector<std::pair<QString, QPainterPath>> m_connectorPaths;
 
     // snapshot
     void refreshFromProject();
-    void setSnapshot(const GraphSnapshot& snapshot);
 
+    // node thumbnails
+    std::deque<QString> m_dirtyThumbnailQueue;
+    std::unordered_set<QString> m_dirtyThumbnailSet;
+    QTimer* m_thumbnailTimer = nullptr;
+    QElapsedTimer m_thumbnailClock;
+    std::unordered_map<QString, qint64> m_lastThumbnailRefreshMs;
+    static constexpr qint64 kThumbnailMinIntervalMs = 150;
+    static QImage renderNodeThumbnail(Node& node, int outW, int outH);
+    void refreshNodeThumbnail(const QString& id);
+    void drainThumbnailUpdates();
+
+    // graph funcs
     void frameAllNodes();
-    void updateMiniMap();
-
-    void refreshLayerStackRows();
     void duplicateSelectedNode();
+    void deleteSelectedNodes();
+    void updateRubberBandSelection();
+
+    // minimap, master widget
+    void updateMiniMap();
+    void refreshMasterWidget();
+
+    // signaled funcs
+    void createNodeItem(const QString& id);
+    void removeNodeItem(const QString& id);
+    void createEdgeItem(const QString& fromID, const QString& toID);
+    void removeEdgeItem(const QString& fromID, const QString& toID);
 
 protected:
     //// events
-
     // window
     void showEvent(QShowEvent* event) override
     {
@@ -121,45 +178,27 @@ protected:
         if(m_miniMap)
             m_miniMap->move(width() - m_miniMap->width() - kMargin,
                             height() - m_miniMap->height() - kMargin);
-        if(m_layerStack)
-            m_layerStack->move(width() - m_layerStack->width() - kMargin, kMargin);
+        if(m_masterWidget)
+            m_masterWidget->move(width() - m_masterWidget->width() - kMargin, kMargin);
     }
-    void paintEvent(QPaintEvent* event) override;
 
     // mouse
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
-    void wheelEvent(QWheelEvent* event)
-    {
-        float factor = (event->angleDelta().y() > 0) ? 1.15f : (1.0f / 1.15f);
-
-        float currentScale = transform().m11();
-        float newScale = currentScale * factor;
-        if(newScale < 0.1f || newScale > 5.0f) return;
-
-        scale(factor, factor);
-
-        updateMiniMap();
-    }
+    void wheelEvent(QWheelEvent* event) override;
 
     // keyboard
-    void keyPressEvent(QKeyEvent* event) override
-    {
-        if(event->key() == Qt::Key_F)
-        {
-            frameAllNodes();
-            return;
-        }
-        if(event->key() == Qt::Key_D && (event->modifiers() & Qt::ControlModifier))
-        {
-            duplicateSelectedNode();
-            return;
-        }
-        QGraphicsView::keyPressEvent(event);
-    }
+    void keyPressEvent(QKeyEvent* event) override;
+    void keyReleaseEvent(QKeyEvent* event) override;
+
+    // drag+drop
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dragMoveEvent(QDragMoveEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
 
     // draw
+    void paintEvent(QPaintEvent* event) override;
     void drawBackground(QPainter* painter, const QRectF& rect) override
     {
         QGraphicsView::drawBackground(painter, rect);

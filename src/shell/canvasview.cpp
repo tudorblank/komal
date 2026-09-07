@@ -60,6 +60,22 @@ CanvasView::CanvasView(std::shared_ptr<Project> project, QWindow* parent)
     m_gfx.m_LINSYS.createRenderPipeline(m_camera.m_screenBindLayout); 
     m_gfx.m_BLURSYS.createComputePipeline();
 
+    connect(m_project.get(), &Project::signalNodeAdded, this, [this](QString id){
+        markDirty();
+    });
+    connect(m_project.get(), &Project::signalNodeRemoved, this, [this](QString id){
+        markDirty();
+    });
+    connect(m_project.get(), &Project::signalEdgeAdded, this, [this](QString fromID, QString toID){
+        markDirty();
+    });
+    connect(m_project.get(), &Project::signalEdgeRemoved, this, [this](QString fromID, QString toID){
+        markDirty();
+    });
+    connect(m_project.get(), &Project::signalMasterLayersChanged, this, [this](){
+        markDirty();
+    });
+
     // timer
     m_perfLogTimer.start();
     m_renderTimer = new QTimer(this);

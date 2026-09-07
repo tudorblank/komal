@@ -231,8 +231,8 @@ void GFXDevice::renderPass(uint32_t width, uint32_t height, const Camera& cam)
     wgpuRenderPassEncoderSetVertexBuffer(pass, 0, m_TEXSYS.m_vertBuff, 0, WGPU_WHOLE_SIZE);
     wgpuRenderPassEncoderSetBindGroup(pass, 0, cam.m_bindGroup, 0, nullptr);
 
-    float viewMinX = (0.0f            - cam.pan.x) / cam.zoom;
-    float viewMinY = (0.0f            - cam.pan.y) / cam.zoom;
+    float viewMinX = (0.0f          - cam.pan.x) / cam.zoom;
+    float viewMinY = (0.0f          - cam.pan.y) / cam.zoom;
     float viewMaxX = ((float)width  - cam.pan.x) / cam.zoom;
     float viewMaxY = ((float)height - cam.pan.y) / cam.zoom;
 

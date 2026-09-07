@@ -35,15 +35,15 @@ set(PROJECT_SOURCES
     src/shell/graphview-masterwidget.cpp
     src/shell/graphview-masterwidget.hpp
 
+    src/raster/raster-utils.hpp
     src/raster/raster-base.cpp
     src/raster/raster-base.hpp
-    src/raster/raster-utils.hpp
-    src/raster/raster-imgio.hpp
-    src/raster/raster-imgio.cpp
 
     src/node/node-base.hpp
     src/node/node-compositor.cpp
     src/node/node-compositor.hpp
+    src/node/node-export.hpp
+    src/node/node-export.cpp
 
     src/gfx/gfxcontext.hpp
     src/gfx/gfxdevice.cpp
@@ -127,6 +127,12 @@ add_custom_command(TARGET Komal POST_BUILD
         "${CMAKE_SOURCE_DIR}/shaders"
         "$<TARGET_FILE_DIR:Komal>/shaders"
     COMMENT "Copying shaders..."
+)
+add_custom_command(TARGET Komal POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/assets
+        $<TARGET_FILE_DIR:Komal>/assets
+    COMMENT "Copying assets..."
 )
 
 if(WIN32)

@@ -1,5 +1,13 @@
 #include "raster-base.hpp"
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
+#include <algorithm>
+#include <cstdio>
+
+static_assert(sizeof(RGBA) == 4, "RGBA must be tightly packed r,g,b,a for the reinterpret_cast below");
+
 // ==== CHUNK ====
 void Chunk::recomputeLocalBounds()
 {
@@ -251,6 +259,55 @@ void RasterData::markPixelErased(Chunk& chunk, int chunkX, int chunkY, int lx, i
         (worldY == m_pixelBounds.maxY && worldMaxY == m_pixelBounds.maxY);
 
     if(onGlobalEdge) m_pixelBounds.dirty = true; // needs global rescan
+}
+
+bool RasterData::loadImageFromPath(const char* path, int offsetX, int offsetY)
+{
+    int w, h, channels;
+    unsigned char* data = stbi_load(path, &w, &h, &channels, 4); // force RGBA
+    if(!data) { printf("Failed to load image: %s\n", path); return false; }
+
+    const RGBA* src = reinterpret_cast<const RGBA*>(data);
+
+    int chunkStartX = Grid::worldToChunk(offsetX);
+    int chunkStartY = Grid::worldToChunk(offsetY);
+    int chunkEndX   = Grid::worldToChunk(offsetX + w - 1);
+    int chunkEndY   = Grid::worldToChunk(offsetY + h - 1);
+
+    for(int cy = chunkStartY; cy <= chunkEndY; cy++)
+    for(int cx = chunkStartX; cx <= chunkEndX; cx++)
+    {
+        Chunk& chunk = accessChunk(cx, cy);
+
+        int wxBase = Grid::chunkToWorld(cx, 0);
+        int wyBase = Grid::chunkToWorld(cy, 0);
+
+        // clip this chunk's local range to the image rect
+        int lxStart = std::max(0, offsetX - wxBase);
+        int lyStart = std::max(0, offsetY - wyBase);
+        int lxEnd   = std::min(Grid::CHUNK_SIZE, offsetX + w - wxBase);
+        int lyEnd   = std::min(Grid::CHUNK_SIZE, offsetY + h - wyBase);
+
+        for(int ly = lyStart; ly < lyEnd; ly++)
+        {
+            int srcY = (wyBase + ly) - offsetY;
+            const RGBA* srcRow = &src[srcY * w + (wxBase + lxStart - offsetX)];
+            for(int lx = lxStart; lx < lxEnd; lx++, srcRow++)
+            {
+                RGBA color = *srcRow;
+                if(color.a == 0) continue;
+
+                RGBA& px = chunk.pixel(lx, ly);
+                if(px.a == 0) chunk.m_pixelCount++;
+                px = color;
+                chunk.localBounds.expand(lx, ly);
+            }
+        }
+    }
+
+    m_pixelBounds.dirty = true;
+    stbi_image_free(data);
+    return true;
 }
 
 void RasterData::recomputePixelBounds()
