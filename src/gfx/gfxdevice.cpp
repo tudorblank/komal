@@ -119,12 +119,18 @@ void GFXDevice::initCommon()
     m_queue = wgpuDeviceGetQueue(m_device);
     m_initialized = true;
 }
-void GFXDevice::configSurface(uint32_t width, uint32_t height)
+bool GFXDevice::configSurface(uint32_t width, uint32_t height)
 {
-    if(width <= 0 || height <= 0) return;
+    if(width <= 0 || height <= 0) return false;
 
     WGPUSurfaceCapabilities caps{};
     wgpuSurfaceGetCapabilities(m_surface, m_adapter, &caps);
+
+    if(caps.formatCount == 0)
+    {
+        wgpuSurfaceCapabilitiesFreeMembers(caps);
+        return false; // surface not ready yet — normal on the first Wayland expose
+    }
 
     m_surfaceFormat = caps.formats[0];
     for(size_t i = 0; i < caps.formatCount; i++)
@@ -155,6 +161,7 @@ void GFXDevice::configSurface(uint32_t width, uint32_t height)
 
     wgpuSurfaceConfigure(m_surface, &config);
     wgpuSurfaceCapabilitiesFreeMembers(caps);
+    return true;
 }
 void GFXDevice::passContext(Camera& cam)
 {

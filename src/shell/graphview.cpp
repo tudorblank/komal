@@ -159,7 +159,7 @@ NodeGraphView::NodeGraphView(std::shared_ptr<Project> project, QWidget* parent)
     connect(m_project.get(), &Project::signalMasterLayersChanged, this, &NodeGraphView::refreshMasterWidget);
     refreshMasterWidget();
 
-    refreshFromProject();
+    rebuildFromProject();
 
     // thumbnail timer
     Node::s_onNodeDirty = [this](Node* node){
@@ -213,7 +213,7 @@ void NodeGraphView::refreshNodeThumbnail(const QString& id)
     if(!item->m_thumbnailItem) return;
 
     constexpr int kSupersample = 3;
-    constexpr float kMaxZoom = 5.0f; // matches wheelEvent's zoom cap
+    constexpr float kMaxZoom = 5.0f;
 
     int displayW = (int)item->m_thumbnailRect.width();
     int displayH = (int)item->m_thumbnailRect.height();
@@ -241,14 +241,13 @@ void NodeGraphView::refreshNodeThumbnail(const QString& id)
         return;
     }
 
-    // store at kMaxZoom resolution instead of collapsing all the way to display size
     int storedW = std::max(1, renderW / kSupersample);
     int storedH = std::max(1, renderH / kSupersample);
     QPixmap pix = QPixmap::fromImage(img).scaled(
         QSize(storedW, storedH), Qt::KeepAspectRatio, Qt::SmoothTransformation);
 
     item->m_thumbnailItem->setTransformationMode(Qt::SmoothTransformation);
-    item->m_thumbnailItem->setScale(1.0f / kMaxZoom); // shown at normal size, but source is kMaxZoom-detailed
+    item->m_thumbnailItem->setScale(1.0f / kMaxZoom);
 
     QPointF offset(
         (displayW - pix.width()  / kMaxZoom) / 2.0,
@@ -284,7 +283,8 @@ void NodeGraphView::drainThumbnailUpdates()
     }
 }
 
-// graph funcs
+//// graph funcs
+// nodes - utils
 void NodeGraphView::frameAllNodes()
 {
     if(m_nodeItems.empty()) return;
@@ -367,8 +367,7 @@ void NodeGraphView::updateRubberBandSelection()
     }
 }
 
-// signaled funcs
-// project
+// signaled funcs - graph item related
 void NodeGraphView::createNodeItem(const QString& id)
 {
     auto it = m_project->m_nodes.find(id);
@@ -389,13 +388,11 @@ void NodeGraphView::createNodeItem(const QString& id)
     bool isMaster = (id == m_project->m_masterCompositor->m_meta.id);
     bool isSource = (node->m_meta.type == NodeType::Raster);
 
-    // construct the item FIRST so m_localRect and the port helpers exist
     auto* nodeItem = new NodeItem();
     nodeItem->m_id = id;
     nodeItem->m_localRect = QRectF(0, 0, kBoxW, kBoxH);
     nodeItem->m_thumbnailRect = QRectF(4, kTitleH + 4, kBoxW - 8, kThumbH - 8);
 
-    // now it's safe to add the port dots
     if(!isMaster)
     {
         auto makePort = [&](QPointF localCenter, QColor color) {
@@ -437,10 +434,10 @@ void NodeGraphView::createNodeItem(const QString& id)
     nodeItem->addToGroup(bodyRect);
 
     auto* pixItem = new QGraphicsPixmapItem();
-pixItem->setPos(nodeItem->m_thumbnailRect.topLeft());
-pixItem->setTransformationMode(Qt::SmoothTransformation);
-QPainterPath clipPath;
-clipPath.addRect(QRectF(QPointF(0,0), nodeItem->m_thumbnailRect.size()));
+    pixItem->setPos(nodeItem->m_thumbnailRect.topLeft());
+    pixItem->setTransformationMode(Qt::SmoothTransformation);
+    QPainterPath clipPath;
+    clipPath.addRect(QRectF(QPointF(0,0), nodeItem->m_thumbnailRect.size()));
 
     nodeItem->addToGroup(pixItem);
     nodeItem->m_thumbnailItem = pixItem;
@@ -519,8 +516,11 @@ void NodeGraphView::removeEdgeItem(const QString& fromID, const QString& toID)
     // updateMiniMap();
 }
 
-void NodeGraphView::refreshFromProject()
+void NodeGraphView::rebuildFromProject()
 {
+    if(!m_nodeItems.empty() || !m_edgeItems.empty())
+        nukeGraph();
+
     QString masterId = m_project->m_masterCompositor->m_meta.id;
 
     for(auto& [id, node] : m_project->m_nodes)
@@ -542,383 +542,450 @@ void NodeGraphView::refreshFromProject()
 
     updateMiniMap();
 }
-
-// minimap
-void NodeGraphView::updateMiniMap()
+void NodeGraphView::nukeGraph()
 {
-    if(!m_miniMap) return;
-
-    std::vector<QRectF> rects;
-    rects.reserve(m_nodeItems.size());
-    for(auto& [id, node] : m_nodeItems)
-        rects.push_back(QRectF(node->pos(), node->m_localRect.size()));
-
-    std::vector<std::pair<QPointF, QPointF>> edgePairs;
-    edgePairs.reserve(m_edgeItems.size());
     for(auto& [key, edge] : m_edgeItems)
     {
-        if(!edge->m_from || !edge->m_to) continue;
-        QPointF fromCenter = edge->m_from->pos() + edge->m_from->m_localRect.center();
-        QPointF toCenter   = edge->m_to->pos()   + edge->m_to->m_localRect.center();
-        edgePairs.emplace_back(fromCenter, toCenter);
+        if(edge->m_from) std::erase(edge->m_from->m_connectedEdges, edge);
+        if(edge->m_to)   std::erase(edge->m_to->m_connectedEdges, edge);
+        m_scene->removeItem(edge);
+        delete edge;
+    }
+    m_edgeItems.clear();
+
+    for(auto& [id, node] : m_nodeItems)
+    {
+        m_scene->removeItem(node);
+        delete node;
+    }
+    m_nodeItems.clear();
+}
+
+//// widgets
+    // minimap
+    void NodeGraphView::updateMiniMap()
+    {
+        if(!m_miniMap) return;
+
+        std::vector<QRectF> rects;
+        rects.reserve(m_nodeItems.size());
+        for(auto& [id, node] : m_nodeItems)
+            rects.push_back(QRectF(node->pos(), node->m_localRect.size()));
+
+        std::vector<std::pair<QPointF, QPointF>> edgePairs;
+        edgePairs.reserve(m_edgeItems.size());
+        for(auto& [key, edge] : m_edgeItems)
+        {
+            if(!edge->m_from || !edge->m_to) continue;
+            QPointF fromCenter = edge->m_from->pos() + edge->m_from->m_localRect.center();
+            QPointF toCenter   = edge->m_to->pos()   + edge->m_to->m_localRect.center();
+            edgePairs.emplace_back(fromCenter, toCenter);
+        }
+
+        m_miniMap->setNodeRects(rects);
+        m_miniMap->setEdges(edgePairs);
+        m_miniMap->setViewportRect(mapToScene(viewport()->rect()).boundingRect());
     }
 
-    m_miniMap->setNodeRects(rects);
-    m_miniMap->setEdges(edgePairs);
-    m_miniMap->setViewportRect(mapToScene(viewport()->rect()).boundingRect());
-}
-
-// master widget
-void NodeGraphView::refreshMasterWidget()
-{
-    auto& layers = m_project->m_masterCompositor->m_layers;
-    std::vector<MasterCompositorWidget::Row> rows;
-    rows.reserve(layers.size());
-    for(auto it = layers.rbegin(); it != layers.rend(); ++it)
-        rows.push_back({ (*it)->m_meta.id, (*it)->m_meta.label });
-    m_masterWidget->setRows(rows);
-}
+    // master widget
+    void NodeGraphView::refreshMasterWidget()
+    {
+        auto& layers = m_project->m_masterCompositor->m_layers;
+        std::vector<MasterCompositorWidget::Row> rows;
+        rows.reserve(layers.size());
+        for(auto it = layers.rbegin(); it != layers.rend(); ++it)
+            rows.push_back({ (*it)->m_meta.id, (*it)->m_meta.label });
+        m_masterWidget->setRows(rows);
+    }
+//
 
 //// events
-void NodeGraphView::paintEvent(QPaintEvent* event) 
-{
-    QGraphicsView::paintEvent(event);
-
-    QPainter p(viewport());
-    p.setRenderHint(QPainter::Antialiasing);
-
-    m_connectorPaths.clear();
-
-    for(size_t i = 0; i < m_project->m_masterCompositor->m_layers.size(); i++)
+    // draw
+    void NodeGraphView::paintEvent(QPaintEvent* event) 
     {
-        auto& layer = m_project->m_masterCompositor->m_layers[i];
-        auto it = m_nodeItems.find(layer->m_meta.id);
-        if(it == m_nodeItems.end()) continue;
+        QGraphicsView::paintEvent(event);
 
-        QPointF fromScene = it->second->pos() + QPointF(it->second->m_localRect.right(),
-                                                        it->second->m_localRect.center().y());
-        QPointF nodePort = mapFromScene(fromScene);
+        QPainter p(viewport());
+        p.setRenderHint(QPainter::Antialiasing);
 
-        size_t rowIndex = m_project->m_masterCompositor->m_layers.size() - 1 - i;
-        QPoint panelGlobal = m_masterWidget->mapToGlobal(m_masterWidget->portPosFor((int)rowIndex).toPoint());
-        QPointF panelPort = viewport()->mapFromGlobal(panelGlobal);
+        m_connectorPaths.clear();
 
-        QPainterPath connector = drawConnectorPath(p, nodePort, panelPort);
-
-        p.setPen(QPen(QColor(120,170,220)));
-        p.setBrush(QColor(120,170,220));
-        p.drawRect(QRectF(nodePort.x()-3, nodePort.y()-3, 6, 6));
-
-        m_connectorPaths.emplace_back(layer->m_meta.id, connector);
-    }
-
-    if(m_connectDrag.active)
-    {
-        auto it = m_nodeItems.find(m_connectDrag.sourceNodeId);
-        if(it != m_nodeItems.end())
-            drawDragPreview(p, mapFromScene(it->second->outputPortScene()), m_connectDrag.currentScreenPos);
-
-        if(!m_connectDrag.hoverInputNodeId.isEmpty())
+        for(size_t i = 0; i < m_project->m_masterCompositor->m_layers.size(); i++)
         {
-            auto targetIt = m_nodeItems.find(m_connectDrag.hoverInputNodeId);
-            if(targetIt != m_nodeItems.end())
+            auto& layer = m_project->m_masterCompositor->m_layers[i];
+            auto it = m_nodeItems.find(layer->m_meta.id);
+            if(it == m_nodeItems.end()) continue;
+
+            QPointF fromScene = it->second->pos() + QPointF(it->second->m_localRect.right(),
+                                                            it->second->m_localRect.center().y());
+            QPointF nodePort = mapFromScene(fromScene);
+
+            size_t rowIndex = m_project->m_masterCompositor->m_layers.size() - 1 - i;
+            QPoint panelGlobal = m_masterWidget->mapToGlobal(m_masterWidget->portPosFor((int)rowIndex).toPoint());
+            QPointF panelPort = viewport()->mapFromGlobal(panelGlobal);
+
+            QPainterPath connector = drawConnectorPath(p, nodePort, panelPort);
+
+            p.setPen(QPen(QColor(120,170,220)));
+            p.setBrush(QColor(120,170,220));
+            p.drawRect(QRectF(nodePort.x()-3, nodePort.y()-3, 6, 6));
+
+            m_connectorPaths.emplace_back(layer->m_meta.id, connector);
+        }
+
+        if(m_connectDrag.active)
+        {
+            auto it = m_nodeItems.find(m_connectDrag.sourceNodeId);
+            if(it != m_nodeItems.end())
+                drawDragPreview(p, mapFromScene(it->second->outputPortScene()), m_connectDrag.currentScreenPos);
+
+            if(!m_connectDrag.hoverInputNodeId.isEmpty())
             {
-                QPointF ring = mapFromScene(targetIt->second->inputPortScene());
-                p.setPen(QPen(QColor(120, 220, 150), 2));
-                p.setBrush(Qt::NoBrush);
-                p.drawEllipse(ring, 9, 9);
+                auto targetIt = m_nodeItems.find(m_connectDrag.hoverInputNodeId);
+                if(targetIt != m_nodeItems.end())
+                {
+                    QPointF ring = mapFromScene(targetIt->second->inputPortScene());
+                    p.setPen(QPen(QColor(120, 220, 150), 2));
+                    p.setBrush(Qt::NoBrush);
+                    p.drawEllipse(ring, 9, 9);
+                }
             }
         }
     }
-}
-// mouse
-void NodeGraphView::mousePressEvent(QMouseEvent* event)
-{
-    if(event->button() == Qt::MiddleButton || (event->button() == Qt::LeftButton && m_spaceHeld))
+    void NodeGraphView::drawBackground(QPainter* painter, const QRectF& rect)
     {
-        m_panning = true;
-        m_lastPanPos = event->pos();
-        setCursor(Qt::ClosedHandCursor);
-        return;
+        QGraphicsView::drawBackground(painter, rect);
+
+        constexpr float kGridStep = 40.0f;
+
+        QPen minorPen(QColor(32, 32, 32));
+        minorPen.setWidth(0);
+        painter->setPen(minorPen);
+
+        float left = std::floor(rect.left() / kGridStep) * kGridStep;
+        float top  = std::floor(rect.top()  / kGridStep) * kGridStep;
+
+        for(float x = left; x < rect.right(); x += kGridStep)
+            painter->drawLine(QPointF(x, rect.top()), QPointF(x, rect.bottom()));
+        for(float y = top; y < rect.bottom(); y += kGridStep)
+            painter->drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y));
+    }
+    QPainterPath NodeGraphView::drawConnectorPath(QPainter& p, QPointF origin, QPointF target)
+    {
+        QLinearGradient grad(origin, target);
+        grad.setColorAt(0.0, QColor(120, 170, 220, 255));
+        grad.setColorAt(1.0, QColor(120, 170, 220, 120));
+
+        QPen pen(QBrush(grad), 2.5, Qt::DashLine);
+        p.setPen(pen);
+        p.setBrush(Qt::NoBrush);
+
+        float midX = (origin.x() + target.x()) / 2.0f;
+        QPainterPath path(origin);
+        path.cubicTo(QPointF(midX, origin.y()), QPointF(midX, target.y()), target);
+        p.drawPath(path);
+        return path;
+    }
+    void NodeGraphView::drawDragPreview(QPainter& p, QPointF origin, QPointF cursor)
+    {
+        QLinearGradient grad(origin, cursor);
+        grad.setColorAt(0.0, QColor(120, 170, 220, 200));
+        grad.setColorAt(1.0, QColor(120, 170, 220, 80));
+        QPen pen(QBrush(grad), 2, Qt::DashLine);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(pen);
+        p.drawLine(origin, cursor);
     }
 
-    if(event->button() == Qt::LeftButton && (event->modifiers() & Qt::ControlModifier))
+    // mouse
+    void NodeGraphView::mousePressEvent(QMouseEvent* event)
     {
-        m_ctrlClickPending = true;
-        m_rubberBandOrigin = event->pos();
-        return;
-    }
-
-    QString masterId = m_project->m_masterCompositor->m_meta.id;
-    for(auto& [id, node] : m_nodeItems)
-    {
-        if(id == masterId || !node->m_outputPort) continue;
-        QPointF portScreen = mapFromScene(node->outputPortScene());
-        if(QLineF(portScreen, event->pos()).length() < 10.0)
+        if(event->button() == Qt::MiddleButton || (event->button() == Qt::LeftButton && m_spaceHeld))
         {
-            m_connectDrag = { true, id, event->pos(), QString() };
-            setDragMode(QGraphicsView::NoDrag);
+            m_panning = true;
+            m_lastPanPos = event->pos();
+            setCursor(Qt::ClosedHandCursor);
             return;
         }
-    }
 
-    // clear selection / start plain rubber-band drag
-    QGraphicsItem* hit = itemAt(event->pos());
-    NodeItem* hitNode = qgraphicsitem_cast<NodeItem*>(hit);
-    if(!hitNode && hit)
-        hitNode = qgraphicsitem_cast<NodeItem*>(hit->group());
-
-    if(event->button() == Qt::LeftButton && !hitNode)
-    {
-        m_plainClickPending = true;
-        m_rubberBandOrigin = event->pos();
-        return;
-    }
-
-    QGraphicsView::mousePressEvent(event);
-}
-void NodeGraphView::mouseReleaseEvent(QMouseEvent* event)
-{
-    if(m_panning)
-    {
-        m_panning = false;
-        unsetCursor();
-        return;
-    }
-
-    if(m_rubberBandSelecting)
-    {
-        updateRubberBandSelection();
-        m_rubberBand->hide();
-        m_rubberBandSelecting = false;
-        m_rubberBandBaseSelected.clear();
-        return;
-    }
-
-    if(m_ctrlClickPending)
-    {
-        m_ctrlClickPending = false;
-
-        QGraphicsItem* hit = itemAt(event->pos());
-        NodeItem* node = qgraphicsitem_cast<NodeItem*>(hit);
-        if(!node && hit)
-            node = qgraphicsitem_cast<NodeItem*>(hit->group());
-
-        if(node) node->setSelected(!node->isSelected());
-        return;
-    }
-
-    if(m_plainClickPending)
-    {
-        m_plainClickPending = false;
-        m_scene->clearSelection();
-        return;
-    }
-
-    if(m_connectDrag.active)
-    {
-        QString sourceId = m_connectDrag.sourceNodeId;
-        QString targetId = m_connectDrag.hoverInputNodeId;
-
-        // regular graph node
-        if(!targetId.isEmpty())
+        if(event->button() == Qt::LeftButton && (event->modifiers() & Qt::ControlModifier))
         {
-            m_project->connectNodes(sourceId, targetId);
+            m_ctrlClickPending = true;
+            m_rubberBandOrigin = event->pos();
+            return;
+        }
+
+        QString masterId = m_project->m_masterCompositor->m_meta.id;
+        for(auto& [id, node] : m_nodeItems)
+        {
+            if(id == masterId || !node->m_outputPort) continue;
+            QPointF portScreen = mapFromScene(node->outputPortScene());
+            if(QLineF(portScreen, event->pos()).length() < 10.0)
+            {
+                m_connectDrag = { true, id, event->pos(), QString() };
+                setDragMode(QGraphicsView::NoDrag);
+                return;
+            }
+        }
+
+        // clear selection / start plain rubber-band drag
+        QGraphicsItem* hit = itemAt(event->pos());
+        NodeItem* hitNode = qgraphicsitem_cast<NodeItem*>(hit);
+        if(!hitNode && hit)
+            hitNode = qgraphicsitem_cast<NodeItem*>(hit->group());
+
+        if(event->button() == Qt::LeftButton && !hitNode)
+        {
+            m_plainClickPending = true;
+            m_rubberBandOrigin = event->pos();
+            return;
+        }
+
+        QGraphicsView::mousePressEvent(event);
+    }
+    void NodeGraphView::mouseReleaseEvent(QMouseEvent* event)
+    {
+        if(m_panning)
+        {
+            m_panning = false;
+            unsetCursor();
+            return;
+        }
+
+        if(m_rubberBandSelecting)
+        {
+            updateRubberBandSelection();
+            m_rubberBand->hide();
+            m_rubberBandSelecting = false;
+            m_rubberBandBaseSelected.clear();
+            return;
+        }
+
+        if(m_ctrlClickPending)
+        {
+            m_ctrlClickPending = false;
+
+            QGraphicsItem* hit = itemAt(event->pos());
+            NodeItem* node = qgraphicsitem_cast<NodeItem*>(hit);
+            if(!node && hit)
+                node = qgraphicsitem_cast<NodeItem*>(hit->group());
+
+            if(node) node->setSelected(!node->isSelected());
+            return;
+        }
+
+        if(m_plainClickPending)
+        {
+            m_plainClickPending = false;
+            m_scene->clearSelection();
+            return;
+        }
+
+        if(m_connectDrag.active)
+        {
+            QString sourceId = m_connectDrag.sourceNodeId;
+            QString targetId = m_connectDrag.hoverInputNodeId;
+
+            // regular graph node
+            if(!targetId.isEmpty())
+            {
+                m_project->connectNodes(sourceId, targetId);
+                m_connectDrag = {};
+                setDragMode(QGraphicsView::NoDrag);
+                viewport()->update();
+                return;
+            }
+
+            // master widget
+            QPoint panelLocal = m_masterWidget->mapFromGlobal(mapToGlobal(event->pos()));
+            bool droppedOnPanel = m_masterWidget->rect().contains(panelLocal);
+            size_t insertIndex = (size_t)m_masterWidget->ghostInsertIndex();
+
+            m_masterWidget->clearGhost();
             m_connectDrag = {};
             setDragMode(QGraphicsView::NoDrag);
+
+            if(droppedOnPanel)
+            {
+                size_t count = m_project->m_masterCompositor->m_layers.size();
+                size_t layerIndex = count - (size_t)insertIndex;
+                m_project->addNodeToMasterAt(sourceId, layerIndex);
+            }
+
             viewport()->update();
             return;
         }
 
-        // master widget
-        QPoint panelLocal = m_masterWidget->mapFromGlobal(mapToGlobal(event->pos()));
-        bool droppedOnPanel = m_masterWidget->rect().contains(panelLocal);
-        size_t insertIndex = (size_t)m_masterWidget->ghostInsertIndex();
+        NodeItem* grabbed = qgraphicsitem_cast<NodeItem*>(scene()->mouseGrabberItem());
+        QGraphicsView::mouseReleaseEvent(event);
 
-        m_masterWidget->clearGhost();
-        m_connectDrag = {};
-        setDragMode(QGraphicsView::NoDrag);
-
-        if(droppedOnPanel)
+        if(grabbed)
         {
-            size_t count = m_project->m_masterCompositor->m_layers.size();
-            size_t layerIndex = count - (size_t)insertIndex;
-            m_project->addNodeToMasterAt(sourceId, layerIndex);
+            m_project->setNodePosition(grabbed->m_id, (float)grabbed->pos().x(), (float)grabbed->pos().y());
+            updateMiniMap();
         }
-
-        viewport()->update();
-        return;
     }
-
-    NodeItem* grabbed = qgraphicsitem_cast<NodeItem*>(scene()->mouseGrabberItem());
-    QGraphicsView::mouseReleaseEvent(event);
-
-    if(grabbed)
+    void NodeGraphView::mouseMoveEvent(QMouseEvent* event)
     {
-        m_project->setNodePosition(grabbed->m_id, (float)grabbed->pos().x(), (float)grabbed->pos().y());
-        updateMiniMap();
-    }
-}
-void NodeGraphView::mouseMoveEvent(QMouseEvent* event)
-{
-    if(m_panning)
-    {
-        QPoint delta = event->pos() - m_lastPanPos;
-        m_lastPanPos = event->pos();
-        horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
-        verticalScrollBar()->setValue(verticalScrollBar()->value() - delta.y());
-        updateMiniMap();
-        return;
-    }
-
-    if(m_ctrlClickPending || m_plainClickPending)
-    {
-        constexpr int kDragThreshold = 4;
-        if((event->pos() - m_rubberBandOrigin).manhattanLength() > kDragThreshold)
+        if(m_panning)
         {
-            m_rubberBandAdditive = m_ctrlClickPending;
-            m_ctrlClickPending = false;
-            m_plainClickPending = false;
-            m_rubberBandSelecting = true;
-
-            m_rubberBandBaseSelected.clear();
-            if(m_rubberBandAdditive)
-                for(auto& [id, node] : m_nodeItems)
-                    if(node->isSelected())
-                        m_rubberBandBaseSelected.insert(id);
-
-            m_rubberBand->setGeometry(QRect(m_rubberBandOrigin, QSize()));
-            m_rubberBand->show();
-            updateRubberBandSelection();
-        }
-        else
-        {
+            QPoint delta = event->pos() - m_lastPanPos;
+            m_lastPanPos = event->pos();
+            horizontalScrollBar()->setValue(horizontalScrollBar()->value() - delta.x());
+            verticalScrollBar()->setValue(verticalScrollBar()->value() - delta.y());
+            updateMiniMap();
             return;
         }
-    }
 
-    if(m_rubberBandSelecting)
-    {
-        m_rubberBand->setGeometry(QRect(m_rubberBandOrigin, event->pos()).normalized());
-        updateRubberBandSelection();
-        return;
-    }
-
-    if(m_connectDrag.active)
-    {
-        m_connectDrag.currentScreenPos = event->pos();
-
-        QPoint panelLocal = m_masterWidget->mapFromGlobal(mapToGlobal(event->pos()));
-        if(m_masterWidget->rect().contains(panelLocal))
-            m_masterWidget->updateGhostPosition(panelLocal, true);
-        else
-            m_masterWidget->clearGhost();
-
-        m_connectDrag.hoverInputNodeId.clear();
-        for(auto& [id, node] : m_nodeItems)
+        if(m_ctrlClickPending || m_plainClickPending)
         {
-            if(id == m_connectDrag.sourceNodeId || !node->m_inputPort) continue;
-            if(QLineF(mapFromScene(node->inputPortScene()), event->pos()).length() < 10.0)
+            constexpr int kDragThreshold = 4;
+            if((event->pos() - m_rubberBandOrigin).manhattanLength() > kDragThreshold)
             {
-                m_connectDrag.hoverInputNodeId = id;
-                break;
+                m_rubberBandAdditive = m_ctrlClickPending;
+                m_ctrlClickPending = false;
+                m_plainClickPending = false;
+                m_rubberBandSelecting = true;
+
+                m_rubberBandBaseSelected.clear();
+                if(m_rubberBandAdditive)
+                    for(auto& [id, node] : m_nodeItems)
+                        if(node->isSelected())
+                            m_rubberBandBaseSelected.insert(id);
+
+                m_rubberBand->setGeometry(QRect(m_rubberBandOrigin, QSize()));
+                m_rubberBand->show();
+                updateRubberBandSelection();
+            }
+            else
+            {
+                return;
             }
         }
 
-        viewport()->update();
-        return;
+        if(m_rubberBandSelecting)
+        {
+            m_rubberBand->setGeometry(QRect(m_rubberBandOrigin, event->pos()).normalized());
+            updateRubberBandSelection();
+            return;
+        }
+
+        if(m_connectDrag.active)
+        {
+            m_connectDrag.currentScreenPos = event->pos();
+
+            QPoint panelLocal = m_masterWidget->mapFromGlobal(mapToGlobal(event->pos()));
+            if(m_masterWidget->rect().contains(panelLocal))
+                m_masterWidget->updateGhostPosition(panelLocal, true);
+            else
+                m_masterWidget->clearGhost();
+
+            m_connectDrag.hoverInputNodeId.clear();
+            for(auto& [id, node] : m_nodeItems)
+            {
+                if(id == m_connectDrag.sourceNodeId || !node->m_inputPort) continue;
+                if(QLineF(mapFromScene(node->inputPortScene()), event->pos()).length() < 10.0)
+                {
+                    m_connectDrag.hoverInputNodeId = id;
+                    break;
+                }
+            }
+
+            viewport()->update();
+            return;
+        }
+
+        QGraphicsView::mouseMoveEvent(event);
+
+        if(event->buttons() & Qt::LeftButton)
+            updateMiniMap();
     }
+    void NodeGraphView::wheelEvent(QWheelEvent* event)
+    {
+        float factor = (event->angleDelta().y() > 0) ? 1.15f : (1.0f / 1.15f);
 
-    QGraphicsView::mouseMoveEvent(event);
+        float currentScale = transform().m11();
+        float newScale = currentScale * factor;
+        if(newScale < 0.1f || newScale > 5.0f) return;
 
-    if(event->buttons() & Qt::LeftButton)
+        scale(factor, factor);
+
         updateMiniMap();
-}
-void NodeGraphView::wheelEvent(QWheelEvent* event)
-{
-    float factor = (event->angleDelta().y() > 0) ? 1.15f : (1.0f / 1.15f);
+    }
 
-    float currentScale = transform().m11();
-    float newScale = currentScale * factor;
-    if(newScale < 0.1f || newScale > 5.0f) return;
+    // drag+drop
+    void NodeGraphView::dragEnterEvent(QDragEnterEvent* event)
+    {
+        if(event->mimeData()->hasUrls())
+            event->acceptProposedAction();
+    }
+    void NodeGraphView::dragMoveEvent(QDragMoveEvent* event)
+    {
+        if(event->mimeData()->hasUrls())
+            event->acceptProposedAction();
+    }
+    void NodeGraphView::dropEvent(QDropEvent* event)
+    {
+        if(!event->mimeData()->hasUrls()) return;
 
-    scale(factor, factor);
+        static const QStringList kImageExts = { "png", "jpg", "jpeg", "bmp", "tga", "gif" };
 
-    updateMiniMap();
-}
+        QPointF scenePos = mapToScene(event->position().toPoint());
 
-// keyboard
-void NodeGraphView::keyPressEvent(QKeyEvent* event)
-{
-    if(event->key() == Qt::Key_Space && !event->isAutoRepeat())
-    {
-        m_spaceHeld = true;
-        return;
-    }
-    if(event->key() == Qt::Key_F) // frame nodes
-    {
-        frameAllNodes();
-        return;
-    }
-    if(event->key() == Qt::Key_D && (event->modifiers() & Qt::ControlModifier)) // dup node
-    {
-        duplicateSelectedNode();
-        return;
-    }
-    if(event->key() == Qt::Key_M) // new raster node
-    {
-        m_project->createRasterNode(0.0f, 0.0f);
-        return;
-    }
-    if(event->key() == Qt::Key_Delete)
-    {
-        deleteSelectedNodes();
-        return;
-    }
-    if(event->key() == Qt::Key_E)
-    {
-        bool ok = exportMasterToPath(*m_project->m_masterCompositor, "output.png");
-        qDebug() << "export" << (ok ? "OK" : "FAILED") << "cwd:" << QDir::currentPath();
-        return;
-    }
-    QGraphicsView::keyPressEvent(event);
-}
-void NodeGraphView::keyReleaseEvent(QKeyEvent* event)
-{
-    if(event->key() == Qt::Key_Space && !event->isAutoRepeat())
-        m_spaceHeld = false;
-    QGraphicsView::keyReleaseEvent(event);
-}
+        for(const QUrl& url : event->mimeData()->urls())
+        {
+            if(!url.isLocalFile()) continue;
 
-// drag+drop
-void NodeGraphView::dragEnterEvent(QDragEnterEvent* event)
-{
-    if(event->mimeData()->hasUrls())
+            QString path = url.toLocalFile();
+            if(!kImageExts.contains(QFileInfo(path).suffix().toLower())) continue;
+
+            m_project->createRasterNodeFromImage(path, (float)scenePos.x(), (float)scenePos.y());
+            scenePos += QPointF(30, 30); // stagger multi-file drops so they don't stack exactly
+        }
+
         event->acceptProposedAction();
-}
-void NodeGraphView::dragMoveEvent(QDragMoveEvent* event)
-{
-    if(event->mimeData()->hasUrls())
-        event->acceptProposedAction();
-}
-void NodeGraphView::dropEvent(QDropEvent* event)
-{
-    if(!event->mimeData()->hasUrls()) return;
-
-    static const QStringList kImageExts = { "png", "jpg", "jpeg", "bmp", "tga", "gif" };
-
-    QPointF scenePos = mapToScene(event->position().toPoint());
-
-    for(const QUrl& url : event->mimeData()->urls())
-    {
-        if(!url.isLocalFile()) continue;
-
-        QString path = url.toLocalFile();
-        if(!kImageExts.contains(QFileInfo(path).suffix().toLower())) continue;
-
-        m_project->createRasterNodeFromImage(path, (float)scenePos.x(), (float)scenePos.y());
-        scenePos += QPointF(30, 30); // stagger multi-file drops so they don't stack exactly
     }
 
-    event->acceptProposedAction();
-}
+    // keyboard
+    void NodeGraphView::keyPressEvent(QKeyEvent* event)
+    {
+        if(event->key() == Qt::Key_Space && !event->isAutoRepeat())
+        {
+            m_spaceHeld = true;
+            return;
+        }
+        if(event->key() == Qt::Key_F) // frame nodes
+        {
+            frameAllNodes();
+            return;
+        }
+        if(event->key() == Qt::Key_D && (event->modifiers() & Qt::ControlModifier)) // dup node
+        {
+            duplicateSelectedNode();
+            return;
+        }
+        if(event->key() == Qt::Key_M) // new raster node
+        {
+            m_project->createRasterNode(0.0f, 0.0f);
+            return;
+        }
+        if(event->key() == Qt::Key_Delete)
+        {
+            deleteSelectedNodes();
+            return;
+        }
+        if(event->key() == Qt::Key_E)
+        {
+            bool ok = exportMasterToPath(*m_project->m_masterCompositor, "output.png");
+            qDebug() << "export" << (ok ? "OK" : "FAILED") << "cwd:" << QDir::currentPath();
+            return;
+        }
+        QGraphicsView::keyPressEvent(event);
+    }
+    void NodeGraphView::keyReleaseEvent(QKeyEvent* event)
+    {
+        if(event->key() == Qt::Key_Space && !event->isAutoRepeat())
+            m_spaceHeld = false;
+        QGraphicsView::keyReleaseEvent(event);
+    }
+//

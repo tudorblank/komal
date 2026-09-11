@@ -61,6 +61,8 @@ private:
     MouseHandler m_mouse;
 
     GFXDevice m_gfx;
+    bool m_graphicsReady = false;
+    void initGraphics();
     Camera m_camera;
     std::shared_ptr<Project> m_project;
 
@@ -97,10 +99,15 @@ protected:
     void exposeEvent(QExposeEvent* e) override
     {
         Q_UNUSED(e);
-        if(!m_gfx.m_initialized) return;
-
-        if(isExposed())
+        if(isExposed() && !m_graphicsReady)
+        {
+            initGraphics();
+            m_graphicsReady = true;
+        }
+        else if(isExposed() && m_gfx.m_initialized)
+        {
             reconfigureSurface();
+        }
     }
     void mousePressEvent(QMouseEvent* e) override
     {

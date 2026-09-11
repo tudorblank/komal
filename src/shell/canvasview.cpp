@@ -12,29 +12,7 @@
 CanvasView::CanvasView(std::shared_ptr<Project> project, QWindow* parent)
     : QWindow(parent), m_project(std::move(project))
 {
-// init WGPU
-#ifdef _WIN32
-    setSurfaceType(QWindow::RasterSurface);
-    m_gfx.init((HWND)winId());
-#else
-    QByteArray platform = QGuiApplication::platformName().toLower().toLatin1();
-    QPlatformNativeInterface* native = QGuiApplication::platformNativeInterface();
-
-    setSurfaceType(QWindow::RasterSurface);
-
-    if(platform.contains("wayland"))
-    {
-        void* display = native->nativeResourceForIntegration("wl_display");
-        void* surface = native->nativeResourceForWindow("surface", this);
-        m_gfx.init("wayland", display, surface);
-    }
-    else // xcb
-    {
-        void* display = native->nativeResourceForWindow("display", this);
-        void* xwindow = (void*)(uintptr_t)winId();
-        m_gfx.init("xcb", display, xwindow);
-    }
-#endif
+    setSurfaceType(QWindow::VulkanSurface);
 
     m_resizeDebounce = new QTimer(this);
     m_resizeDebounce->setSingleShot(true);
@@ -43,44 +21,16 @@ CanvasView::CanvasView(std::shared_ptr<Project> project, QWindow* parent)
         reconfigureSurface();
     });
 
-    if(!m_gfx.m_initialized) return;
-    m_gfx.configSurface(width(), height());
-    m_gfx.passContext(m_camera);
+    connect(m_project.get(), &Project::signalNodeAdded, this, [this](QString id){ markDirty(); });
+    connect(m_project.get(), &Project::signalNodeRemoved, this, [this](QString id){ markDirty(); });
+    connect(m_project.get(), &Project::signalEdgeAdded, this, [this](QString fromID, QString toID){ markDirty(); });
+    connect(m_project.get(), &Project::signalEdgeRemoved, this, [this](QString fromID, QString toID){ markDirty(); });
+    connect(m_project.get(), &Project::signalMasterLayersChanged, this, [this](){ markDirty(); });
 
-    // camera
-    m_camera.create();
-    m_camera.update((float)width(), (float)height());
-    m_camera.createScreen(width(), height());
-
-    // gfx pipelines
-    m_gfx.initIndexBuffer();
-    m_gfx.m_COLSYS.createRenderPipeline(m_camera.m_bindLayout);
-    m_gfx.m_TEXSYS.initAtlasSampler();
-    m_gfx.m_TEXSYS.createRenderPipeline(m_camera.m_bindLayout);
-    m_gfx.m_LINSYS.createRenderPipeline(m_camera.m_screenBindLayout); 
-    m_gfx.m_BLURSYS.createComputePipeline();
-
-    connect(m_project.get(), &Project::signalNodeAdded, this, [this](QString id){
-        markDirty();
-    });
-    connect(m_project.get(), &Project::signalNodeRemoved, this, [this](QString id){
-        markDirty();
-    });
-    connect(m_project.get(), &Project::signalEdgeAdded, this, [this](QString fromID, QString toID){
-        markDirty();
-    });
-    connect(m_project.get(), &Project::signalEdgeRemoved, this, [this](QString fromID, QString toID){
-        markDirty();
-    });
-    connect(m_project.get(), &Project::signalMasterLayersChanged, this, [this](){
-        markDirty();
-    });
-
-    // timer
     m_perfLogTimer.start();
     m_renderTimer = new QTimer(this);
-    m_renderTimer->setInterval(8);  // ~125 Hz
-        connect(m_renderTimer, &QTimer::timeout, this, [this]() {
+    m_renderTimer->setInterval(8);
+    connect(m_renderTimer, &QTimer::timeout, this, [this]() {
         if(!m_needsRender) return;
         m_needsRender = false;
 
@@ -94,7 +44,6 @@ CanvasView::CanvasView(std::shared_ptr<Project> project, QWindow* parent)
         }
 
         QElapsedTimer stepTimer;
-
         stepTimer.start();
         size_t tileCount = syncCompositedOutput();
         m_perf.syncNs += stepTimer.nsecsElapsed();
@@ -108,6 +57,45 @@ CanvasView::CanvasView(std::shared_ptr<Project> project, QWindow* parent)
         logPerfIfDue();
     });
     m_renderTimer->start();
+}
+void CanvasView::initGraphics()
+{
+#ifdef _WIN32
+    m_gfx.init((HWND)winId());
+#else
+    QByteArray platform = QGuiApplication::platformName().toLower().toLatin1();
+    QPlatformNativeInterface* native = QGuiApplication::platformNativeInterface();
+
+    if(platform.contains("wayland"))
+    {
+        void* display = native->nativeResourceForIntegration("wl_display");
+        void* surface = native->nativeResourceForWindow("surface", this);
+        m_gfx.init("wayland", display, surface);
+    }
+    else
+    {
+        void* display = native->nativeResourceForWindow("display", this);
+        void* xwindow = (void*)(uintptr_t)winId();
+        m_gfx.init("xcb", display, xwindow);
+    }
+#endif
+
+    if(!m_gfx.m_initialized) return;
+    if(!m_gfx.configSurface(width(), height())) return;
+
+    m_gfx.passContext(m_camera);
+    m_camera.create();
+    m_camera.update((float)width(), (float)height());
+    m_camera.createScreen(width(), height());
+
+    m_gfx.initIndexBuffer();
+    m_gfx.m_COLSYS.createRenderPipeline(m_camera.m_bindLayout);
+    m_gfx.m_TEXSYS.initAtlasSampler();
+    m_gfx.m_TEXSYS.createRenderPipeline(m_camera.m_bindLayout);
+    m_gfx.m_LINSYS.createRenderPipeline(m_camera.m_screenBindLayout);
+    m_gfx.m_BLURSYS.createComputePipeline();
+
+    markDirty();
 }
 void CanvasView::reconfigureSurface()
 {

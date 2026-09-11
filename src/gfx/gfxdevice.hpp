@@ -43,7 +43,7 @@ public:
     void init(const char* platform, void* display, void* handle);
 #endif
     void initCommon();
-    void configSurface(uint32_t width, uint32_t height);
+    bool configSurface(uint32_t width, uint32_t height);
 
     void initIndexBuffer();
     WGPUBuffer m_indexBuffer = nullptr;

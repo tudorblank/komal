@@ -11,7 +11,10 @@
 int main(int argc, char *argv[])
 {
 #ifdef Q_OS_UNIX
-    qputenv("QT_QPA_PLATFORM", "xcb");
+    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {
+    if (!qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY"))
+        qputenv("QT_QPA_PLATFORM", "wayland;xcb");
+    }
 #endif
     QApplication app(argc, argv);
     

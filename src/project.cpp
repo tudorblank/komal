@@ -194,31 +194,3 @@ void Project::moveMasterLayer(const QString& id, size_t newIndex)
     
     emit signalMasterLayersChanged();
 }
-
-/*
-void Project::walkNode(const std::shared_ptr<Node>& node, GraphSnapshot& snap, std::unordered_set<Node*>& visited) const
-{
-    if(!node || !visited.insert(node.get()).second) return;
-
-    snap.nodes.push_back({ node->m_meta.id, node->m_meta.label, node->m_meta.x, node->m_meta.y });
-
-    for(auto& input : node->getInputs())
-    {
-        if(input) snap.edges.push_back({ input->m_meta.id, node->m_meta.id });
-        walkNode(input, snap, visited);
-    }
-}
-GraphSnapshot Project::buildGraphSnapshot() const
-{
-    GraphSnapshot snap;
-    std::unordered_set<Node*> visited;
-    visited.insert(m_masterCompositor.get());
-
-    for(auto& [id, node] : m_nodes)
-    {
-        if(!node || node.get() == m_masterCompositor.get()) continue;
-        walkNode(node, snap, visited);
-    }
-    return snap;
-}
-*/
