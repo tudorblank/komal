@@ -1,0 +1,174 @@
+#include "node-shape.h"
+#include "ui/graph-view/graph-style.h"
+
+using namespace GraphStyle;
+
+const NodePort* NodeShape::output() const
+{
+    for (const NodePort& p : ports) if (p.output) return &p;
+    return nullptr;
+}
+
+const NodePort* NodeShape::input(const InputSlot& slot) const
+{
+    for (const NodePort& p : ports) if (!p.output && p.slot == slot) return &p;
+    return nullptr;
+}
+
+bool preferredInput(const Node& n, InputSlot& out)
+{
+    if (dynamic_cast<const UnaryNode*>(&n)) { out = InputSlot::input(); return true; }
+    if (auto* c = dynamic_cast<const CompositorNode*>(&n)) { out = InputSlot::stackLayer(uint32_t(c->layers().size())); return true; }
+    return false;
+}
+
+namespace {
+
+class Builder {
+public:
+    Builder(const Project& p, const Node& n, const NodeViewState& v, NodeShape& s)
+        : m_project(p), m_node(n), m_view(v), m_s(s), m_x0(n.m_meta.x), m_x1(n.m_meta.x + kNodeWidth), m_y(n.m_meta.y) {}
+
+    void build()
+    {
+        m_s.id = m_node.m_meta.id;
+        const bool master = m_project.isMaster(m_s.id);
+        auto* stack = dynamic_cast<const CompositorNode*>(&m_node);
+
+        // ---- header (+ body, or the master's stack)
+        const float top = m_y;
+        m_s.header = ImRect(m_x0, top, m_x1, top + kHeaderH);
+        widget(NodeControl::Title, m_s.header);
+        m_y = m_s.header.Max.y;
+        if (master) {
+            layerList(*stack);
+        } else {
+            body();
+        }
+        closeBox(top, kHeaderH);
+
+        // ---- properties
+        if (dynamic_cast<const MoveNode*>(&m_node)) {
+            const float boxTop = openBox();
+            m_y += 4.0f;
+            for (int axis = 0; axis < 2; ++axis) {
+                m_s.offsetRow[axis] = ImRect(m_x0, m_y, m_x1, m_y + kRowH);
+                widget(axis == 0 ? NodeControl::OffsetX : NodeControl::OffsetY,
+                       ImRect(m_x0 + kPad + 56.0f, m_y + 2.0f, m_x1 - kPad, m_y + kRowH - 2.0f));
+                m_y += kRowH;
+            }
+            m_y += 4.0f;
+            closeBox(boxTop);
+        } else if (stack && !master) {
+            const float boxTop = openBox();
+            layerList(*stack);
+            closeBox(boxTop);
+        }
+
+        // ---- signals
+        const float boxTop = openBox();
+        m_y += 3.0f;
+        section(NodeSignal::Main);
+        if (m_node.hasDryWet()) {   // effect nodes only
+            section(NodeSignal::Wet);
+            section(NodeSignal::Dry);
+        }
+        m_y += 3.0f;
+        closeBox(boxTop);
+
+        m_s.bounds = m_s.boxes.front().rect;
+        for (const NodeBox& b : m_s.boxes) m_s.bounds.Add(b.rect);
+    }
+
+private:
+    void widget(NodeControl c, ImRect r, NodeSignal sig = NodeSignal::Main, NodeChannel ch = NodeChannel::A, uint32_t layer = 0)
+    {
+        m_s.widgets.push_back({ c, r, sig, ch, layer });
+    }
+    void inputPort(float y, InputSlot slot, bool mask = false, bool placeholder = false)
+    {
+        m_s.ports.push_back({ ImVec2(m_x0, y), false, slot, mask, placeholder });
+    }
+
+    float openBox() { m_y += kBoxGap; return m_y; }
+    void  closeBox(float top, float header = 0.0f) { m_s.boxes.push_back({ ImRect(m_x0, top, m_x1, m_y), header }); }
+
+    void body()
+    {
+        m_s.ioRow = ImRect(m_x0, m_y, m_x1, m_y + kIoRowH);
+        const float cy = m_s.ioRow.GetCenter().y;
+        m_s.ports.push_back({ ImVec2(m_x1, cy), true, {}, false, false });
+        if (dynamic_cast<const UnaryNode*>(&m_node)) inputPort(cy, InputSlot::input());
+        if (m_node.m_meta.type == NodeType::Raster) {
+            const float h = kIconSize * 0.5f;
+            const float x = m_x0 + kPad;
+            widget(NodeControl::Lock,        ImRect(x, cy - h, x + kIconSize, cy + h));
+            widget(NodeControl::LockAlpha, ImRect(x + kIconSize + 6.0f, cy - h, x + 2.0f * kIconSize + 6.0f, cy + h));
+        }
+        const float tx = m_x0 + (kNodeWidth - kThumbW) * 0.5f;
+        m_s.thumb = ImRect(tx, m_s.ioRow.Max.y + 1.0f, tx + kThumbW, m_s.ioRow.Max.y + 1.0f + kThumbH);
+        m_y = m_s.thumb.Max.y + kThumbBelow;
+    }
+
+    void layerList(const CompositorNode& c)
+    {
+        m_y += 4.0f;
+        const float x0 = m_x0 + 6.0f, x1 = m_x1 - 6.0f;
+        // The slot that adds a new top layer.
+        {
+            const ImRect r(x0, m_y, x1, m_y + kRowH);
+            const uint32_t top = uint32_t(c.layers().size());
+            m_s.layers.push_back({ r, ImRect(), top, true });
+            inputPort(r.GetCenter().y, InputSlot::stackLayer(top), false, true);
+            m_y = r.Max.y + kLayerGap;
+        }
+        for (size_t i = c.layers().size(); i-- > 0;) {   // top of the stack first
+            const ImRect r(x0, m_y, x1, m_y + kLayerRowH);
+            const float th = kLayerRowH - 6.0f;
+            const ImRect thumb(r.Min.x + 3.0f, r.Min.y + 3.0f, r.Min.x + 3.0f + th * 4.0f / 3.0f, r.Max.y - 3.0f);
+            m_s.layers.push_back({ r, thumb, uint32_t(i), false });
+            inputPort(r.GetCenter().y, InputSlot::stackLayer(uint32_t(i)));
+            widget(NodeControl::Layer, r, NodeSignal::Main, NodeChannel::A, uint32_t(i));
+            m_y = r.Max.y + kLayerGap;
+        }
+        m_y += 4.0f - kLayerGap;
+    }
+
+    void section(NodeSignal sig)
+    {
+        const bool expanded = m_view.expanded[int(sig)];
+        const ImRect head(m_x0, m_y, m_x1, m_y + kRowH);
+        m_s.sections.push_back({ head, sig, expanded });
+        widget(NodeControl::SectionToggle, ImRect(m_x0 + 4.0f, head.Min.y, m_x1 - 4.0f, head.Max.y), sig);
+        m_y = head.Max.y;
+
+        const SignalChannels& sc = m_node.signal(sig);
+        for (int ch = 0; ch < kChannelCount; ++ch) {
+            // Collapsed: alpha, plus any channel with a mask (a link never ends nowhere).
+            if (!expanded && ch != int(NodeChannel::A) && !sc.mask[ch]) continue;
+            const ImRect row(m_x0, m_y, m_x1, m_y + kRowH);
+            const ImRect track(m_x0 + 16.0f, row.Min.y + 3.0f, m_x1 - 50.0f, row.Max.y - 3.0f);
+            m_s.channels.push_back({ row, track, sig, NodeChannel(ch) });
+            // The whole row past the port: the track drags, the value double-clicks to type.
+            widget(NodeControl::Scale, ImRect(track.Min.x - 5.0f, row.Min.y, row.Max.x - 2.0f, row.Max.y), sig, NodeChannel(ch));
+            inputPort(row.GetCenter().y, InputSlot::mask(sig, NodeChannel(ch)), true);
+            m_y = row.Max.y;
+        }
+    }
+
+    const Project&       m_project;
+    const Node&          m_node;
+    const NodeViewState& m_view;
+    NodeShape&           m_s;
+    const float m_x0, m_x1;
+    float m_y;
+};
+
+} // namespace
+
+NodeShape buildNodeShape(const Project& project, const Node& n, const NodeViewState& view)
+{
+    NodeShape s;
+    Builder(project, n, view, s).build();
+    return s;
+}

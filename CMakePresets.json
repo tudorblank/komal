@@ -1,32 +1,38 @@
 {
-  "version": 3,
+  "version": 6,
   "configurePresets": [
     {
-      "name": "linux",
-      "displayName": "Linux (system Qt)",
+      "name": "base", "hidden": true,
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build"
+      "binaryDir": "${sourceDir}/build/${presetName}"
     },
     {
-      "name": "windows",
-      "displayName": "Windows (Qt6 MinGW)",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build",
-      "cacheVariables": {
-        "CMAKE_PREFIX_PATH":    "C:/Qt/6.11.1/mingw_64",
-        "CMAKE_C_COMPILER":     "C:/Qt/Tools/mingw1310_64/bin/gcc.exe",
-        "CMAKE_CXX_COMPILER":   "C:/Qt/Tools/mingw1310_64/bin/g++.exe"
-      }
+      "name": "linux-debug", "inherits": "base",
+      "displayName": "Linux (native) Debug",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "linux-release", "inherits": "base",
+      "displayName": "Linux (native) Release",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "windows-debug", "inherits": "base",
+      "displayName": "Windows (mingw-w64 cross) Debug",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/mingw-w64-x86_64.cmake",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "windows-release", "inherits": "base",
+      "displayName": "Windows (mingw-w64 cross) Release",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/mingw-w64-x86_64.cmake",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
     }
   ],
   "buildPresets": [
-    {
-      "name": "linux",
-      "configurePreset": "linux"
-    },
-    {
-      "name": "windows",
-      "configurePreset": "windows"
-    }
+    { "name": "linux-debug",     "configurePreset": "linux-debug" },
+    { "name": "linux-release",   "configurePreset": "linux-release" },
+    { "name": "windows-debug",   "configurePreset": "windows-debug" },
+    { "name": "windows-release", "configurePreset": "windows-release" }
   ]
 }

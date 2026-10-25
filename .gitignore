@@ -1,2 +1,5 @@
-external/wgpu-native/
 build/
+.cache/
+compile_commands.json
+imgui.ini
+node-editor.json

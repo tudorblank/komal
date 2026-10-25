@@ -1,151 +1,108 @@
-cmake_minimum_required(VERSION 3.16)
-project(Komal VERSION 0.1 LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.24)
+project(MyApp LANGUAGES C CXX)
 
-if(MINGW)
-    set(CMAKE_RC_FLAGS "-c 65001")
-endif()
-
-set(CMAKE_AUTOUIC ON)
-set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTORCC ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
+include(FetchContent)
+set(FETCHCONTENT_QUIET OFF)
 
-# needed for qpa/qplatformnativeinterface.h on Linux
-if(UNIX AND NOT APPLE)
-    find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Gui GuiPrivate)
-endif()
+# ---------------------------------------------------------------- SDL3
+set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+set(SDL_STATIC ON  CACHE BOOL "" FORCE)
+set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+# Uses an installed SDL3 (pacman -S sdl3 / apt install libsdl3-dev) if found,
+# otherwise downloads and builds it.
+FetchContent_Declare(SDL3
+    URL https://github.com/libsdl-org/SDL/archive/refs/tags/release-3.2.20.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    INACTIVITY_TIMEOUT 30
+    TIMEOUT 300
+    FIND_PACKAGE_ARGS 3.2 CONFIG)
 
-set(PROJECT_SOURCES
-    src/main.cpp
-    src/project.hpp
-    src/project.cpp
+# ---------------------------------------------------------------- Dear ImGui (docking branch)
+# Must speak the same webgpu.h dialect as your wgpu-native version.
+FetchContent_Declare(imgui
+    URL https://github.com/ocornut/imgui/archive/refs/tags/v1.92.5-docking.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    INACTIVITY_TIMEOUT 30
+    TIMEOUT 300)
 
-    src/shell/gui.cpp
-    src/shell/gui.hpp
-    src/shell/canvasview.cpp
-    src/shell/canvasview.hpp
-    src/shell/graphview.cpp
-    src/shell/graphview.hpp
-    src/shell/graphview-minimap.cpp
-    src/shell/graphview-minimap.hpp
-    src/shell/graphview-masterwidget.cpp
-    src/shell/graphview-masterwidget.hpp
+# ---------------------------------------------------------------- abseil (hash containers for tiles)
+# Uses an installed abseil (pacman -S abseil-cpp) if found, otherwise downloads and builds it.
+set(ABSL_PROPAGATE_CXX_STD ON CACHE BOOL "" FORCE)
+set(ABSL_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(ABSL_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(absl
+    URL https://github.com/abseil/abseil-cpp/archive/refs/tags/20250814.1.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    INACTIVITY_TIMEOUT 30
+    TIMEOUT 300
+    FIND_PACKAGE_ARGS CONFIG)
 
-    src/raster/raster-utils.hpp
-    src/raster/raster-base.cpp
-    src/raster/raster-base.hpp
+# ---------------------------------------------------------------- stb (stb_image: image import)
+FetchContent_Declare(stb
+    URL https://github.com/nothings/stb/archive/003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    INACTIVITY_TIMEOUT 30
+    TIMEOUT 300)
 
-    src/node/node-base.hpp
-    src/node/node-compositor.cpp
-    src/node/node-compositor.hpp
-    src/node/node-export.hpp
-    src/node/node-export.cpp
+FetchContent_MakeAvailable(SDL3 imgui absl stb)
 
-    src/gfx/gfxcontext.hpp
-    src/gfx/gfxdevice.cpp
-    src/gfx/gfxdevice.hpp
-    src/gfx/camera.cpp
-    src/gfx/camera.hpp
-    src/gfx/colsys.cpp
-    src/gfx/colsys.hpp
-    src/gfx/texsys.cpp
-    src/gfx/texsys.hpp
-    src/gfx/linsys.cpp
-    src/gfx/linsys.hpp
-    src/gfx/blursys.cpp
-    src/gfx/blursys.hpp
-)
+# ---------------------------------------------------------------- wgpu-native
+include(cmake/wgpu-native.cmake)   # defines target: wgpu_native
+include(cmake/embed-file.cmake)    # defines: embed_file()
 
-qt_add_executable(Komal
-    MANUAL_FINALIZATION
-    ${PROJECT_SOURCES}
-)
+# ---------------------------------------------------------------- embedded assets
+# UI font baked into the binary, so there is nothing to ship or locate at runtime.
+set(GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
+embed_file(${GENERATED_DIR}/font-ui.cpp ${imgui_SOURCE_DIR}/misc/fonts/Roboto-Medium.ttf kFontUi)
+# WGSL compiled into the binary: no shader files to ship or find relative to the working dir.
+embed_file(${GENERATED_DIR}/shader-texture.cpp ${CMAKE_SOURCE_DIR}/src/gfx/shaders/texture.wgsl kShaderTexture)
+embed_file(${GENERATED_DIR}/shader-color.cpp   ${CMAKE_SOURCE_DIR}/src/gfx/shaders/color.wgsl   kShaderColor)
+embed_file(${GENERATED_DIR}/shader-preview-signal.cpp ${CMAKE_SOURCE_DIR}/src/gfx/shaders/preview-signal.wgsl kShaderPreviewSignal)
+embed_file(${GENERATED_DIR}/shader-preview-blit.cpp   ${CMAKE_SOURCE_DIR}/src/gfx/shaders/preview-blit.wgsl   kShaderPreviewBlit)
+set(GENERATED_SOURCES
+    ${GENERATED_DIR}/font-ui.cpp
+    ${GENERATED_DIR}/shader-texture.cpp
+    ${GENERATED_DIR}/shader-color.cpp
+    ${GENERATED_DIR}/shader-preview-signal.cpp
+    ${GENERATED_DIR}/shader-preview-blit.cpp)
 
-target_link_libraries(Komal PRIVATE
-    Qt${QT_VERSION_MAJOR}::Widgets
-)
+# ---------------------------------------------------------------- imgui target
+add_library(imgui STATIC
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/imgui_demo.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_wgpu.cpp)
+target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+target_compile_definitions(imgui PUBLIC IMGUI_IMPL_WEBGPU_BACKEND_WGPU)  # wgpu-native flavour
+target_link_libraries(imgui PUBLIC SDL3::SDL3 wgpu_native)
 
-include(${CMAKE_SOURCE_DIR}/cmake/FetchWgpuNative.cmake)
-
-target_include_directories(Komal PRIVATE
-    "${WGPU_NATIVE_INCLUDE_DIR}"
-    "${CMAKE_SOURCE_DIR}/external"
-    "${CMAKE_SOURCE_DIR}/external/stb"
-    "${CMAKE_SOURCE_DIR}/src"
-)
-
-target_link_directories(Komal PRIVATE
-    "${WGPU_NATIVE_LIB_DIR}"
-)
-
-target_link_libraries(Komal PRIVATE
-    wgpu_native
-)
-
-if(WIN32)
-    # transitive system libs wgpu-native needs on Windows (D3D12/surface creation)
-    target_link_libraries(Komal PRIVATE
-        d3dcompiler dxgi d3d12 ws2_32 userenv bcrypt ntdll
-    )
-
-    # wgpu_native.dll must sit next to the exe at runtime
-    add_custom_command(TARGET Komal POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${WGPU_NATIVE_LIB_DIR}/wgpu_native.dll"
-            "$<TARGET_FILE_DIR:Komal>"
-        COMMENT "Copying wgpu_native.dll..."
-    )
-endif()
+# ---------------------------------------------------------------- the app
+file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS src/*.cpp src/*.h)
+add_executable(${PROJECT_NAME} ${APP_SOURCES} ${GENERATED_SOURCES})
+target_include_directories(${PROJECT_NAME} PRIVATE src)
+target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${stb_SOURCE_DIR})
+target_link_libraries(${PROJECT_NAME} PRIVATE imgui SDL3::SDL3 wgpu_native
+                                              absl::flat_hash_map absl::flat_hash_set absl::hash)
 
 if(UNIX AND NOT APPLE)
-    target_link_libraries(Komal PRIVATE
-        dl pthread
-        Qt${QT_VERSION_MAJOR}::GuiPrivate   # exposes qpa/ private headers
-    )
-
-    set_target_properties(Komal PROPERTIES
-        BUILD_RPATH "$ORIGIN"
-        INSTALL_RPATH "$ORIGIN"
-    )
-
-    add_custom_command(TARGET Komal POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${WGPU_NATIVE_LIB_DIR}/libwgpu_native.so"
-            "$<TARGET_FILE_DIR:Komal>"
-        COMMENT "Copying libwgpu_native.so..."
-    )
+    # find libwgpu_native.so next to the executable
+    set_target_properties(${PROJECT_NAME} PROPERTIES BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN")
 endif()
 
-qt_finalize_executable(Komal)
-
-add_custom_command(TARGET Komal POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/shaders"
-        "$<TARGET_FILE_DIR:Komal>/shaders"
-    COMMENT "Copying shaders..."
-)
-add_custom_command(TARGET Komal POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_SOURCE_DIR}/assets
-        $<TARGET_FILE_DIR:Komal>/assets
-    COMMENT "Copying assets..."
-)
-
-if(WIN32)
-    find_program(WINDEPLOYQT_EXECUTABLE windeployqt HINTS
-        "$ENV{Qt6_DIR}/bin"
-        "$ENV{QTDIR}/bin"
-    )
-    if(WINDEPLOYQT_EXECUTABLE)
-        add_custom_command(TARGET Komal POST_BUILD
-            COMMAND ${WINDEPLOYQT_EXECUTABLE}
-                "$<TARGET_FILE:Komal>"
-                --no-translations
-            COMMENT "Running windeployqt..."
-        )
-    endif()
+if(MINGW)
+    # no libgcc / libstdc++ / winpthread DLLs to ship besides wgpu_native.dll
+    target_link_options(${PROJECT_NAME} PRIVATE -static)
 endif()
+
+# Drop wgpu_native.dll / libwgpu_native.so next to the exe
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:wgpu_native> $<TARGET_FILE_DIR:${PROJECT_NAME}>)
