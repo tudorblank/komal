@@ -59,7 +59,7 @@ bool GpuContext::init(SDL_Window* window)
     m_instance = wgpuCreateInstance(nullptr);
     if (!m_instance) { std::fprintf(stderr, "wgpuCreateInstance failed\n"); return false; }
 
-    m_surface = createSurface(m_instance, window);
+    m_surface = createSurface(m_instance, window, &m_surfaceView);
     if (!m_surface) { std::fprintf(stderr, "Surface creation failed\n"); return false; }
 
     // ---- adapter (wgpu-native completes this synchronously with AllowSpontaneous)
@@ -129,8 +129,8 @@ bool GpuContext::init(SDL_Window* window)
     m_supportedModes.assign(caps.presentModes, caps.presentModes + caps.presentModeCount);
     wgpuSurfaceCapabilitiesFreeMembers(caps);
 
-    // Present mode: default Fifo (vsync). Override with MYAPP_PRESENT_MODE=fifo|fifo_relaxed|mailbox|immediate
-    if (const char* pm = std::getenv("MYAPP_PRESENT_MODE")) {
+    // Present mode: default Fifo (vsync). Override with KOMAL_PRESENT_MODE=fifo|fifo_relaxed|mailbox|immediate
+    if (const char* pm = std::getenv("KOMAL_PRESENT_MODE")) {
         WGPUPresentMode want = WGPUPresentMode_Fifo;
         if      (!std::strcmp(pm, "mailbox"))      want = WGPUPresentMode_Mailbox;
         else if (!std::strcmp(pm, "immediate"))    want = WGPUPresentMode_Immediate;
@@ -141,8 +141,8 @@ bool GpuContext::init(SDL_Window* window)
 
     // Frames the swapchain may queue ahead of the display. wgpu defaults to 2, which with Fifo
     // means the picture trails the mouse by ~3 refreshes: panning/dragging feels like rubber.
-    // 1 is plenty for a UI that renders in a few ms. Override with MYAPP_FRAME_LATENCY=1..3
-    if (const char* fl = std::getenv("MYAPP_FRAME_LATENCY")) {
+    // 1 is plenty for a UI that renders in a few ms. Override with KOMAL_FRAME_LATENCY=1..3
+    if (const char* fl = std::getenv("KOMAL_FRAME_LATENCY")) {
         const int v = std::atoi(fl);
         if (v >= 1 && v <= 3) m_frameLatency = (uint32_t)v;
     }
@@ -266,6 +266,8 @@ void GpuContext::shutdown()
     if (m_queue)    { wgpuQueueRelease(m_queue);       m_queue = nullptr; }
     if (m_surface)  { wgpuSurfaceUnconfigure(m_surface);
                       wgpuSurfaceRelease(m_surface);   m_surface = nullptr; }
+    destroySurfaceView(m_surfaceView);
+    m_surfaceView = nullptr;
     if (m_device)   { wgpuDeviceRelease(m_device);     m_device = nullptr; }
     if (m_adapter)  { wgpuAdapterRelease(m_adapter);   m_adapter = nullptr; }
     if (m_instance) { wgpuInstanceRelease(m_instance); m_instance = nullptr; }

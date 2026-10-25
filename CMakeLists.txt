@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.24)
-project(MyApp LANGUAGES C CXX)
+project(Komal LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)   # standard C++ only: MSVC has no GNU extensions
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
@@ -92,9 +93,18 @@ target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${stb_SOURCE_DIR})
 target_link_libraries(${PROJECT_NAME} PRIVATE imgui SDL3::SDL3 wgpu_native
                                               absl::flat_hash_map absl::flat_hash_set absl::hash)
 
-if(UNIX AND NOT APPLE)
-    # find libwgpu_native.so next to the executable
+# The wgpu-native library is copied next to the executable (below) and found there.
+if(APPLE)
+    set_target_properties(${PROJECT_NAME} PROPERTIES BUILD_RPATH "@executable_path" INSTALL_RPATH "@executable_path")
+elseif(UNIX)
     set_target_properties(${PROJECT_NAME} PROPERTIES BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN")
+endif()
+
+if(MSVC)
+    # Sources are UTF-8 (box drawings in comments); keep windows.h's min/max macros away.
+    target_compile_options(${PROJECT_NAME} PRIVATE /utf-8 /Zc:__cplusplus /bigobj)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+    set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT ${PROJECT_NAME})
 endif()
 
 if(MINGW)
@@ -102,7 +112,7 @@ if(MINGW)
     target_link_options(${PROJECT_NAME} PRIVATE -static)
 endif()
 
-# Drop wgpu_native.dll / libwgpu_native.so next to the exe
+# Drop wgpu_native.dll / libwgpu_native.dylib / libwgpu_native.so next to the exe
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:wgpu_native> $<TARGET_FILE_DIR:${PROJECT_NAME}>)

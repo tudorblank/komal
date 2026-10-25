@@ -39,20 +39,23 @@ struct ProjectEvent {
 
 // Where a link lands on a node.
 struct InputSlot {
-    enum class Kind : uint8_t { Input, Layer, Mask };
+    // Layer is an existing layer of a stack (connecting replaces it); NewLayer is a position
+    // in the stack (connecting inserts there, pushing the layers above it up).
+    enum class Kind : uint8_t { Input, Layer, NewLayer, Mask };
     Kind        kind    = Kind::Input;
-    uint32_t    layer   = 0;                   // Layer: stack index, 0 = bottom (== count: a new top layer)
+    uint32_t    layer   = 0;                   // Layer: stack index, 0 = bottom; NewLayer: 0..count (count = on top)
     NodeSignal  signal  = NodeSignal::Main;    // Mask
     NodeChannel channel = NodeChannel::A;      // Mask
 
     static InputSlot input() { return {}; }
     static InputSlot stackLayer(uint32_t i) { return { Kind::Layer, i }; }
+    static InputSlot newLayer(uint32_t at) { return { Kind::NewLayer, at }; }
     static InputSlot mask(NodeSignal s, NodeChannel c) { return { Kind::Mask, 0, s, c }; }
 
     bool operator==(const InputSlot& o) const
     {
         if (kind != o.kind) return false;
-        if (kind == Kind::Layer) return layer == o.layer;
+        if (kind == Kind::Layer || kind == Kind::NewLayer) return layer == o.layer;
         if (kind == Kind::Mask)  return signal == o.signal && channel == o.channel;
         return true;
     }
@@ -96,11 +99,17 @@ public:
     NodeId createMove(float x, float y);
     NodeId createCompositor(float x, float y);
     NodeId createNode(NodeType type, float x, float y);
-    // A new raster holding the image at the world origin, as the top layer of the master, and
-    // made active. Not undoable (creating nodes isn't). importTiles takes the image already cut
-    // into tiles (tilesFromImage, which can run on another thread).
-    NodeId importImage(const ImageFile& image);
-    NodeId importTiles(const TileGrid& tiles, const std::string& name);
+    // A new raster node holding an image. Not undoable (creating nodes isn't). importImage puts
+    // the image at the world origin; importTiles takes it already cut into tiles, wherever they
+    // were placed (tilesFromImage, which can run on another thread).
+    struct ImportOptions {
+        bool  addToMaster = true;    // as the master's new top layer
+        bool  makeActive  = true;    // the raster the canvas paints into
+        bool  placeNode   = false;   // at (nodeX, nodeY) in the graph; else below the lowest raster
+        float nodeX = 0.0f, nodeY = 0.0f;
+    };
+    NodeId importImage(const ImageFile& image, const ImportOptions& options);
+    NodeId importTiles(const TileGrid& tiles, const std::string& name, const ImportOptions& options);
     // Deletes nodes and heals the graph around them: whatever a deleted node fed is re-fed by
     // the node upstream of it, found by walking up through deleted nodes that have exactly one
     // input (a unary input, or a one-layer stack). Nodes with several inputs or none (a

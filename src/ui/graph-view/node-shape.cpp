@@ -18,7 +18,7 @@ const NodePort* NodeShape::input(const InputSlot& slot) const
 bool preferredInput(const Node& n, InputSlot& out)
 {
     if (dynamic_cast<const UnaryNode*>(&n)) { out = InputSlot::input(); return true; }
-    if (auto* c = dynamic_cast<const CompositorNode*>(&n)) { out = InputSlot::stackLayer(uint32_t(c->layers().size())); return true; }
+    if (auto* c = dynamic_cast<const CompositorNode*>(&n)) { out = InputSlot::newLayer(uint32_t(c->layers().size())); return true; }
     return false;
 }
 
@@ -26,8 +26,8 @@ namespace {
 
 class Builder {
 public:
-    Builder(const Project& p, const Node& n, const NodeViewState& v, NodeShape& s)
-        : m_project(p), m_node(n), m_view(v), m_s(s), m_x0(n.m_meta.x), m_x1(n.m_meta.x + kNodeWidth), m_y(n.m_meta.y) {}
+    Builder(const Project& p, const Node& n, const NodeViewState& v, StackLayout stack, NodeShape& s)
+        : m_project(p), m_node(n), m_view(v), m_stack(stack), m_s(s), m_x0(n.m_meta.x), m_x1(n.m_meta.x + kNodeWidth), m_y(n.m_meta.y) {}
 
     void build()
     {
@@ -112,24 +112,34 @@ private:
 
     void layerList(const CompositorNode& c)
     {
+        // The layers shown, bottom first: all but the one being dragged.
+        std::vector<uint32_t> shown;
+        for (uint32_t i = 0; i < uint32_t(c.layers().size()); ++i)
+            if (int(i) != m_stack.hidden) shown.push_back(i);
+
         m_y += 4.0f;
         const float x0 = m_x0 + 6.0f, x1 = m_x1 - 6.0f;
-        // The slot that adds a new top layer.
-        {
-            const ImRect r(x0, m_y, x1, m_y + kRowH);
-            const uint32_t top = uint32_t(c.layers().size());
-            m_s.layers.push_back({ r, ImRect(), top, true });
-            inputPort(r.GetCenter().y, InputSlot::stackLayer(top), false, true);
-            m_y = r.Max.y + kLayerGap;
-        }
-        for (size_t i = c.layers().size(); i-- > 0;) {   // top of the stack first
+        const auto row = [&](NodeLayerRow::Kind kind, uint32_t layer) {
             const ImRect r(x0, m_y, x1, m_y + kLayerRowH);
-            const float th = kLayerRowH - 6.0f;
-            const ImRect thumb(r.Min.x + 3.0f, r.Min.y + 3.0f, r.Min.x + 3.0f + th * 4.0f / 3.0f, r.Max.y - 3.0f);
-            m_s.layers.push_back({ r, thumb, uint32_t(i), false });
-            inputPort(r.GetCenter().y, InputSlot::stackLayer(uint32_t(i)));
-            widget(NodeControl::Layer, r, NodeSignal::Main, NodeChannel::A, uint32_t(i));
+            m_s.layers.push_back({ r, layer, kind });
             m_y = r.Max.y + kLayerGap;
+            return r;
+        };
+        if (shown.empty() && m_stack.gap < 0) {
+            row(NodeLayerRow::Kind::Empty, 0);   // where the first layer is dropped
+        } else {
+            // Top of the stack first; the gap goes in at its position, the rows below it move down.
+            for (size_t pos = shown.size() + 1; pos-- > 0;) {
+                if (int(pos) == m_stack.gap) {
+                    const ImRect r = row(NodeLayerRow::Kind::Gap, uint32_t(pos));
+                    if (m_stack.hidden < 0) inputPort(r.GetCenter().y, InputSlot::newLayer(uint32_t(pos)));   // a link lands here
+                }
+                if (pos == 0) break;
+                const uint32_t i = shown[pos - 1];
+                const ImRect r = row(NodeLayerRow::Kind::Layer, i);
+                inputPort(r.GetCenter().y, InputSlot::stackLayer(i));
+                widget(NodeControl::Layer, r, NodeSignal::Main, NodeChannel::A, i);
+            }
         }
         m_y += 4.0f - kLayerGap;
     }
@@ -159,6 +169,7 @@ private:
     const Project&       m_project;
     const Node&          m_node;
     const NodeViewState& m_view;
+    const StackLayout    m_stack;
     NodeShape&           m_s;
     const float m_x0, m_x1;
     float m_y;
@@ -166,9 +177,15 @@ private:
 
 } // namespace
 
-NodeShape buildNodeShape(const Project& project, const Node& n, const NodeViewState& view)
+ImRect layerThumbRect(const ImRect& r)
+{
+    const float th = r.GetHeight() - 6.0f;
+    return ImRect(r.Min.x + 3.0f, r.Min.y + 3.0f, r.Min.x + 3.0f + th * 4.0f / 3.0f, r.Max.y - 3.0f);
+}
+
+NodeShape buildNodeShape(const Project& project, const Node& n, const NodeViewState& view, StackLayout stack)
 {
     NodeShape s;
-    Builder(project, n, view, s).build();
+    Builder(project, n, view, dynamic_cast<const CompositorNode*>(&n) ? stack : StackLayout{}, s).build();
     return s;
 }

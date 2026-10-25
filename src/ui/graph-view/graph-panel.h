@@ -6,7 +6,9 @@
 //
 //   LMB on a node            select (Ctrl toggle, Shift chain), drag to move
 //   LMB on empty space       rubber band (Ctrl toggles, Shift adds); click clears
-//   drag from a port         link; drop on nothing opens the add menu, auto-connected
+//   drag from a port         link; drop on nothing opens the add menu, auto-connected;
+//                            over a compositor a gap opens where the mouse is: drop to insert there
+//   drag a layer row         reorder (lands on release); pulled out sideways it comes off as a link
 //   drag a linked input      lift the link off (drop on nothing disconnects)
 //   hover a link, click +    insert a node into it
 //   RMB                      node menu / add menu (drag: pan)
@@ -14,8 +16,14 @@
 //   Del / X                  delete selection, healing links around it
 //   F / Home                 frame selection / everything;  Ctrl+A select all
 //   Shift+A, Tab, dbl-click  add menu at the mouse
+//
+// The master compositor isn't placed in the graph: it is pinned to the panel's top-right
+// corner at 100%, like a window over it, and works exactly like any compositor node there
+// (layers, reordering, signals, masks, links). Links into it are dashed and fade out on the
+// way. The navigator (graph-minimap.h) sits in the bottom-right corner.
 
 #include "ui/graph-view/graph-camera.h"
+#include "ui/graph-view/graph-minimap.h"
 #include "ui/graph-view/graph-selection.h"
 #include "ui/graph-view/node-menu.h"
 #include "ui/graph-view/node-painter.h"
@@ -34,21 +42,27 @@ public:
     void shutdown();
     void setUiScale(float scale) { m_uiScale = scale; }
     void draw(bool* open);
+    // A file dropped at `screen` with `window` topmost there: true if it lands on the graph,
+    // with the graph point under it.
+    bool dropTarget(const ImGuiWindow* window, ImVec2 screen, ImVec2& graph) const;
+    void selectOnly(NodeId id);
 
 private:
     struct Hit {
-        enum class Kind : uint8_t { None, Port, Widget, Node, Link, Insert };
+        enum class Kind : uint8_t { None, Port, Widget, Node, Link, Insert, Minimap };
         Kind   kind  = Kind::None;
         NodeId node  = kNoNodeId;
         int    index = -1;   // port or widget index in the node's shape; link index
     };
-    enum class Drag : uint8_t { None, Node, MoveNodes, Empty, RubberBand, Link, Scale, Offset, Layer };
+    enum class Drag : uint8_t { None, Node, MoveNodes, Empty, RubberBand, Link, Scale, Offset, Layer, Minimap };
 
     struct GraphLink {
         NodeId    from, to;
         InputSlot slot;
         bool      mask;
-        LinkCurve curve;
+        bool      toMaster;           // drawn dashed, fading out
+        LinkCurve curve;              // screen
+        ImVec2    fromGraph, toGraph; // port positions in each node's own space
     };
     struct LinkDrag {
         NodeId    node = kNoNodeId;   // the end that stays put
@@ -60,7 +74,7 @@ private:
         bool      valid = false;
         NodeId    node = kNoNodeId;
         InputSlot slot;
-        ImVec2    pos;                // graph
+        ImVec2    pos;                // screen
     };
     struct PendingAdd {
         enum class Mode : uint8_t { Free, FromOutput, ToInput, Insert };
@@ -82,7 +96,11 @@ private:
     };
 
     GraphPaint paintContext(ImDrawList* dl) const { return { dl, m_camera, m_uiScale }; }
+    bool isMaster(NodeId id) const;
+    const GraphCamera& cameraFor(NodeId id) const { return isMaster(id) ? m_pinned : m_camera; }   // whose space its shape is in
     void syncNodes();
+    void layoutOverlays(ImVec2 canvasMin, ImVec2 canvasMax);   // the pinned master and the navigator
+    Hit  hitNode(NodeId id, const NodeShape& s, ImVec2 graphPoint, float portRadius) const;
     void rebuildLinks(const GraphPaint& g);
     Hit  hitTest(ImVec2 mouse, const GraphPaint& g) const;
     const NodeShape* shape(NodeId id) const;
@@ -95,6 +113,7 @@ private:
     void startLink(const Hit& hit);
     void updateDrag();
     LinkTarget linkTarget(const Hit& hit) const;
+    uint32_t   stackPosition(NodeId id, float y) const;   // where in its stack something dropped at graph y goes
     void finishLink(const Hit& hit);
     void openAdd(const PendingAdd& add, NodeMenu::Fit fit);
     void applyAdd(NodeType type);
@@ -111,7 +130,15 @@ private:
 
     Project*    m_project = nullptr;
     int         m_subscription = 0;
+    const ImGuiWindow* m_window = nullptr;   // this frame's, while the graph is shown
+    ImVec2      m_canvasMin{};
     GraphCamera m_camera;
+    GraphCamera m_pinned;              // the master's space: 100%, its shape in the top-right corner
+    float       m_pinnedScroll = 0.0f; // screen pixels, when the master is taller than the panel
+    ImRect      m_pinnedRect;          // the master on screen
+    ImVec2      m_canvasSize;
+    GraphMinimap m_minimap;
+    std::vector<GraphMinimap::Edge> m_minimapEdges;
     float       m_uiScale = 1.0f;
     int         m_frameOnStart = 3;   // frames to frame everything for (the dock layout settles first)
 
@@ -136,6 +163,14 @@ private:
     GraphSelection::Set m_bandBase;
     int    m_dragValue = 0;       // Offset: value at press; Layer: the row's current stack index
     LinkDrag m_link;
+    struct { NodeId node = kNoNodeId; int at = -1; } m_pendingLayer;   // the gap open under a dragged link
+    struct LayerDrag {
+        NodeId   node   = kNoNodeId;   // the compositor
+        uint32_t layer  = 0;           // stack index of the row being dragged
+        float    grab   = 0.0f;        // mouse below the row's top, graph units
+        bool     lifted = false;       // past the drag threshold: floats, with a gap where it lands
+        int      at     = -1;          // that gap: a position among the other layers
+    } m_layerDrag;
     int    m_hoveredLink = -1;    // last frame's, for the insert button
     bool   m_rightDown = false, m_rightDragged = false;
     NodeId m_contextNode = kNoNodeId;

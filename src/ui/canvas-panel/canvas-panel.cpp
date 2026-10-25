@@ -4,6 +4,7 @@
 #include "ui/tools/tool-manager.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>   // ImGuiWindow: which window a drop landed on
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -68,6 +69,7 @@ void CanvasPanel::shutdown()
 void CanvasPanel::draw(bool* open)
 {
     m_visible = false;
+    m_window  = nullptr;
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     const bool shown = ImGui::Begin("Canvas", open, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
@@ -80,6 +82,9 @@ void CanvasPanel::draw(bool* open)
         const ImVec2 fb     = ImGui::GetIO().DisplayFramebufferScale;   // HiDPI: render at native pixels
         if (avail.x >= 1.0f && avail.y >= 1.0f && m_view.resize(avail.x, avail.y, fb.x, fb.y)) {
             m_visible = true;
+            m_window  = ImGui::GetCurrentWindowRead();
+            m_canvasMin = origin;
+            m_canvasMax = ImVec2(origin.x + avail.x, origin.y + avail.y);
             m_tools->canvas() = { &m_view.camera(), avail.x, avail.y };
 
             // One item covers the canvas: it owns the mouse while a button is held, so drags
@@ -98,6 +103,14 @@ void CanvasPanel::draw(bool* open)
         }
     }
     ImGui::End();
+}
+
+bool CanvasPanel::dropTarget(const ImGuiWindow* window, ImVec2 screen, Vec2& world) const
+{
+    if (!m_visible || !window || window->RootWindow != m_window) return false;
+    if (screen.x < m_canvasMin.x || screen.y < m_canvasMin.y || screen.x >= m_canvasMax.x || screen.y >= m_canvasMax.y) return false;
+    world = m_view.camera().screenToWorld({ screen.x - m_canvasMin.x, screen.y - m_canvasMin.y });
+    return true;
 }
 
 void CanvasPanel::handleInput(const ImVec2& origin)
@@ -194,7 +207,7 @@ void CanvasPanel::drawHud(ImDrawList* dl, const ImVec2& origin)
     std::snprintf(hud, sizeof hud, "%.0f%%   %s   painting: %s%s%s   level %d: %zu tiles / %zu atlas pages%s",
                   m_view.camera().zoom * 100.0f, m_tools->active().name(),
                   active ? active->m_meta.label.c_str() : "nothing (click a raster node)",
-                  active && active->locked() ? " (locked)" : "", active && !shown ? " (not in Output)" : "",
+                  active && active->locked() ? " (locked)" : "", active && !shown ? " (not in Master)" : "",
                   m_output->drawLevel(), m_output->chunkCount(), m_output->pageCount(), m_output->syncPending() ? " (syncing)" : "");
     const ImVec2 pad(8.0f, 6.0f);
     const ImVec2 size = ImGui::CalcTextSize(hud);

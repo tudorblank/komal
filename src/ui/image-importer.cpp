@@ -1,15 +1,22 @@
 #include "image-importer.h"
-#include "core/project.h"
 #include "raster/raster-data.h"
+#include "ui/graph-view/graph-style.h"
 
 #include <SDL3/SDL.h>
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 
 void ImageImporter::open(std::string path)
 {
+    open(std::move(path), Placement{});
+}
+
+void ImageImporter::open(std::string path, Placement placement)
+{
     std::lock_guard lock(m_mutex);
-    m_queued.push_back(std::move(path));
+    m_queued.push_back({ std::move(path), placement });
 }
 
 void ImageImporter::showOpenDialog(SDL_Window* window)
@@ -24,17 +31,23 @@ void ImageImporter::showOpenDialog(SDL_Window* window)
     }, this, window, kFilters, 2, nullptr, true);
 }
 
-void ImageImporter::poll(Project& project)
+std::vector<ImageImporter::Imported> ImageImporter::poll(Project& project)
 {
     {
         std::lock_guard lock(m_mutex);
-        for (std::string& path : m_queued) {
+        for (Request& r : m_queued) {
             auto job = std::make_unique<Job>();
-            job->path = std::move(path);
+            job->request = std::move(r);
             Job* j = job.get();
             j->done = std::async(std::launch::async, [j] {
-                if (!loadImageFile(j->path, j->image, j->error)) return false;
-                tilesFromImage(j->tiles, { j->image.pixels, j->image.width, j->image.height }, 0, 0);
+                if (!loadImageFile(j->request.path, j->image, j->error)) return false;
+                int x = 0, y = 0;   // the image's top-left in the world
+                if (j->request.placement.target == Placement::Target::Canvas) {
+                    const auto clampWorld = [](float v) { return int(std::clamp(v, float(-TileUtils::kWorldLimit / 2), float(TileUtils::kWorldLimit / 2))); };
+                    x = clampWorld(std::round(j->request.placement.x - j->image.width * 0.5f));
+                    y = clampWorld(std::round(j->request.placement.y - j->image.height * 0.5f));
+                }
+                tilesFromImage(j->tiles, { j->image.pixels, j->image.width, j->image.height }, x, y);
                 j->image.pixels = {};   // the tiles hold it now
                 return true;
             });
@@ -42,16 +55,28 @@ void ImageImporter::poll(Project& project)
         }
         m_queued.clear();
     }
+
     // In the order they were asked for: the last one opened ends up on top.
+    std::vector<Imported> imported;
     while (!m_jobs.empty() && m_jobs.front()->done.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
         Job& j = *m_jobs.front();
         if (j.done.get()) {
-            project.importTiles(j.tiles, j.image.name);
+            const Placement& p = j.request.placement;
+            Project::ImportOptions options;
+            if (p.target == Placement::Target::Graph) {   // a node where it was dropped, linked to nothing
+                options.addToMaster = false;
+                options.makeActive  = false;
+                options.placeNode   = true;
+                options.nodeX = p.x - GraphStyle::kNodeWidth * 0.5f;
+                options.nodeY = p.y - GraphStyle::kHeaderH * 0.5f;
+            }
+            imported.push_back({ project.importTiles(j.tiles, j.image.name, options), p });
             m_lastError.clear();
         } else {
-            m_lastError = j.path + ": " + j.error;
+            m_lastError = j.request.path + ": " + j.error;
             std::fprintf(stderr, "import failed: %s\n", m_lastError.c_str());
         }
         m_jobs.erase(m_jobs.begin());
     }
+    return imported;
 }

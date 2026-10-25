@@ -43,6 +43,13 @@ public:
         position.x += before.x - after.x;
         position.y += before.y - after.y;
     }
+    // Puts graph point `g` in the middle of a viewport of `size` points.
+    void centerOn(ImVec2 g, ImVec2 size)
+    {
+        const float s = scale();
+        position.x = g.x - size.x * 0.5f / s;
+        position.y = g.y - size.y * 0.5f / s;
+    }
     // Shows graph rectangle [min, max] centred in a viewport of `size` points, never above 100%.
     void frame(ImVec2 min, ImVec2 max, ImVec2 size, float margin)
     {

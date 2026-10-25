@@ -4,7 +4,8 @@
 #include "gfx/gpu-context.h"
 
 #include <imgui.h>
-#include <imgui_internal.h>   // DockBuilder* lives here
+#include <imgui_internal.h>   // DockBuilder*, FindHoveredWindowEx
+#include <cstdio>
 
 bool UserInterface::init(GpuContext& gpu, Project& project)
 {
@@ -30,7 +31,8 @@ void UserInterface::renderGpu(WGPUCommandEncoder enc)
 
 void UserInterface::draw()
 {
-    m_importer.poll(*m_project);
+    for (const ImageImporter::Imported& i : m_importer.poll(*m_project))
+        if (i.placement.target == ImageImporter::Placement::Target::Graph) m_graphPanel.selectOnly(i.node);
     handleShortcuts();
     drawMenuBar();
     drawDockspace();   // must come before the panels that dock into it
@@ -41,6 +43,7 @@ void UserInterface::draw()
     if (m_showGraph) { PerfScope perf(Perf::Graph); m_graphPanel.draw(&m_showGraph); }
     if (m_showInfo)           drawInfoPanel();
     if (m_showDemo)           ImGui::ShowDemoWindow(&m_showDemo);
+    dispatchDrops();   // after the panels: their windows and rects are this frame's
     m_tools.clearMouseTrail();   // consumed by the canvas this frame
 }
 
@@ -82,7 +85,7 @@ void UserInterface::drawMenuBar()
 
 void UserInterface::drawDockspace()
 {
-    static const ImGuiID kDockId = ImHashStr("MyAppMainDockspace.v2");   // bumped when the default layout changes
+    static const ImGuiID kDockId = ImHashStr("KomalMainDockspace.v2");   // bumped when the default layout changes
     const ImGuiViewport* vp = ImGui::GetMainViewport();
 
     if (m_resetLayout || ImGui::DockBuilderGetNode(kDockId) == nullptr) {
@@ -113,6 +116,25 @@ void UserInterface::buildDefaultLayout(unsigned int id, float w, float h)
     ImGui::DockBuilderDockWindow("Canvas",          center);
     ImGui::DockBuilderDockWindow("Graph",           graph);
     ImGui::DockBuilderFinish(id);
+}
+
+void UserInterface::dispatchDrops()
+{
+    using Target = ImageImporter::Placement::Target;
+    for (Drop& d : m_drops) {
+        ImGuiWindow* top = nullptr;
+        ImGuiWindow* underMoving = nullptr;
+        ImGui::FindHoveredWindowEx(d.pos, false, &top, &underMoving);   // the window in front at that point
+        Vec2 world;
+        ImVec2 graph;
+        if (m_canvasPanel.dropTarget(top, d.pos, world))
+            m_importer.open(std::move(d.path), { Target::Canvas, world.x, world.y });
+        else if (m_graphPanel.dropTarget(top, d.pos, graph))
+            m_importer.open(std::move(d.path), { Target::Graph, graph.x, graph.y });
+        else
+            std::fprintf(stderr, "drop ignored (not on the canvas or the graph): %s\n", d.path.c_str());
+    }
+    m_drops.clear();
 }
 
 void UserInterface::handleShortcuts()

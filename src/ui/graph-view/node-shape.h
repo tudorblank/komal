@@ -10,7 +10,9 @@
 //   │   └──────────────┘ │
 //   └────────────────────┘
 //   ┌────────────────────┐   properties (only nodes that have some): Move offset,
-//   ○ thumb  Layer   ...  │   a compositor's layer stack (one input port per layer)
+//   ○ thumb  Layer   ...  │   a compositor's layer stack (one input port per layer; empty, a
+//   ┆   drop here        ┆   drop zone). While a link or a layer is dragged over a stack, a
+//   ○ thumb  Layer   ...  │   gap opens where it would land, wherever the mouse is.
 //   └────────────────────┘
 //   ┌────────────────────┐   signals: Main (+ Wet and Dry on effect nodes), each collapsible.
 //   │ v Main             │   Collapsed shows alpha (and any masked channel), expanded all four.
@@ -19,7 +21,8 @@
 //   └────────────────────┘
 //
 // The master output has no body (it has no output and the canvas is its picture): its
-// header sits on top of its layer stack.
+// header sits on top of its layer stack. Layers are added by dropping into the stack itself:
+// there is no separate "add" input.
 
 #include "core/project.h"
 
@@ -32,7 +35,7 @@ struct NodePort {
     bool      output = false;
     InputSlot slot;                 // inputs: where a link lands
     bool      mask        = false;  // greyscale input
-    bool      placeholder = false;  // the "new layer" slot of a stack
+    bool      placeholder = false;  // drawn faint
 };
 
 enum class NodeControl : uint8_t {
@@ -60,7 +63,12 @@ struct NodeBox {
 
 struct NodeSectionRow { ImRect rect; NodeSignal signal; bool expanded; };
 struct NodeChannelRow { ImRect rect; ImRect track; NodeSignal signal; NodeChannel channel; };
-struct NodeLayerRow   { ImRect rect; ImRect thumb; uint32_t layer; bool placeholder; };
+struct NodeLayerRow {
+    enum class Kind : uint8_t { Layer, Gap, Empty };   // Gap: where a drop lands (layer = position); Empty: drop zone
+    ImRect   rect;
+    uint32_t layer = 0;
+    Kind     kind  = Kind::Layer;
+};
 
 // Per-node view state the graph keeps (not part of the document).
 struct NodeViewState {
@@ -78,14 +86,24 @@ struct NodeShape {
     std::vector<NodeWidget>     widgets;
     std::vector<NodeSectionRow> sections;
     std::vector<NodeChannelRow> channels;
-    std::vector<NodeLayerRow>   layers;   // top of the stack first, placeholder first of all
+    std::vector<NodeLayerRow>   layers;   // top of the stack first
     ImRect bounds;
 
     const NodePort* output() const;
     const NodePort* input(const InputSlot& slot) const;
 };
 
-NodeShape buildNodeShape(const Project& project, const Node& n, const NodeViewState& view);
+// A stack laid out around a drag: `hidden` (a layer being dragged) is left out, and a gap opens
+// at `gap`, a position among the layers shown (0 = bottom). -1: none.
+struct StackLayout {
+    int gap    = -1;
+    int hidden = -1;
+};
+
+NodeShape buildNodeShape(const Project& project, const Node& n, const NodeViewState& view, StackLayout stack = {});
+
+// A layer row's thumbnail, inside its rect.
+ImRect layerThumbRect(const ImRect& row);
 
 // The slot a link dropped on the node's body connects to (none: false).
 bool preferredInput(const Node& n, InputSlot& out);

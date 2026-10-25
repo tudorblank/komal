@@ -25,7 +25,10 @@ public:
     void setGpuInfo(std::string s) { m_gpuInfo = std::move(s); }
     void setTimings(float acquireMs, float cpuMs) { m_acquireMs = acquireMs; m_cpuMs = cpuMs; }
     void setWindow(SDL_Window* window) { m_window = window; }
-    void openFile(std::string path) { m_importer.open(std::move(path)); }   // any thread
+    void openFile(std::string path) { m_importer.open(std::move(path)); }   // any thread: File > Import, command line
+    // A file dropped on the window at (x, y), window coordinates: imported if it lands on the
+    // canvas or the graph, ignored anywhere else (handled once the panels are laid out).
+    void dropFile(std::string path, float x, float y) { m_drops.push_back({ std::move(path), ImVec2(x, y) }); }
     void addMouseSample(float x, float y) { m_tools.addMouseSample(x, y); }
 
 private:
@@ -33,6 +36,7 @@ private:
     void drawDockspace();
     void drawInfoPanel();
     void handleShortcuts();
+    void dispatchDrops();
     void buildDefaultLayout(unsigned int dockspaceId, float w, float h);
 
     ToolManager         m_tools;   // before the panels that use it
@@ -41,6 +45,8 @@ private:
     ToolboxPanel        m_toolbox;
     ToolPropertiesPanel m_toolProperties;
     ImageImporter       m_importer;
+    struct Drop { std::string path; ImVec2 pos; };
+    std::vector<Drop>   m_drops;
     Project*            m_project = nullptr;
     SDL_Window*         m_window = nullptr;
 

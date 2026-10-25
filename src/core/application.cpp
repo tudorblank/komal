@@ -34,7 +34,7 @@ bool Application::init(const char* title, int width, int height)
 #if defined(__linux__)
     // Prefer X11 (XWayland on KDE Wayland): NVIDIA + Vulkan swapchains pace much
     // better there. Falls back to Wayland if X11 is unavailable.
-    // Override with: SDL_VIDEO_DRIVER=wayland ./MyApp
+    // Override with: SDL_VIDEO_DRIVER=wayland ./Komal
     if (!SDL_getenv("SDL_VIDEO_DRIVER"))
         SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11,wayland");
 #endif
@@ -44,8 +44,11 @@ bool Application::init(const char* title, int width, int height)
         return false;
     }
 
-    m_window = SDL_CreateWindow(title, width, height,
-                                SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+    SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+#if defined(__APPLE__)
+    flags |= SDL_WINDOW_METAL;   // the wgpu surface is a CAMetalLayer (see surface-factory)
+#endif
+    m_window = SDL_CreateWindow(title, width, height, flags);
     if (!m_window) {
         std::fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         return false;
@@ -60,7 +63,16 @@ bool Application::init(const char* title, int width, int height)
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    io.IniFilename = "imgui.ini";
+    // The layout lives in the per-user settings folder, wherever the app is started from (a
+    // macOS app or a Windows shortcut doesn't start in a writable folder):
+    //   Linux ~/.local/share/Komal/   Windows %APPDATA%\Komal\   macOS ~/Library/Application Support/Komal/
+    if (char* dir = SDL_GetPrefPath(nullptr, "Komal")) {
+        m_iniPath = std::string(dir) + "imgui.ini";
+        SDL_free(dir);
+    } else {
+        m_iniPath = "imgui.ini";
+    }
+    io.IniFilename = m_iniPath.c_str();
     io.ConfigInputTrickleEventQueue = false;   // see processEvents()
 
     loadUiFonts();
@@ -152,7 +164,7 @@ void Application::handleEvent(const SDL_Event& e)
     if (e.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED)
         applyContentScale();
     if (e.type == SDL_EVENT_DROP_FILE && e.drop.data)
-        m_userInterface.openFile(e.drop.data);   // dropped on the window: imported
+        m_userInterface.dropFile(e.drop.data, e.drop.x, e.drop.y);   // imported if it lands on the canvas or the graph
 }
 
 void Application::applyContentScale()
@@ -168,7 +180,7 @@ void Application::renderFrame()
 {
     int w = 0, h = 0;
     SDL_GetWindowSizeInPixels(m_window, &w, &h);
-    m_gpu.resize(w, h);   // no-op if unchanged
+    m_gpu.resize(w, h);
 
     const double freq = (double)SDL_GetPerformanceFrequency();
     const Uint64 t0 = SDL_GetPerformanceCounter();

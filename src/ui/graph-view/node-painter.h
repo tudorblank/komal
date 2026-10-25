@@ -43,6 +43,8 @@ void paintNode(const GraphPaint& g, const Project& project, const Node& n, const
                const NodeVisual& visual, NodeThumbnails& thumbs);
 void paintNodeOutline(const GraphPaint& g, const NodeShape& shape, const NodeVisual& visual);
 void paintNodePorts(const GraphPaint& g, const Project& project, const NodeShape& shape, const NodeVisual& visual);
+// One row of a layer stack; lifted: the row being dragged, floating over the stack.
+void paintLayerRow(const GraphPaint& g, const Node& layer, const ImRect& rect, NodeThumbnails& thumbs, bool hot, bool lifted);
 
 // Links run between two screen points: out of an output (rightwards) into an input.
 struct LinkCurve { ImVec2 p0, p1, p2, p3; };
@@ -50,6 +52,8 @@ LinkCurve linkCurve(const GraphPaint& g, ImVec2 from, ImVec2 to);
 ImVec2    linkPoint(const LinkCurve& c, float t);
 float     linkDistance(const LinkCurve& c, ImVec2 p);   // screen pixels
 void      paintLink(const GraphPaint& g, const LinkCurve& c, ImU32 color, bool highlight);
+// A link into the pinned master: dashed, fading out on its way there (it may cross the panel).
+void      paintFadingLink(const GraphPaint& g, const LinkCurve& c, ImU32 color, bool highlight);
 void      paintPort(const GraphPaint& g, ImVec2 graphPos, ImU32 color, bool connected, bool hovered, bool placeholder);
 void      paintInsertButton(const GraphPaint& g, ImVec2 screenPos, bool hovered);
 

@@ -4,22 +4,50 @@
 #
 # Layout of the official zips:
 #   include/webgpu/webgpu.h  include/webgpu/wgpu.h
-#   lib/wgpu_native.dll + libwgpu_native.dll.a   (windows-x86_64-gnu, used for mingw)
-#   lib/wgpu_native.dll + wgpu_native.dll.lib    (windows-x86_64-msvc)
-#   lib/libwgpu_native.so                         (linux-x86_64)
+#   lib/wgpu_native.dll + libwgpu_native.dll.a   (windows-*-gnu, used for mingw)
+#   lib/wgpu_native.dll + wgpu_native.dll.lib    (windows-*-msvc)
+#   lib/libwgpu_native.dylib                      (macos-*, install name @rpath/libwgpu_native.dylib)
+#   lib/libwgpu_native.so                         (linux-*)
 
 set(WGPU_NATIVE_VERSION "v27.0.2.0" CACHE STRING "wgpu-native release tag")
 
+# Target CPU: what the compiler builds for (a cross or Visual Studio -A build may differ from
+# the host). macOS universal builds aren't supported by the prebuilt zips: pick one arch.
+set(_cpu "${CMAKE_SYSTEM_PROCESSOR}")
+if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+    list(LENGTH CMAKE_OSX_ARCHITECTURES _narch)
+    if(_narch GREATER 1)
+        message(FATAL_ERROR "wgpu-native: set CMAKE_OSX_ARCHITECTURES to one of arm64 / x86_64")
+    endif()
+    set(_cpu "${CMAKE_OSX_ARCHITECTURES}")
+elseif(MSVC AND CMAKE_GENERATOR_PLATFORM)
+    set(_cpu "${CMAKE_GENERATOR_PLATFORM}")
+elseif(MSVC AND CMAKE_CXX_COMPILER_ARCHITECTURE_ID)
+    set(_cpu "${CMAKE_CXX_COMPILER_ARCHITECTURE_ID}")
+endif()
+string(TOLOWER "${_cpu}" _cpu)
+if(_cpu MATCHES "^(arm64|aarch64)$")
+    set(_arch "aarch64")
+elseif(_cpu MATCHES "^(x86_64|amd64|x64)$")
+    set(_arch "x86_64")
+else()
+    message(FATAL_ERROR "wgpu-native: unsupported CPU '${_cpu}'")
+endif()
+
 if(WIN32)
     if(MSVC)
-        set(_plat "windows-x86_64-msvc")
-    else()
+        set(_plat "windows-${_arch}-msvc")
+    elseif(_arch STREQUAL "x86_64")
         set(_plat "windows-x86_64-gnu")
+    else()
+        message(FATAL_ERROR "wgpu-native: Windows on ARM needs MSVC (there is no aarch64 mingw build)")
     endif()
-elseif(UNIX AND NOT APPLE)
-    set(_plat "linux-x86_64")
+elseif(APPLE)
+    set(_plat "macos-${_arch}")
+elseif(UNIX)
+    set(_plat "linux-${_arch}")
 else()
-    message(FATAL_ERROR "Platform not set up for wgpu-native yet")
+    message(FATAL_ERROR "wgpu-native: platform not set up")
 endif()
 
 # vendored copies can be per-platform: third_party/wgpu-native-<plat>, or plain third_party/wgpu-native
@@ -59,6 +87,11 @@ if(WIN32)
     set_target_properties(wgpu_native PROPERTIES
         IMPORTED_LOCATION "${WGPU_DIR}/lib/wgpu_native.dll"
         IMPORTED_IMPLIB   "${_implib}")
+elseif(APPLE)
+    # Its install name is @rpath/libwgpu_native.dylib: found next to the executable (see the
+    # app's INSTALL_RPATH / BUILD_RPATH).
+    set_target_properties(wgpu_native PROPERTIES
+        IMPORTED_LOCATION "${WGPU_DIR}/lib/libwgpu_native.dylib")
 else()
     # The Rust cdylib may have no SONAME; this makes CMake link with -lwgpu_native
     # so the NEEDED entry is just "libwgpu_native.so" (found via $ORIGIN rpath).

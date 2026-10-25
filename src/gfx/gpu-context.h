@@ -41,6 +41,7 @@ private:
 
     WGPUInstance m_instance = nullptr;
     WGPUSurface  m_surface  = nullptr;
+    void*        m_surfaceView = nullptr;   // macOS: the SDL Metal view under the surface
     WGPUAdapter  m_adapter  = nullptr;
     WGPUDevice   m_device   = nullptr;
     WGPUQueue    m_queue    = nullptr;

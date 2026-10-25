@@ -225,27 +225,20 @@ void paintNode(const GraphPaint& g, const Project& project, const Node& n, const
     if (auto* c = dynamic_cast<const CompositorNode*>(&n)) {
         for (const NodeLayerRow& row : shape.layers) {
             const ImVec2 a = g.at(row.rect.Min), b = g.at(row.rect.Max);
-            if (row.placeholder) {
-                dl->AddRect(a, b, IM_COL32(255, 255, 255, 40), 3.0f * s, 0, bw);
-                textInRow(g, row.rect.Min.x + kPad + 2.0f, row.rect, kSmallText, kDimText, "+ New layer");
-                continue;
-            }
-            const bool hot = widgetHovered(NodeControl::Layer, row.layer);
-            dl->AddRectFilled(a, b, hot ? kRowHovered : kRow, 3.0f * s);
-            if (visual.activeWidget >= 0 && shape.widgets[size_t(visual.activeWidget)].control == NodeControl::Layer &&
-                shape.widgets[size_t(visual.activeWidget)].layer == row.layer)
+            switch (row.kind) {
+            case NodeLayerRow::Kind::Gap:     // where the dragged link or layer lands
+                dl->AddRectFilled(a, b, (kAccent & ~IM_COL32_A_MASK) | (36u << IM_COL32_A_SHIFT), 3.0f * s);
                 dl->AddRect(a, b, kAccent, 3.0f * s, 0, g.px(1.5f));
-            const Node& layer = *c->layers()[row.layer];
-            drawThumb(g, row.thumb, layer.m_meta.id, thumbs, kSmallText);
-
-            // Blend mode chip: the node system composites Normal (over) only, for now.
-            const ImRect chip(row.rect.Max.x - 52.0f, row.rect.GetCenter().y - 8.0f, row.rect.Max.x - 6.0f, row.rect.GetCenter().y + 8.0f);
-            dl->AddRect(g.at(chip.Min), g.at(chip.Max), IM_COL32(255, 255, 255, 50), 2.0f * s, 0, bw);
-            textCentered(g, chip, kSmallText, kDimText, "Normal");
-
-            const float nameX = row.thumb.Max.x + 6.0f;
-            const std::string name = elide(layer.m_meta.label, kSmallText, chip.Min.x - 4.0f - nameX);
-            textInRow(g, nameX, row.rect, kSmallText, kTextColor, name.c_str());
+                break;
+            case NodeLayerRow::Kind::Empty:   // a stack with nothing in it yet
+                dl->AddRectFilled(a, b, kInset, 3.0f * s);
+                dl->AddRect(a, b, IM_COL32(255, 255, 255, 28), 3.0f * s, 0, bw);
+                textCentered(g, row.rect, kSmallText, kDimText, "Drop nodes here");
+                break;
+            case NodeLayerRow::Kind::Layer:
+                paintLayerRow(g, *c->layers()[row.layer], row.rect, thumbs, widgetHovered(NodeControl::Layer, row.layer), false);
+                break;
+            }
         }
     }
 
@@ -281,6 +274,27 @@ void paintNode(const GraphPaint& g, const Project& project, const Node& n, const
         textInRow(g, row.rect.Max.x - 13.0f, row.rect, kSmallText, kChannelColor[int(row.channel)], kChannelName[int(row.channel)]);
     }
 
+}
+
+void paintLayerRow(const GraphPaint& g, const Node& layer, const ImRect& rect, NodeThumbnails& thumbs, bool hot, bool lifted)
+{
+    ImDrawList* dl = g.dl;
+    const float s = g.scale(), bw = g.px(1.0f);
+    const ImVec2 a = g.at(rect.Min), b = g.at(rect.Max);
+    if (lifted) dl->AddRectFilled(ImVec2(a.x, a.y + g.px(2.0f)), ImVec2(b.x, b.y + g.px(5.0f)), IM_COL32(0, 0, 0, 90), 3.0f * s);
+    dl->AddRectFilled(a, b, hot || lifted ? kRowHovered : kRow, 3.0f * s);
+    if (lifted) dl->AddRect(a, b, kAccent, 3.0f * s, 0, g.px(1.5f));
+    const ImRect thumb = layerThumbRect(rect);
+    drawThumb(g, thumb, layer.m_meta.id, thumbs, kSmallText);
+
+    // Blend mode chip: the node system composites Normal (over) only, for now.
+    const ImRect chip(rect.Max.x - 52.0f, rect.GetCenter().y - 8.0f, rect.Max.x - 6.0f, rect.GetCenter().y + 8.0f);
+    dl->AddRect(g.at(chip.Min), g.at(chip.Max), IM_COL32(255, 255, 255, 50), 2.0f * s, 0, bw);
+    textCentered(g, chip, kSmallText, kDimText, "Normal");
+
+    const float nameX = thumb.Max.x + 6.0f;
+    const std::string name = elide(layer.m_meta.label, kSmallText, chip.Min.x - 4.0f - nameX);
+    textInRow(g, nameX, rect, kSmallText, kTextColor, name.c_str());
 }
 
 void paintNodePorts(const GraphPaint& g, const Project& project, const NodeShape& shape, const NodeVisual& visual)
@@ -352,6 +366,46 @@ void paintLink(const GraphPaint& g, const LinkCurve& c, ImU32 color, bool highli
     const float w = g.px(kLinkWidth) * std::clamp(g.camera.zoom, 0.6f, 1.6f);
     if (highlight) g.dl->AddBezierCubic(c.p0, c.p1, c.p2, c.p3, IM_COL32(255, 255, 255, 70), w + g.px(4.0f));
     g.dl->AddBezierCubic(c.p0, c.p1, c.p2, c.p3, color, w);
+}
+
+void paintFadingLink(const GraphPaint& g, const LinkCurve& c, ImU32 color, bool highlight)
+{
+    const float w = g.px(kLinkWidth) * std::clamp(g.camera.zoom, 0.6f, 1.6f);
+    if (highlight) g.dl->AddBezierCubic(c.p0, c.p1, c.p2, c.p3, IM_COL32(255, 255, 255, 50), w + g.px(4.0f));
+
+    // The curve as a polyline, with the distance along it at each point.
+    constexpr int kSteps = 64;
+    ImVec2 pts[kSteps + 1];
+    float  along[kSteps + 1];
+    pts[0] = c.p0;
+    along[0] = 0.0f;
+    for (int i = 1; i <= kSteps; ++i) {
+        pts[i] = linkPoint(c, float(i) / kSteps);
+        const float dx = pts[i].x - pts[i - 1].x, dy = pts[i].y - pts[i - 1].y;
+        along[i] = along[i - 1] + std::sqrt(dx * dx + dy * dy);
+    }
+    const float total = along[kSteps];
+    if (total <= 0.0f) return;
+    const auto at = [&](float d) {
+        const int i = std::clamp(int(std::upper_bound(along, along + kSteps + 1, d) - along) - 1, 0, kSteps - 1);
+        const float t = along[i + 1] > along[i] ? (d - along[i]) / (along[i + 1] - along[i]) : 0.0f;
+        return ImVec2(pts[i].x + (pts[i + 1].x - pts[i].x) * t, pts[i].y + (pts[i + 1].y - pts[i].y) * t);
+    };
+
+    const float dash = g.px(8.0f), gap = g.px(5.0f);
+    const int alpha = int((color >> IM_COL32_A_SHIFT) & 0xFF);
+    ImVec2 poly[kSteps + 2];
+    for (float d0 = 0.0f; d0 < total; d0 += dash + gap) {
+        const float d1 = std::min(d0 + dash, total);
+        int n = 0;
+        poly[n++] = at(d0);
+        for (int i = 1; i < kSteps && n < kSteps + 1; ++i)
+            if (along[i] > d0 && along[i] < d1) poly[n++] = pts[i];
+        poly[n++] = at(d1);
+        const float t = (d0 + d1) * 0.5f / total;   // 0 at the source, 1 at the master
+        const int a = int(float(alpha) * (1.0f - 0.7f * t));
+        g.dl->AddPolyline(poly, n, (color & ~IM_COL32_A_MASK) | (ImU32(a) << IM_COL32_A_SHIFT), ImDrawFlags_None, w);
+    }
 }
 
 void paintInsertButton(const GraphPaint& g, ImVec2 p, bool hovered)

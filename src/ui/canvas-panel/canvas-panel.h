@@ -5,13 +5,15 @@
 #include "ui/canvas-panel/edit-preview-item.h"
 #include "ui/canvas-panel/tool-overlay-item.h"
 
+#include <imgui.h>
+
 #include <vector>
 
 class GpuContext;
 class Project;
 class ToolManager;
 struct ImDrawList;
-struct ImVec2;
+struct ImGuiWindow;
 
 // The raster canvas: a dockable window showing a CanvasScene through a CanvasView, an
 // offscreen target displayed with an ImGui image. The scene holds the project's master output
@@ -24,6 +26,9 @@ public:
     void shutdown();
 
     void draw(bool* open);                    // ImGui side: window, input, image, overlays
+    // A file dropped at `screen` with `window` topmost there: true if it lands on the canvas,
+    // with the world point under it.
+    bool dropTarget(const ImGuiWindow* window, ImVec2 screen, Vec2& world) const;
     void renderGpu(WGPUCommandEncoder enc);   // wgpu side: the view renders if anything changed
 
 private:
@@ -46,6 +51,8 @@ private:
 
     std::vector<Vec2> m_trail;   // this frame's mouse samples, in world space
 
+    const ImGuiWindow* m_window = nullptr;   // this frame's, while the canvas is shown
+    ImVec2 m_canvasMin{}, m_canvasMax{};
     bool m_visible = false;   // false when collapsed / tabbed away
     bool m_ready   = false;
 };

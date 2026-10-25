@@ -34,15 +34,15 @@ void paintStarterContent(RasterRootNode& background, RasterRootNode& paint)
 void Project::init()
 {
     m_master = CompositorNode::create();
-    m_master->m_meta.label = "Output";
+    m_master->m_meta.label = "Master";
     m_master->enableCache(true);   // the viewport reads its output tile by tile
     adopt(m_master, 320.0f, 120.0f);
 
     const NodeId bg    = createRaster(40.0f, 0.0f);
     const NodeId paint = createRaster(40.0f, 370.0f);
     paintStarterContent(*rasterNode(m_rasters[0].id()), *rasterNode(m_rasters[1].id()));   // not undoable
-    connect(bg,    m_master->m_meta.id, InputSlot::stackLayer(0));
-    connect(paint, m_master->m_meta.id, InputSlot::stackLayer(1));
+    connect(bg,    m_master->m_meta.id, InputSlot::newLayer(0));
+    connect(paint, m_master->m_meta.id, InputSlot::newLayer(1));
     setActiveRaster(paint);
 }
 
@@ -82,6 +82,8 @@ NodePtr Project::inputAt(NodeId to, const InputSlot& slot) const
     case InputSlot::Kind::Layer:
         if (auto* c = dynamic_cast<CompositorNode*>(n); c && slot.layer < c->layers().size()) return c->layers()[slot.layer];
         return nullptr;
+    case InputSlot::Kind::NewLayer:
+        return nullptr;   // a position, not an input
     case InputSlot::Kind::Mask:
         return n->signal(slot.signal).mask[int(slot.channel)];
     }
@@ -114,24 +116,30 @@ NodeId Project::createRaster(float x, float y)
     return id;
 }
 
-NodeId Project::importImage(const ImageFile& image)
+NodeId Project::importImage(const ImageFile& image, const ImportOptions& options)
 {
     TileGrid tiles;
     tilesFromImage(tiles, { image.pixels, image.width, image.height }, 0, 0);
-    return importTiles(tiles, image.name);
+    return importTiles(tiles, image.name, options);
 }
 
-NodeId Project::importTiles(const TileGrid& tiles, const std::string& name)
+NodeId Project::importTiles(const TileGrid& tiles, const std::string& name, const ImportOptions& options)
 {
-    float y = 0.0f;   // below the lowest raster in the graph
-    for (const NodePtr& n : m_order)
-        if (n->m_meta.type == NodeType::Raster) y = std::max(y, n->m_meta.y + 370.0f);
-    const NodeId id = createRaster(40.0f, y);
+    float x = options.nodeX, y = options.nodeY;
+    if (!options.placeNode) {   // below the lowest raster in the graph
+        x = 40.0f;
+        y = 0.0f;
+        for (const NodePtr& n : m_order)
+            if (n->m_meta.type == NodeType::Raster) y = std::max(y, n->m_meta.y + 370.0f);
+    }
+    const NodeId prevActive = m_active;
+    const NodeId id = createRaster(x, y);
     RasterRootNode& r = *static_cast<RasterRootNode*>(find(id));
     if (!name.empty()) r.m_meta.label = name;
     r.edit([&](RasterEditor& ed) { ed.applyTileGrid(tiles, { 255, CompositeMode::Replace }); });
-    connect(id, m_master->m_meta.id, InputSlot::stackLayer(uint32_t(m_master->layers().size())));
-    setActiveRaster(id);
+    if (options.addToMaster) connect(id, m_master->m_meta.id, InputSlot::newLayer(uint32_t(m_master->layers().size())));
+    if (options.makeActive) setActiveRaster(id);
+    else if (m_active == id && prevActive != kNoNodeId) setActiveRaster(prevActive);   // createRaster takes it when there was none
     return id;
 }
 
@@ -305,9 +313,13 @@ bool Project::canConnect(NodeId from, NodeId to, const InputSlot& slot) const
         return dynamic_cast<UnaryNode*>(dst) != nullptr;
     case InputSlot::Kind::Layer: {
         auto* c = dynamic_cast<CompositorNode*>(dst);
-        if (!c || slot.layer > c->layers().size()) return false;
+        if (!c || slot.layer >= c->layers().size()) return false;
         // a node appears once per stack; re-dropping it on its own slot is fine
-        return !c->has(src) || (slot.layer < c->layers().size() && c->layers()[slot.layer] == src);
+        return !c->has(src) || c->layers()[slot.layer] == src;
+    }
+    case InputSlot::Kind::NewLayer: {   // a layer already in the stack moves there instead
+        auto* c = dynamic_cast<CompositorNode*>(dst);
+        return c && slot.layer <= c->layers().size();
     }
     case InputSlot::Kind::Mask:
         return dst->hasSignal(slot.signal);   // Dry/Wet masks only on effect nodes
@@ -327,9 +339,18 @@ bool Project::connect(NodeId from, NodeId to, const InputSlot& slot)
         break;
     case InputSlot::Kind::Layer: {
         auto* c = static_cast<CompositorNode*>(dst);
-        if (slot.layer < c->layers().size()) {
-            NodePtr old = c->layers()[slot.layer];   // copy: replaceInputInstance edits the stack
-            c->replaceInputInstance(old, src);
+        NodePtr old = c->layers()[slot.layer];   // copy: replaceInputInstance edits the stack
+        c->replaceInputInstance(old, src);
+        break;
+    }
+    case InputSlot::Kind::NewLayer: {
+        auto* c = static_cast<CompositorNode*>(dst);
+        const auto& layers = c->layers();
+        if (const auto it = std::find(layers.begin(), layers.end(), src); it != layers.end()) {
+            const size_t from = size_t(it - layers.begin());
+            const size_t at = slot.layer > from ? slot.layer - 1 : slot.layer;   // it leaves its own place first
+            if (at == from) return true;
+            c->moveLayer(from, at);
         } else {
             c->addLayerAt(src, slot.layer);
         }
@@ -350,6 +371,7 @@ bool Project::disconnect(NodeId to, const InputSlot& slot)
     switch (slot.kind) {
     case InputSlot::Kind::Input: static_cast<UnaryNode*>(dst)->setInput(nullptr); break;
     case InputSlot::Kind::Layer: static_cast<CompositorNode*>(dst)->removeLayer(slot.layer); break;
+    case InputSlot::Kind::NewLayer: return false;   // inputAt() already said no
     case InputSlot::Kind::Mask:  dst->linkMask(nullptr, slot.signal, slot.channel); break;
     }
     emit(ProjectEventType::GraphChanged, to);

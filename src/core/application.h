@@ -5,6 +5,7 @@
 #include "ui/ui-main.h"
 
 #include <SDL3/SDL_events.h>
+#include <string>
 #include <vector>
 
 struct SDL_Window;
@@ -34,4 +35,5 @@ private:
     float       m_contentScale = 0;
     float       m_acquireMs = 0, m_cpuMs = 0;
     std::vector<SDL_Event> m_heldBack;   // releases held back to the next frame
+    std::string m_iniPath;               // ImGui keeps a pointer to it
 };

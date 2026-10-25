@@ -8,31 +8,68 @@
     },
     {
       "name": "linux-debug", "inherits": "base",
-      "displayName": "Linux (native) Debug",
+      "displayName": "Linux Debug",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
     },
     {
       "name": "linux-release", "inherits": "base",
-      "displayName": "Linux (native) Release",
+      "displayName": "Linux Release",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
     },
     {
+      "name": "macos-debug", "inherits": "base",
+      "displayName": "macOS Debug (this Mac's CPU)",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" },
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "CMAKE_OSX_DEPLOYMENT_TARGET": "11.0" }
+    },
+    {
+      "name": "macos-release", "inherits": "base",
+      "displayName": "macOS Release (this Mac's CPU)",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" },
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "CMAKE_OSX_DEPLOYMENT_TARGET": "11.0" }
+    },
+    {
+      "name": "windows-msvc", "hidden": true,
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/windows-msvc",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "windows-msvc-x64", "inherits": "windows-msvc",
+      "displayName": "Windows x64 (Visual Studio 2022)"
+    },
+    {
+      "name": "windows-msvc-arm64", "inherits": "windows-msvc",
+      "displayName": "Windows ARM64 (Visual Studio 2022)",
+      "architecture": "ARM64",
+      "binaryDir": "${sourceDir}/build/windows-msvc-arm64"
+    },
+    {
       "name": "windows-debug", "inherits": "base",
-      "displayName": "Windows (mingw-w64 cross) Debug",
+      "displayName": "Windows Debug (mingw-w64 cross-compile from Linux)",
       "toolchainFile": "${sourceDir}/cmake/toolchains/mingw-w64-x86_64.cmake",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
     },
     {
       "name": "windows-release", "inherits": "base",
-      "displayName": "Windows (mingw-w64 cross) Release",
+      "displayName": "Windows Release (mingw-w64 cross-compile from Linux)",
       "toolchainFile": "${sourceDir}/cmake/toolchains/mingw-w64-x86_64.cmake",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
     }
   ],
   "buildPresets": [
-    { "name": "linux-debug",     "configurePreset": "linux-debug" },
-    { "name": "linux-release",   "configurePreset": "linux-release" },
-    { "name": "windows-debug",   "configurePreset": "windows-debug" },
-    { "name": "windows-release", "configurePreset": "windows-release" }
+    { "name": "linux-debug",                "configurePreset": "linux-debug" },
+    { "name": "linux-release",              "configurePreset": "linux-release" },
+    { "name": "macos-debug",                "configurePreset": "macos-debug" },
+    { "name": "macos-release",              "configurePreset": "macos-release" },
+    { "name": "windows-msvc-x64-debug",     "configurePreset": "windows-msvc-x64",   "configuration": "Debug" },
+    { "name": "windows-msvc-x64-release",   "configurePreset": "windows-msvc-x64",   "configuration": "Release" },
+    { "name": "windows-msvc-arm64-debug",   "configurePreset": "windows-msvc-arm64", "configuration": "Debug" },
+    { "name": "windows-msvc-arm64-release", "configurePreset": "windows-msvc-arm64", "configuration": "Release" },
+    { "name": "windows-debug",              "configurePreset": "windows-debug" },
+    { "name": "windows-release",            "configurePreset": "windows-release" }
   ]
 }
