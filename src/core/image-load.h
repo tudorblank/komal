@@ -1,5 +1,4 @@
 #pragma once
-// Image files in: decoded to premultiplied RGBA, ready to blit into a raster.
 
 #include "raster/tile.h"
 
@@ -12,6 +11,6 @@ struct ImageFile {
     std::string name;           // file name without directory or extension
 };
 
-// Any format stb_image reads (PNG, JPEG, BMP, TGA, PSD composite, GIF first frame, ...).
-// Safe to call from any thread.
+// stb_image reads (PNG, JPEG, BMP, TGA, PSD composite, GIF first frame, ...).
+// multi-thread safe
 bool loadImageFile(const std::string& path, ImageFile& out, std::string& error);

@@ -19,15 +19,9 @@ public:
     void  select(Tool& tool, Project& project);
 
     // B brush, E brush in erase mode, H hand; ignored while typing. Call once per frame.
-    void handleShortcuts(Project& project);
+    void handleShortcuts(Project& project, const InputFrame& input, bool typing);
     // Space held over the canvas; released only once the hand's drag is done.
     void setSpringHand(bool held);
-
-    // Every mouse position the system reported this frame (screen points, oldest first), so a
-    // stroke follows the real path rather than one straight segment per frame.
-    void addMouseSample(float x, float y) { m_mouseTrail.push_back(ImVec2(x, y)); }
-    const std::vector<ImVec2>& mouseTrail() const { return m_mouseTrail; }
-    void clearMouseTrail() { m_mouseTrail.clear(); }
 
     ToolColors&       colors() { return m_colors; }
     CanvasNavigation& canvas() { return m_canvas; }
@@ -40,5 +34,4 @@ private:
     bool       m_springHand = false;
     ToolColors       m_colors;
     CanvasNavigation m_canvas;
-    std::vector<ImVec2> m_mouseTrail;
 };

@@ -1,4 +1,5 @@
 #include "graph-panel.h"
+#include "core/input.h"
 #include "core/project.h"
 #include "gfx/gpu-context.h"
 #include "ui/graph-view/graph-style.h"
@@ -15,6 +16,8 @@ namespace {
 
 constexpr double kThumbBudgetMs  = 3.0;     // per frame
 constexpr float  kZoomStep       = 1.2f;    // per wheel notch
+constexpr double kRightHoldSeconds  = 0.25;    // a right press held this long zooms instead of opening a menu
+constexpr float  kRightZoomPerPixel = 1.008f;  // right-drag zoom
 constexpr float  kLinkHoverPx    = 6.0f;
 constexpr float  kInsertRadiusPx = 10.0f;
 constexpr float  kFrameMargin    = 40.0f;   // points around framed nodes
@@ -27,9 +30,10 @@ ImU32 withAlpha(ImU32 c, int a) { return (c & ~IM_COL32_A_MASK) | (ImU32(a) << I
 
 } // namespace
 
-void GraphPanel::init(GpuContext& gpu, Project& project)
+void GraphPanel::init(GpuContext& gpu, Project& project, const InputFrame& input)
 {
     m_project = &project;
+    m_input   = &input;
     m_thumbs.init(gpu.device(), gpu.queue());
     m_subscription = project.subscribe([this](const ProjectEvent& e) {
         if (e.type != ProjectEventType::NodeRemoved) return;
@@ -259,25 +263,33 @@ void GraphPanel::handleMouse(const Hit& hit, bool hovered)
     }
     if (m_canvasActive && ImGui::IsMouseDown(ImGuiMouseButton_Middle)) m_camera.panBy(io.MouseDelta);
 
-    // ---- right button: drag pans, a click opens a menu
-    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) { m_rightDown = true; m_rightDragged = false; }
-    if (m_rightDown) {
-        if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
-            m_rightDragged = true;
-            m_camera.panBy(io.MouseDelta);
-        }
-        if (ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
-            m_rightDown = false;
-            if (!m_rightDragged && m_drag == Drag::None && hit.kind != Hit::Kind::Minimap) {
-                if (hit.node != kNoNodeId) {
-                    m_contextNode = hit.node;
-                    if (!m_selection.contains(hit.node)) m_selection.select(hit.node);
-                    ImGui::OpenPopup(kNodeContext);
-                } else {
-                    PendingAdd add;
-                    add.at = m_camera.toGraph(mouse);
-                    openAdd(add, NodeMenu::Fit::Any);
-                }
+    // ---- right button: a click opens a menu; held or dragged, it zooms around where it was
+    // pressed (right / up: in). The gesture ends whenever the button isn't down any more, so a
+    // release the panel never saw as an event (outside the window, focus lost) can't leave it on.
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && hit.kind != Hit::Kind::Minimap) {
+        m_rightDown    = true;
+        m_rightZooming = false;
+        m_rightPress   = mouse;
+        m_rightPressAt = ImGui::GetTime();
+    }
+    if (m_rightDown && ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+        if (!m_rightZooming && (ImGui::IsMouseDragging(ImGuiMouseButton_Right) || ImGui::GetTime() - m_rightPressAt >= kRightHoldSeconds))
+            m_rightZooming = true;
+        const float d = io.MouseDelta.x - io.MouseDelta.y;
+        if (m_rightZooming && d != 0.0f) m_camera.zoomAt(m_rightPress, std::pow(kRightZoomPerPixel, d));
+    } else if (m_rightDown) {
+        m_rightDown = false;
+        const bool click = !m_rightZooming;
+        m_rightZooming = false;
+        if (click && m_drag == Drag::None) {
+            if (hit.node != kNoNodeId) {
+                m_contextNode = hit.node;
+                if (!m_selection.contains(hit.node)) m_selection.select(hit.node);
+                ImGui::OpenPopup(kNodeContext);
+            } else {
+                PendingAdd add;
+                add.at = m_camera.toGraph(mouse);
+                openAdd(add, NodeMenu::Fit::Any);
             }
         }
     }
@@ -288,8 +300,8 @@ void GraphPanel::handleMouse(const Hit& hit, bool hovered)
         m_press      = hit;
         m_pressMouse = mouse;
         m_pressGraph = cameraFor(hit.node).toGraph(mouse);
-        m_pressCtrl  = io.KeyCtrl;
-        m_pressShift = io.KeyShift;
+        m_pressCtrl  = (m_input->mods & ModPrimary) != 0;   // Cmd on macOS
+        m_pressShift = (m_input->mods & ModShift) != 0;
         switch (hit.kind) {
         case Hit::Kind::Port:   startLink(hit); break;
         case Hit::Kind::Widget: pressWidget(hit, dbl); break;
@@ -700,24 +712,22 @@ void GraphPanel::openValueEdit(const ValueEdit& edit)
 
 void GraphPanel::handleKeys(ImVec2 canvasSize)
 {
+    // ImGui routes (the graph has focus, no text field is typing); the keys come from SDL.
     if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::GetIO().WantTextInput) return;
-    const ImGuiIO& io = ImGui::GetIO();
-    const bool plain = !io.KeyCtrl && !io.KeyAlt && !io.KeySuper;
+    const InputFrame& in = *m_input;
 
-    if (plain && (ImGui::IsKeyPressed(ImGuiKey_Delete, false) || ImGui::IsKeyPressed(ImGuiKey_Backspace, false) ||
-                  (!io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_X, false))))
-        deleteSelection();
-    if (plain && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_F, false)) frameNodes(!m_selection.empty(), canvasSize);
-    if (plain && ImGui::IsKeyPressed(ImGuiKey_Home, false)) frameNodes(false, canvasSize);
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_A, false)) {
+    if (in.pressed({ SDLK_DELETE }) || in.pressed({ SDLK_BACKSPACE }) || in.pressed({ SDLK_X })) deleteSelection();
+    if (in.pressed({ SDLK_F }))    frameNodes(!m_selection.empty(), canvasSize);
+    if (in.pressed({ SDLK_HOME })) frameNodes(false, canvasSize);
+    if (in.pressed({ SDLK_A, ModPrimary })) {
         GraphSelection::Set all;
         for (const auto& [id, s] : m_shapes)
             if (!isMaster(id)) all.insert(id);
         m_selection.assign(std::move(all));
     }
-    if (plain && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_A, false)) {
+    if (in.pressed({ SDLK_A, ModShift })) {
         PendingAdd add;
-        add.at = m_camera.toGraph(io.MousePos);
+        add.at = m_camera.toGraph(ImGui::GetIO().MousePos);
         openAdd(add, NodeMenu::Fit::Any);
     }
 }
@@ -763,7 +773,8 @@ int GraphPanel::activeWidget(NodeId id) const
 void GraphPanel::setCursor(const Hit& hit) const
 {
     ImGuiMouseCursor c = ImGuiMouseCursor_Arrow;
-    if (m_rightDragged || (m_canvasActive && ImGui::IsMouseDown(ImGuiMouseButton_Middle))) c = ImGuiMouseCursor_ResizeAll;
+    if (m_rightZooming) c = ImGuiMouseCursor_ResizeNS;
+    else if (m_canvasActive && ImGui::IsMouseDown(ImGuiMouseButton_Middle)) c = ImGuiMouseCursor_ResizeAll;
     else if (m_drag == Drag::Scale || m_drag == Drag::Offset) c = ImGuiMouseCursor_ResizeEW;
     else if (m_drag == Drag::Layer) c = ImGuiMouseCursor_ResizeNS;
     else if (m_drag == Drag::Link) c = ImGuiMouseCursor_Hand;

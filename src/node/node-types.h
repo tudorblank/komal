@@ -18,9 +18,15 @@ public:
     bool alphaLocked() const { return m_alphaLocked; }       // edits keep every pixel's alpha
     void setAlphaLocked(bool locked) { m_alphaLocked = locked; }
 
-    // THE way to edit pixels: edit -> commit -> notify the graph. Can't forget to notify.
-    EditSummary edit(const std::function<void(RasterEditor&)>& body, TileDelta* record = nullptr);
-    EditSummary applyHistory(TileDelta& step);   // undo/redo
+    // THE ways to change its pixels; each tells the graph what changed, so that can't be forgotten.
+    // Straight into the committed pixels, not recorded (imports, starter content):
+    EditSummary edit(const std::function<void(RasterEditor&)>& body);
+    // An edit in progress, into the raster's draft (shown live, committed later); `body`
+    // returns the tiles it changed:
+    void draft(const std::function<TileSet(RasterData&)>& body);
+    RasterCommitId commitDraft();   // one commit in the raster's history (kNoRasterCommit: nothing changed)
+    void discardDraft();
+    void flip(RasterCommitId commit);   // undo / redo of one of its commits
 
     BoundsI wetBounds() override { return m_raster->getBounds(); }
     const Tile* fetchWet(int tx, int ty, RenderCtx&) override { return m_raster->getReadTile(tx, ty); }   // zero-copy

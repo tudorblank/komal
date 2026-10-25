@@ -4,6 +4,8 @@
 #include "gfx/raster-item.h"
 #include "ui/canvas-panel/edit-preview-item.h"
 #include "ui/canvas-panel/tool-overlay-item.h"
+#include "ui/tools/ring-cursor.h"
+#include "ui/tools/tool.h"
 
 #include <imgui.h>
 
@@ -22,10 +24,11 @@ struct ImGuiWindow;
 // hands the mouse to the active tool; tool settings live in the Tool Properties window.
 class CanvasPanel {
 public:
-    bool init(GpuContext& gpu, Project& project, ToolManager& tools);
+    bool init(GpuContext& gpu, Project& project, ToolManager& tools, const InputFrame& input);
     void shutdown();
 
     void draw(bool* open);                    // ImGui side: window, input, image, overlays
+    SDL_Cursor* cursorOverride() const { return m_cursorOverride; }   // the tool's system cursor, this frame
     // A file dropped at `screen` with `window` topmost there: true if it lands on the canvas,
     // with the world point under it.
     bool dropTarget(const ImGuiWindow* window, ImVec2 screen, Vec2& world) const;
@@ -49,7 +52,10 @@ private:
     bool             m_previewOutlined = false;  // this drag is shown with outlines
     ToolOverlayItem* m_toolOverlay  = nullptr;
 
-    std::vector<Vec2> m_trail;   // this frame's mouse samples, in world space
+    const InputFrame* m_input = nullptr;   // the app's pointer input, this frame
+    RingCursors  m_ringCursors;
+    SDL_Cursor*  m_cursorOverride = nullptr;
+    std::vector<CanvasPointer> m_pointer;  // ... the part the canvas gets, in world space
 
     const ImGuiWindow* m_window = nullptr;   // this frame's, while the canvas is shown
     ImVec2 m_canvasMin{}, m_canvasMax{};

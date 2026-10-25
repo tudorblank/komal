@@ -1,4 +1,5 @@
 #include "brush-tool.h"
+#include "ui/tools/ring-cursor.h"
 #include "core/project.h"
 #include "gfx/canvas-scene.h"
 
@@ -47,36 +48,68 @@ void BrushTool::drawProperties(ToolContext&)
     label("Edges");
     ImGui::Checkbox("Antialiased", &m_params.antialias);
     ImGui::SetItemTooltip("Off: hard pixels (diameter 1 = single pixels).");
+    label("Pressure");
+    ImGui::Checkbox("Size", &m_params.pressureSize);
+    ImGui::SetItemTooltip("Pen pressure scales the brush size.");
+    ImGui::SameLine();
+    ImGui::Checkbox("Flow", &m_params.pressureFlow);
+    ImGui::SetItemTooltip("Pen pressure scales how much each dab adds.");
 
     ImGui::Spacing();
-    ImGui::TextDisabled("LMB paint   RMB erase   [ ] size");
+    ImGui::TextDisabled("LMB / pen paint   RMB / pen eraser erase   [ ] size");
 }
 
 void BrushTool::canvasInput(const CanvasInput& in)
 {
     if (in.hovered && !ImGui::GetIO().WantTextInput) {
-        if (ImGui::IsKeyPressed(ImGuiKey_RightBracket)) m_params.diameter = std::min(kMaxDiameter, std::round(m_params.diameter * 1.25f + 0.5f));
-        if (ImGui::IsKeyPressed(ImGuiKey_LeftBracket))  m_params.diameter = std::max(1.0f, std::round(m_params.diameter / 1.25f));
+        if (in.input.pressed({ SDLK_RIGHTBRACKET }, true)) m_params.diameter = std::min(kMaxDiameter, std::round(m_params.diameter * 1.25f + 0.5f));
+        if (in.input.pressed({ SDLK_LEFTBRACKET }, true))  m_params.diameter = std::max(1.0f, std::round(m_params.diameter / 1.25f));
     }
 
-    // Pressing starts a stroke (and an undo step), dragging extends it, releasing ends it.
-    const bool left  = ImGui::IsMouseDown(ImGuiMouseButton_Left);
-    const bool right = ImGui::IsMouseDown(ImGuiMouseButton_Right);
-    const bool painting = in.active && (left || right);
-    if (painting && !m_stroking) {
-        BrushParams p = m_params;
-        const float* c = m_colors.foreground;
-        p.color = { uint8_t(c[0] * 255.0f + 0.5f), uint8_t(c[1] * 255.0f + 0.5f), uint8_t(c[2] * 255.0f + 0.5f), uint8_t(c[3] * 255.0f + 0.5f) };
-        p.mode  = (m_erase || !left) ? CompositeMode::Erase : CompositeMode::Over;
-        in.project.beginStroke(p, in.world.x, in.world.y);
-        m_stroking = true;
-    } else if (painting) {
+    // A stroke (and an undo step) runs from a press to the release of that same button, through
+    // every sample in between, in the order they happened.
+    const auto flush = [&] {
+        if (m_stroking && !m_points.empty()) in.project.strokeTo(m_points);
         m_points.clear();
-        for (Vec2 p : in.trail) m_points.push_back({ p.x, p.y });
-        m_points.push_back({ in.world.x, in.world.y });
-        in.project.strokeTo(m_points);
+    };
+    const auto isPen = [](PointerDevice d) { return d != PointerDevice::Mouse; };
+    m_points.clear();
+    for (const CanvasPointer& p : in.pointer) {
+        const PointerEvent& ev = p.event;
+        const StrokePoint at{ p.world.x, p.world.y, ev.pressure };
+        if (isPen(ev.device)) m_pressure = in.input.pen.touching ? ev.pressure : 1.0f;
+        switch (ev.type) {
+        case PointerEvent::Type::Down: {
+            // ImGui must have given the canvas this press (not a popup, not another panel).
+            if (m_stroking || !in.active || ev.button == PointerButton::Middle) break;
+            BrushParams params = m_params;
+            const float* c = m_colors.foreground;
+            params.color = { uint8_t(c[0] * 255.0f + 0.5f), uint8_t(c[1] * 255.0f + 0.5f), uint8_t(c[2] * 255.0f + 0.5f), uint8_t(c[3] * 255.0f + 0.5f) };
+            const bool erase = m_erase || ev.button == PointerButton::Secondary || ev.device == PointerDevice::Eraser;
+            params.mode = erase ? CompositeMode::Erase : CompositeMode::Over;
+            in.project.beginStroke(params, at);
+            m_stroking     = true;
+            m_strokeButton = ev.button;
+            m_strokePen    = isPen(ev.device);
+            break;
+        }
+        case PointerEvent::Type::Move:
+            if (m_stroking && isPen(ev.device) == m_strokePen) m_points.push_back(at);
+            break;
+        case PointerEvent::Type::Up:
+            if (m_stroking && ev.button == m_strokeButton && isPen(ev.device) == m_strokePen) {
+                m_points.push_back(at);
+                flush();
+                cancel(in.project);
+            }
+            break;
+        }
     }
-    if (m_stroking && !painting) cancel(in.project);
+    flush();
+
+    // Safety net: a release the app never saw (focus lost mid-stroke) still ends the stroke.
+    const bool held = ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Right) || in.input.pen.touching;
+    if (m_stroking && !held) cancel(in.project);
 }
 
 void BrushTool::cancel(Project& project)
@@ -86,25 +119,33 @@ void BrushTool::cancel(Project& project)
     m_stroking = false;
 }
 
+float BrushTool::cursorDiameter() const
+{
+    // While a pen presses, the size its pressure gives the dabs.
+    return m_params.pressureSize && m_pressure < 1.0f ? std::max(1.0f, m_params.diameter * m_pressure) : m_params.diameter;
+}
+
+bool BrushTool::cursorRing(float zoom, float& radius, bool& erase) const
+{
+    radius = cursorDiameter() * 0.5f * zoom;
+    erase  = m_erase;
+    return true;
+}
+
 void BrushTool::paintOverlay(ImDrawList* dl, const OverlayContext& ctx, Vec2 world) const
 {
-    const Vec2 c = ctx.toScreen(world.x, world.y);
-    const ImVec2 m(c.x, c.y);
-
-    if (ctx.camera.zoom >= 6.0f) {   // the pixel under the mouse
+    // The ring and the crosshair are the system cursor (RingCursors): drawn here they would trail
+    // the mouse by a frame. Only what it can't show is drawn: the pixel under the mouse when zoomed
+    // in (it belongs to the canvas, not the mouse), and a ring too big for a system cursor.
+    if (ctx.camera.zoom >= 6.0f) {
         const float px = std::floor(world.x), py = std::floor(world.y);
         const Vec2 a = ctx.toScreen(px, py), b = ctx.toScreen(px + 1.0f, py + 1.0f);
         dl->AddRect(ImVec2(a.x, a.y), ImVec2(b.x, b.y), IM_COL32(255, 255, 255, 120));
     }
-
-    const float r = m_params.diameter * 0.5f * ctx.camera.zoom;
-    if (r >= 3.0f) {   // dark under light: readable on any content
-        dl->AddCircle(m, r + 1.0f, IM_COL32(0, 0, 0, 160), 0, 1.5f);
-        dl->AddCircle(m, r, m_erase ? IM_COL32(255, 140, 140, 220) : IM_COL32(255, 255, 255, 220), 0, 1.0f);
+    const float r = cursorDiameter() * 0.5f * ctx.camera.zoom;
+    if (!RingCursors::fits(r)) {
+        const Vec2 c = ctx.toScreen(world.x, world.y);
+        dl->AddCircle(ImVec2(c.x, c.y), r + 1.0f, IM_COL32(0, 0, 0, 160), 0, 1.5f);
+        dl->AddCircle(ImVec2(c.x, c.y), r, m_erase ? IM_COL32(255, 140, 140, 220) : IM_COL32(255, 255, 255, 220), 0, 1.0f);
     }
-    // Always a small crosshair: with the system cursor hidden it marks the exact spot.
-    dl->AddLine(ImVec2(m.x - 5, m.y), ImVec2(m.x + 6, m.y), IM_COL32(0, 0, 0, 160), 3.0f);
-    dl->AddLine(ImVec2(m.x, m.y - 5), ImVec2(m.x, m.y + 6), IM_COL32(0, 0, 0, 160), 3.0f);
-    dl->AddLine(ImVec2(m.x - 5, m.y), ImVec2(m.x + 6, m.y), IM_COL32(255, 255, 255, 220));
-    dl->AddLine(ImVec2(m.x, m.y - 5), ImVec2(m.x, m.y + 6), IM_COL32(255, 255, 255, 220));
 }

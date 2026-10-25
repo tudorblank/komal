@@ -11,7 +11,7 @@
 //   drag a layer row         reorder (lands on release); pulled out sideways it comes off as a link
 //   drag a linked input      lift the link off (drop on nothing disconnects)
 //   hover a link, click +    insert a node into it
-//   RMB                      node menu / add menu (drag: pan)
+//   RMB                      click: node menu / add menu; hold or drag: zoom
 //   MMB drag, wheel          pan, zoom
 //   Del / X                  delete selection, healing links around it
 //   F / Home                 frame selection / everything;  Ctrl+A select all
@@ -34,11 +34,12 @@
 #include <vector>
 
 class GpuContext;
+struct InputFrame;
 class Project;
 
 class GraphPanel {
 public:
-    void init(GpuContext& gpu, Project& project);
+    void init(GpuContext& gpu, Project& project, const InputFrame& input);
     void shutdown();
     void setUiScale(float scale) { m_uiScale = scale; }
     void draw(bool* open);
@@ -129,6 +130,7 @@ private:
     void drawPopups();
 
     Project*    m_project = nullptr;
+    const InputFrame* m_input = nullptr;   // keys and modifiers, straight from SDL
     int         m_subscription = 0;
     const ImGuiWindow* m_window = nullptr;   // this frame's, while the graph is shown
     ImVec2      m_canvasMin{};
@@ -172,7 +174,10 @@ private:
         int      at     = -1;          // that gap: a position among the other layers
     } m_layerDrag;
     int    m_hoveredLink = -1;    // last frame's, for the insert button
-    bool   m_rightDown = false, m_rightDragged = false;
+    bool   m_rightDown = false;       // a right press on the panel is in progress
+    bool   m_rightZooming = false;    // ... held or dragged: it zooms, no menu on release
+    ImVec2 m_rightPress;              // where (screen): the zoom's anchor
+    double m_rightPressAt = 0.0;
     NodeId m_contextNode = kNoNodeId;
     PendingAdd m_pendingAdd;
     ValueEdit  m_edit;

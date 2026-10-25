@@ -22,17 +22,15 @@ void ToolManager::select(Tool& tool, Project& project)
     m_selected = &tool;
 }
 
-void ToolManager::handleShortcuts(Project& project)
+void ToolManager::handleShortcuts(Project& project, const InputFrame& input, bool typing)
 {
-    const ImGuiIO& io = ImGui::GetIO();
-    if (io.WantTextInput || io.KeyCtrl || io.KeyAlt || io.KeySuper || io.KeyShift) return;
-    if (active().busy()) return;   // never switch under a stroke or a drag
+    if (typing || active().busy()) return;   // never switch under a stroke or a drag
     for (const auto& t : m_tools)
-        if (ImGui::IsKeyPressed(t->shortcut(), false)) select(*t, project);
-    if (ImGui::IsKeyPressed(ImGuiKey_E, false)) {
+        if (input.pressed({ t->shortcut() })) select(*t, project);
+    if (input.pressed({ SDLK_E })) {
         select(*m_brush, project);
         m_brush->setErase(true);
-    } else if (ImGui::IsKeyPressed(ImGuiKey_B, false)) {
+    } else if (input.pressed({ SDLK_B })) {
         m_brush->setErase(false);
     }
 }

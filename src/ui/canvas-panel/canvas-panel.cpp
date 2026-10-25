@@ -24,10 +24,11 @@ constexpr float kZTool     = 20.0f;
 
 } // namespace
 
-bool CanvasPanel::init(GpuContext& gpu, Project& project, ToolManager& tools)
+bool CanvasPanel::init(GpuContext& gpu, Project& project, ToolManager& tools, const InputFrame& input)
 {
     m_project = &project;
     m_tools   = &tools;
+    m_input   = &input;
     m_ready = m_scene.init(GfxContext{ gpu.device(), gpu.queue(), kFormat }) && m_view.init(m_scene);
     if (!m_ready) return false;
 
@@ -62,6 +63,8 @@ void CanvasPanel::shutdown()
     m_previewFrom  = nullptr;
     m_previewTo    = nullptr;
     m_toolOverlay = nullptr;
+    m_cursorOverride = nullptr;
+    m_ringCursors.clear();
     if (m_tools) m_tools->canvas() = {};
     m_ready = false;
 }
@@ -70,6 +73,7 @@ void CanvasPanel::draw(bool* open)
 {
     m_visible = false;
     m_window  = nullptr;
+    m_cursorOverride = nullptr;
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     const bool shown = ImGui::Begin("Canvas", open, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
@@ -123,7 +127,7 @@ void CanvasPanel::handleInput(const ImVec2& origin)
 
     // Navigation that works whatever the tool.
     if (hovered && (io.MouseWheel != 0.0f || io.MouseWheelH != 0.0f)) {
-        if (io.KeyCtrl) {
+        if (m_input->mods & ModPrimary) {
             cam.zoomAt(mouse, std::pow(kZoomStep, io.MouseWheel));
         } else {
             cam.pan.x += io.MouseWheelH * kWheelPanStep;
@@ -134,14 +138,24 @@ void CanvasPanel::handleInput(const ImVec2& origin)
         cam.pan.x += io.MouseDelta.x;
         cam.pan.y += io.MouseDelta.y;
     }
-    m_tools->setSpringHand((hovered || active) && !io.WantTextInput && ImGui::IsKeyDown(ImGuiKey_Space));
+    m_tools->setSpringHand((hovered || active) && !io.WantTextInput && m_input->isDown(SDLK_SPACE));
 
-    // The rest is the tool's.
-    m_trail.clear();
-    for (const ImVec2& p : m_tools->mouseTrail()) m_trail.push_back(cam.screenToWorld({ p.x - origin.x, p.y - origin.y }));
+    // The rest is the tool's. ImGui decides whether the pointer is the canvas's this frame; the
+    // events themselves come straight from SDL (every sample, pen pressure and tilt).
     Tool& tool = m_tools->active();
-    tool.canvasInput({ *m_project, cam, mouse, cam.screenToWorld(mouse), m_trail, { m_view.width(), m_view.height() }, hovered, active });
-    if (hovered || active) ImGui::SetMouseCursor(tool.cursor());
+    m_pointer.clear();
+    if (hovered || active || tool.busy())   // busy: a stroke still gets its release outside the canvas
+        for (const PointerEvent& ev : m_input->pointer)
+            m_pointer.push_back({ ev, cam.screenToWorld({ ev.x - origin.x, ev.y - origin.y }) });
+    tool.canvasInput({ *m_project, cam, mouse, cam.screenToWorld(mouse), m_pointer, *m_input,
+                       { m_view.width(), m_view.height() }, hovered, active });
+    // The cursor: a system-drawn ring where the tool has one (no frame of lag), else its ImGui cursor.
+    if (hovered || active) {
+        float radius = 0.0f;
+        bool erase = false;
+        if (tool.cursorRing(cam.zoom, radius, erase)) m_cursorOverride = m_ringCursors.get(radius, erase);
+        ImGui::SetMouseCursor(m_cursorOverride ? ImGuiMouseCursor_Arrow : tool.cursor());
+    }
 }
 
 void CanvasPanel::updatePreview()

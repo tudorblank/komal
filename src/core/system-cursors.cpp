@@ -88,6 +88,15 @@ SDL_Cursor* cursorFromImage(const XcursorImage* img)
 
 void SystemCursors::init(SDL_Window* window)
 {
+    loadThemeCursors(window);   // X11 only
+    for (int i = 0; i < kCount; ++i)
+        if (!m_cursors[i]) m_cursors[i] = SDL_CreateSystemCursor(kSystem[i]);
+    m_active = true;
+    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;   // we drive the cursor, everywhere
+}
+
+void SystemCursors::loadThemeCursors(SDL_Window* window)
+{
     const char* driver = SDL_GetCurrentVideoDriver();
     if (!driver || std::strcmp(driver, "x11") != 0)
         return;
@@ -124,11 +133,7 @@ void SystemCursors::init(SDL_Window* window)
             for (const char* name : kNames[i])
                 if (name && !m_cursors[i])
                     m_cursors[i] = load(name);
-            if (!m_cursors[i])
-                m_cursors[i] = SDL_CreateSystemCursor(kSystem[i]);
         }
-        m_active = true;
-        ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;   // we drive the cursor
     }
     SDL_UnloadObject(lib);   // the cursors are plain SDL cursors now
 }
@@ -147,6 +152,17 @@ void SystemCursors::shutdown()
 void SystemCursors::update()
 {
     if (!m_active) return;
+    if (m_custom) {   // a cursor made for this frame (a brush outline) wins over ImGui's
+        if (m_shownCustom != m_custom) {
+            SDL_SetCursor(m_custom);
+            SDL_ShowCursor();
+            m_shownCustom = m_custom;
+            m_current = -2;   // ImGui's cursor is set again once the custom one goes
+        }
+        m_custom = nullptr;   // per frame
+        return;
+    }
+    m_shownCustom = nullptr;
     const ImGuiMouseCursor wanted = ImGui::GetIO().MouseDrawCursor ? ImGuiMouseCursor_None : ImGui::GetMouseCursor();
     if (wanted == m_current) return;
     m_current = wanted;

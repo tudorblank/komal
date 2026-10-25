@@ -2,6 +2,7 @@
 #include "core/project.h"
 #include "ui/tools/tool-manager.h"
 
+#include <SDL3/SDL_keyboard.h>
 #include <imgui.h>
 #include <algorithm>
 
@@ -16,7 +17,7 @@ void noTabBar()
     ImGui::SetNextWindowClass(&wc);
 }
 
-const char* keyName(ImGuiKey key) { return ImGui::GetKeyName(key); }
+const char* keyName(SDL_Keycode key) { return SDL_GetKeyName(key); }
 
 } // namespace
 

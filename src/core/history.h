@@ -2,18 +2,24 @@
 #include "raster/raster-data.h"
 
 #include <functional>
-#include <utility>
 #include <vector>
 
-// One user action: the tile deltas of every raster it touched.
-using RasterSteps = std::vector<std::pair<RasterId, TileDelta>>;
+// per-raster history step (ref)
+struct RasterCommitRef {
+    RasterId       raster = kNoRasterId;
+    RasterCommitId commit = kNoRasterCommit;
+};
 
-// Undo tree (branches are kept: undoing then making a new edit starts a sibling branch).
-// Moving to any node undoes up to the common ancestor and redoes down to the target.
+// global step
+struct HistoryStep {
+    std::vector<RasterCommitRef> rasterCommits;
+    bool empty() const { return rasterCommits.empty(); }
+};
+
 class History {
 public:
-    // Must swap `delta` into raster `id` (applyStep) and notify whoever shows it.
-    using ApplyFn = std::function<void(RasterId id, TileDelta& delta)>;
+    // Undoes the commit if it is applied, redoes it if not: a commit flips both ways.
+    using FlipRaster = std::function<void(const RasterCommitRef& commit)>;
 
     History() { m_nodes.emplace_back(); }   // node 0 = the initial state
 
@@ -21,13 +27,11 @@ public:
     bool canUndo() const { return m_current != 0; }
     bool canRedo() const { return m_nodes[m_current].redoChild != kNone; }
 
-    // Records an action; no-op actions are dropped, so undo never "does nothing".
-    bool push(RasterSteps steps);
-    void goTo(uint32_t target, const ApplyFn& apply);
-    bool undo(const ApplyFn& apply);
-    bool redo(const ApplyFn& apply);   // follows the branch most recently undone or made
-
-    size_t bytes() const;
+    // Records an action; empty ones are dropped, so undo never "does nothing".
+    bool push(HistoryStep step);
+    void goTo(uint32_t target, const FlipRaster& flip);
+    bool undo(const FlipRaster& flip);
+    bool redo(const FlipRaster& flip);   // follows the branch most recently undone or made
 
 private:
     static constexpr uint32_t kNone = 0xFFFFFFFFu;
@@ -36,11 +40,10 @@ private:
         uint32_t depth = 0;
         uint32_t redoChild = kNone;
         std::vector<uint32_t> children;
-        RasterSteps steps;
-        size_t bytes = 0;
+        HistoryStep step;
     };
 
-    void flip(uint32_t id, const ApplyFn& apply);   // apply and unapply are the same swap
+    void apply(uint32_t id, bool forward, const FlipRaster& flip);   // forward: redo order; else undo order
 
     std::vector<Node> m_nodes;
     uint32_t m_current = 0;

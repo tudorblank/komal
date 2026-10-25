@@ -1,20 +1,29 @@
 #pragma once
 // Brush strokes: dabs accumulate in a scratch raster (coverage only), which is then applied
-// over the pixels as they were before the stroke. Re-applying from the pre-stroke pixels
-// every time means stroke opacity is applied exactly once, however many dabs overlap, and
-// Over (paint) / Erase are the ordinary TileEdit::apply modes.
+// over the raster's committed pixels into its draft. The committed pixels stay as they were
+// before the stroke until it is committed, so re-applying from them every time means stroke
+// opacity is applied exactly once, however many dabs overlap, and Over (paint) / Erase are the
+// ordinary TileEdit::apply modes.
 //
-//   stroke.begin(params, x, y);    // first dab
-//   stroke.moveTo(x, y);           // dabs along the segment, spaced by params.spacing
-//   applyStroke(editor, stroke, stroke.takeDirty(), originalTileFn);
+//   stroke.begin(params, point);                       // first dab
+//   stroke.moveTo(point);                              // dabs along the segment, spaced by params.spacing
+//   applyStroke(raster, stroke, stroke.takeDirty());   // into the raster's draft
 //   ...
 //   stroke.end();
+//   raster.commitDraft();                              // one commit in the raster's history
+//
+// Each point has a pressure (a pen's; 1 for a mouse) that can scale the dab's size and its
+// flow (BrushParams::pressureSize / pressureFlow), interpolated along every segment.
 
 #include "raster/raster-data.h"
 
-#include <functional>
+#include <memory>
+#include <vector>
 
-struct StrokePoint { float x, y; };   // world (pixel) coordinates
+struct StrokePoint {
+    float x = 0.0f, y = 0.0f;   // world (pixel) coordinates
+    float pressure = 1.0f;      // 0..1
+};
 
 struct BrushParams {
     float         diameter  = 8.0f;    // pixels
@@ -26,12 +35,14 @@ struct BrushParams {
     uint8_t       opacity   = 255;     // applied once to the whole stroke
     CompositeMode mode      = CompositeMode::Over;      // Over paints, Erase erases
     bool          keepAlpha = false;   // lock transparency: colour changes, alpha never (Erase does nothing)
+    bool          pressureSize = true;    // pressure scales the diameter
+    bool          pressureFlow = false;   // pressure scales the flow
 };
 
 class BrushStroke {
 public:
-    void begin(const BrushParams& params, float x, float y);   // world (pixel) coordinates
-    void moveTo(float x, float y);
+    void begin(const BrushParams& params, StrokePoint at);
+    void moveTo(StrokePoint to);
     void end();   // drops the scratch
     bool active() const { return m_active; }
     const BrushParams& params() const { return m_params; }
@@ -43,22 +54,31 @@ public:
     bool composeTile(Tile& out, const Tile* original, int tx, int ty) const;
 
 private:
-    void buildDabTable();
-    void stampDab(float cx, float cy);
-    float coverage(float distance) const;   // 0..1 at a pixel centre this far from the dab centre
+    static constexpr int kDabTable  = 4096;
+    static constexpr int kSizeLevels = 64;   // pressure steps of the diameter
 
-    static constexpr int kDabTable = 4096;
+    // One dab size: coverage * flow (0..255) by squared distance from the centre, so stamping
+    // needs no sqrt or smoothstep per pixel. Built on first use, one per size level.
+    struct DabShape {
+        float radius  = 0.0f;   // reach, rim included
+        float toIndex = 0.0f;   // squared distance -> table index
+        float hardR2  = 0.0f;   // not antialiased: inside where d^2 <= this
+        float table[kDabTable + 1];
+    };
+
+    int   sizeLevel(float pressure) const;
+    float diameterAt(float pressure) const;
+    const DabShape& dabShape(int level);
+    void  stampDab(float cx, float cy, float pressure);
+    float coverage(float distance, float diameter) const;   // 0..1 at a pixel centre this far from the dab centre
 
     BrushParams m_params;
-    float    m_dabTable[kDabTable + 1] = {};   // coverage * flow (0..255) by squared distance (see buildDabTable)
-    float    m_dabToIndex = 0;
-    float    m_dabRadius  = 0;
-    float    m_hardR2     = 0;    // not antialiased: inside where d^2 <= this
-    uint8_t  m_flowK      = 0;
+    std::vector<std::unique_ptr<DabShape>> m_shapes;   // by size level
+    uint8_t  m_flowK = 0;
     RGBA     m_color{};          // premultiplied stroke colour
     TileGrid m_scratch;          // the stroke so far
     TileSet  m_dirty;
-    float    m_lastX = 0, m_lastY = 0;
+    StrokePoint m_last;
     float    m_sinceDab = 0;     // distance travelled since the last dab
     bool     m_active = false;
     mutable std::unique_ptr<Tile> m_colored = std::make_unique<Tile>();   // composeTile scratch
@@ -66,5 +86,5 @@ private:
 
 // Re-applies `stroke` to `tiles` of the raster being edited. original(tx, ty) must return the
 // tile as it was before the stroke began (nullptr if it didn't exist).
-void applyStroke(RasterEditor& ed, const BrushStroke& stroke, const TileSet& tiles,
-                 const std::function<const Tile*(int tx, int ty)>& original);
+// Recomposes `tiles` of the raster's draft: its committed pixels with the stroke applied.
+void applyStroke(RasterData& raster, const BrushStroke& stroke, const TileSet& tiles);

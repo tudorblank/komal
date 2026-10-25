@@ -10,7 +10,7 @@
 //
 // open() may be called from any thread: the native file dialog answers on its own thread.
 
-#include "core/image-file.h"
+#include "core/image-load.h"
 #include "core/project.h"
 #include "raster/tile-grid.h"
 

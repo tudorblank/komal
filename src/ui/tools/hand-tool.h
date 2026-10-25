@@ -5,7 +5,7 @@
 class HandTool : public Tool {
 public:
     const char* name() const override { return "Hand"; }
-    ImGuiKey    shortcut() const override { return ImGuiKey_H; }
+    SDL_Keycode shortcut() const override { return SDLK_H; }
     void drawIcon(ImDrawList* dl, ImVec2 center, float size, ImU32 color) const override;
 
     void drawProperties(ToolContext& ctx) override;

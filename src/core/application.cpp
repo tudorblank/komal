@@ -13,11 +13,6 @@
 
 namespace {
 
-// ImGui works in window coordinates and the SDL3 backend maps those to pixels itself
-// (DisplayFramebufferScale), so sizes only need the remaining "content" part of the display
-// scale: Xft.dpi / Windows scaling on X11 and Win32, ~1.0 on Wayland and macOS where the
-// window is already measured in logical units. Using the full display scale there would
-// apply HiDPI twice.
 float contentScale(SDL_Window* window)
 {
     const float display = SDL_GetWindowDisplayScale(window);
@@ -25,16 +20,15 @@ float contentScale(SDL_Window* window)
     return (display > 0.0f && density > 0.0f) ? display / density : 1.0f;
 }
 
-} // namespace
+}
 
 Application::~Application() { shutdown(); }
 
 bool Application::init(const char* title, int width, int height)
 {
 #if defined(__linux__)
-    // Prefer X11 (XWayland on KDE Wayland): NVIDIA + Vulkan swapchains pace much
-    // better there. Falls back to Wayland if X11 is unavailable.
-    // Override with: SDL_VIDEO_DRIVER=wayland ./Komal
+    // prefer X11 (XWayland on KDE Wayland) [swapchains pace much better there]
+    // fallback: Wayland if X11 is unavailable.
     if (!SDL_getenv("SDL_VIDEO_DRIVER"))
         SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11,wayland");
 #endif
@@ -45,9 +39,11 @@ bool Application::init(const char* title, int width, int height)
     }
 
     SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+
 #if defined(__APPLE__)
-    flags |= SDL_WINDOW_METAL;   // the wgpu surface is a CAMetalLayer (see surface-factory)
+    flags |= SDL_WINDOW_METAL; // wgpu surface is a CAMetalLayer
 #endif
+
     m_window = SDL_CreateWindow(title, width, height, flags);
     if (!m_window) {
         std::fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
@@ -57,15 +53,19 @@ bool Application::init(const char* title, int width, int height)
     if (!m_gpu.init(m_window))
         return false;
 
-    // ---- Dear ImGui
+    // ---- ImGui ---- //
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    // The layout lives in the per-user settings folder, wherever the app is started from (a
-    // macOS app or a Windows shortcut doesn't start in a writable folder):
-    //   Linux ~/.local/share/Komal/   Windows %APPDATA%\Komal\   macOS ~/Library/Application Support/Komal/
+
+    // ---- config ---- //
+
+    // Linux ~/.local/share/Komal/
+    // Windows %APPDATA%\Komal\ 
+    // macOS ~/Library/Application Support/Komal/
+    
     if (char* dir = SDL_GetPrefPath(nullptr, "Komal")) {
         m_iniPath = std::string(dir) + "imgui.ini";
         SDL_free(dir);
@@ -73,7 +73,7 @@ bool Application::init(const char* title, int width, int height)
         m_iniPath = "imgui.ini";
     }
     io.IniFilename = m_iniPath.c_str();
-    io.ConfigInputTrickleEventQueue = false;   // see processEvents()
+    io.ConfigInputTrickleEventQueue = false;
 
     loadUiFonts();
 
@@ -101,7 +101,7 @@ bool Application::init(const char* title, int width, int height)
     m_imguiReady = true;
     m_project.init();
     m_userInterface.setWindow(m_window);
-    if (!m_userInterface.init(m_gpu, m_project))
+    if (!m_userInterface.init(m_gpu, m_project, m_input.frame()))
         std::fprintf(stderr, "UserInterface init failed (canvas viewport disabled)\n");
     applyContentScale();
     m_running = true;
@@ -123,15 +123,14 @@ int Application::exec()
 
 void Application::processEvents()
 {
-    // ImGui's own input trickling is off (see init): with a fast mouse and a wheel or touchpad
-    // scroll at once, it handled one alternation of event types per frame and the queue grew
-    // without bound, so input lagged further and further behind. All events of a frame are
-    // taken at once instead; only a release that arrives in the same batch as its press is
-    // held back a frame, so a click or key tap shorter than a frame is never lost.
-    std::vector<SDL_Event> events = std::exchange(m_heldBack, {});
+    m_input.beginFrame();
+    std::vector<SDL_Event> events = std::exchange(m_imguiDeferredReleases, {});
     const size_t carried = events.size();
     SDL_Event e;
-    while (SDL_PollEvent(&e)) events.push_back(e);
+    while (SDL_PollEvent(&e)) {
+        m_input.handle(e);
+        events.push_back(e);
+    }
 
     uint32_t pressedButtons = 0;
     std::vector<SDL_Keycode> pressedKeys;
@@ -142,7 +141,7 @@ void Application::processEvents()
             if (ev.type == SDL_EVENT_KEY_DOWN) pressedKeys.push_back(ev.key.key);
             if ((ev.type == SDL_EVENT_MOUSE_BUTTON_UP && (pressedButtons & (1u << ev.button.button))) ||
                 (ev.type == SDL_EVENT_KEY_UP && std::find(pressedKeys.begin(), pressedKeys.end(), ev.key.key) != pressedKeys.end())) {
-                m_heldBack.push_back(ev);
+                m_imguiDeferredReleases.push_back(ev);
                 continue;
             }
         }
@@ -154,8 +153,6 @@ void Application::handleEvent(const SDL_Event& e)
 {
     ImGui_ImplSDL3_ProcessEvent(&e);
 
-    if (e.type == SDL_EVENT_MOUSE_MOTION)
-        m_userInterface.addMouseSample(e.motion.x, e.motion.y);   // every sample, not just the frame's last
     if (e.type == SDL_EVENT_QUIT)
         m_running = false;
     if (e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
@@ -163,8 +160,12 @@ void Application::handleEvent(const SDL_Event& e)
         m_running = false;
     if (e.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED)
         applyContentScale();
-    if (e.type == SDL_EVENT_DROP_FILE && e.drop.data)
-        m_userInterface.dropFile(e.drop.data, e.drop.x, e.drop.y);   // imported if it lands on the canvas or the graph
+    if (e.type == SDL_EVENT_DROP_FILE && e.drop.data) {
+        if (e.drop.windowID == 0)
+            m_userInterface.openFile(e.drop.data);   // opened with the app (macOS Finder, Dock icon): no window, no position
+        else
+            m_userInterface.dropFile(e.drop.data, e.drop.x, e.drop.y);   // imported if it lands on the canvas or the graph
+    }
 }
 
 void Application::applyContentScale()
@@ -185,8 +186,7 @@ void Application::renderFrame()
     const double freq = (double)SDL_GetPerformanceFrequency();
     const Uint64 t0 = SDL_GetPerformanceCounter();
 
-    // Wait for the swapchain *before* reading input: with vsync this is where the frame
-    // blocks, and every millisecond spent here would otherwise be added to input latency.
+    // wait for the swapchain BEFORE reading input
     Frame frame;
     const bool acquired = m_gpu.acquire(frame);
     const Uint64 t1 = SDL_GetPerformanceCounter();
@@ -197,8 +197,8 @@ void Application::renderFrame()
 
     ImGui_ImplWGPU_NewFrame();
     ImGui_ImplSDL3_NewFrame();
-    // Lay out for the image we actually hold: if the window was resized while we waited,
-    // the new size is picked up next frame instead of overrunning this frame's target.
+    
+    // layout
     ImGuiIO& io = ImGui::GetIO();
     io.DisplaySize = ImVec2((float)frame.width  / io.DisplayFramebufferScale.x,
                             (float)frame.height / io.DisplayFramebufferScale.y);
@@ -208,9 +208,10 @@ void Application::renderFrame()
     m_userInterface.draw();
 
     ImGui::Render();
+    m_cursors.setCustom(m_userInterface.cursorOverride());
     m_cursors.update();
 
-    // offscreen passes first, in the same encoder: they finish before the surface pass samples them
+    // offscreen passes first, in the same encoder
     m_userInterface.renderGpu(frame.encoder);
 
     const float clear[4] = { 0.10f, 0.10f, 0.12f, 1.0f };

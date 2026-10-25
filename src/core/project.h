@@ -1,16 +1,7 @@
 #pragma once
-// The document: rasters, the node graph, the master output and undo history.
-//
-// Every edit goes through here, from two places with different powers:
-//   node editor / inspector  global changes: create, wire, delete nodes, shape signals, masks
-//   viewport                 local, raw pixel changes, only ever on the active raster root
-// Afterwards the Project notifies subscribers (the Qt-signal role). Panels are immediate-mode
-// and read the current state every frame, so events are for what they keep between frames
-// (placement, selection) and for things to react to. Pixels reach the GPU separately: the
-// graph marks tiles dirty and the master compositor hands them to the viewport.
 
 #include "core/history.h"
-#include "core/image-file.h"
+#include "core/image-load.h"
 #include "node/node-types.h"
 #include "raster/brush.h"
 
@@ -137,26 +128,21 @@ public:
     const EditPreview& preview() const { return m_preview; }
 
     // ---- brush strokes on the active raster (viewport). Dabs go into the Project's scratch
-    // raster and are re-applied over the pre-stroke pixels every call; the raster, the graph
-    // and the viewport update live. One stroke = one undo step.
-    void beginStroke(const BrushParams& params, float x, float y);
-    void strokeTo(float x, float y) { const StrokePoint p{ x, y }; strokeTo({ &p, 1 }); }
+    // stroke and are recomposed over the raster's committed pixels into its draft every call:
+    // the graph and the viewport update live, the committed pixels stay untouched. endStroke()
+    // commits the draft (one commit in the raster's own history, one step in the project's).
+    void beginStroke(const BrushParams& params, StrokePoint at);
     void strokeTo(std::span<const StrokePoint> path);   // through every point, applied once
     void endStroke();
     bool strokeActive() const { return m_stroke.active(); }
 
-    // ---- raw raster edits on the active raster. Edits between begin and end become one undo
-    // step; an edit outside a begin/end pair is its own step.
-    void        beginRasterEdit();
-    EditSummary editActiveRaster(const std::function<void(RasterEditor&)>& body);
-    void        endRasterEdit();
-    bool        rasterEditOpen() const { return m_editOpen; }
-
-    bool canUndo() const { return !m_editOpen && m_history.canUndo(); }
-    bool canRedo() const { return !m_editOpen && m_history.canRedo(); }
+    // ---- history: one step per user action. Raster pixels live in each raster's own commits
+    // (RasterData::history()); a step refers to the commits it made.
+    bool canUndo() const { return !m_stroke.active() && m_history.canUndo(); }
+    bool canRedo() const { return !m_stroke.active() && m_history.canRedo(); }
     bool undo();
     bool redo();
-    size_t historyBytes() const { return m_history.bytes(); }
+    size_t historyBytes() const;   // what the rasters keep for undo
 
     // ---- events (delivered synchronously, in subscription order)
     using Listener = std::function<void(const ProjectEvent&)>;
@@ -169,9 +155,9 @@ private:
     bool activeRasterEditable() const;
     RasterRootNode* rasterNode(RasterId id) const;
     void emit(ProjectEventType t, NodeId n = kNoNodeId);
-    void commitPendingEdits();
     void applyStrokeChanges();
-    const Tile* tileBeforeEdit(const RasterRootNode& r, int tx, int ty) const;
+    RasterRootNode* strokeRaster() const;
+    void flipRasterCommit(const RasterCommitRef& c);
 
     // Declared first, destroyed last: raster root nodes point into it.
     std::deque<RasterData> m_rasters;   // RasterId == index; kept for history after node deletion
@@ -184,14 +170,9 @@ private:
     NodeId   m_nextNodeId = 1;
     uint32_t m_rasterLabel = 0;   // "Raster N", never reused
 
-    struct PendingStep {
-        TileDelta delta;
-        absl::flat_hash_map<TileKey, size_t> index;   // tile -> its entry; the earliest snapshot wins
-    };
-    bool m_editOpen = false;
-    absl::flat_hash_map<RasterId, PendingStep> m_pending;
     History m_history;
-    BrushStroke m_stroke;   // the scratch raster strokes are painted into
+    BrushStroke m_stroke;          // the scratch strokes are painted into
+    NodeId m_strokeNode = kNoNodeId;   // the raster it paints into
 
     EditPreview m_preview;
 

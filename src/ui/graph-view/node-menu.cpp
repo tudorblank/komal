@@ -61,6 +61,8 @@ bool NodeMenu::draw(NodeType& picked)
         if (m_fit == Fit::NeedsInput && !t.hasInput) continue;   // every type has an output
         if (matches(t.name, m_search)) items.push_back(&t);
     }
+    // Keys of the search field below: ImGui's, as it owns the text focus (app shortcuts come
+    // from InputFrame).
     if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) ++m_highlight;
     if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))   --m_highlight;
     m_highlight = items.empty() ? 0 : (m_highlight + int(items.size())) % int(items.size());

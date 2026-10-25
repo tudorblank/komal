@@ -190,6 +190,7 @@ bool Project::deleteNodes(const std::vector<NodeId>& ids)
         if (!isMaster(id) && find(id)) doomed.insert(id);
     if (doomed.empty()) return false;
     if (doomed.contains(m_preview.node)) cancelPreview();
+    if (doomed.contains(m_strokeNode)) endStroke();   // committed while its node is still there
 
     // Re-feed every slot of a surviving node that a doomed node fed, before anything is
     // removed (stack indices are still valid, and nothing is removed from a stack here).
@@ -233,8 +234,6 @@ bool Project::deleteNodes(const std::vector<NodeId>& ids)
         NodeId next = kNoNodeId;
         for (auto r = m_order.rbegin(); r != m_order.rend(); ++r)
             if ((*r)->m_meta.type == NodeType::Raster) { next = (*r)->m_meta.id; break; }
-        if (m_stroke.active()) m_stroke.end();
-        if (m_editOpen) endRasterEdit();
         m_active = kNoNodeId;
         setActiveRaster(next);
         if (next == kNoNodeId) emit(ProjectEventType::ActiveRasterChanged);
@@ -265,10 +264,7 @@ void Project::setRasterLocked(NodeId id, bool locked)
     if (!n || n->m_meta.type != NodeType::Raster) return;
     auto* r = static_cast<RasterRootNode*>(n);
     if (r->locked() == locked) return;
-    if (locked && id == m_active) {   // finish what is going on before the door closes
-        if (m_stroke.active()) endStroke();
-        if (m_editOpen) endRasterEdit();
-    }
+    if (locked && id == m_strokeNode) endStroke();   // finish what is going on before the door closes
     r->setLocked(locked);
     emit(ProjectEventType::NodeChanged, id);
 }
@@ -279,7 +275,7 @@ void Project::setRasterAlphaLocked(NodeId id, bool locked)
     if (!n || n->m_meta.type != NodeType::Raster) return;
     auto* r = static_cast<RasterRootNode*>(n);
     if (r->alphaLocked() == locked) return;
-    if (id == m_active && m_stroke.active()) endStroke();   // a stroke keeps the rule it started with
+    if (id == m_strokeNode) endStroke();   // a stroke keeps the rule it started with
     r->setAlphaLocked(locked);
     emit(ProjectEventType::NodeChanged, id);
 }
@@ -295,8 +291,7 @@ void Project::setActiveRaster(NodeId id)
     Node* n = find(id);
     if (id != kNoNodeId && (!n || n->m_meta.type != NodeType::Raster)) return;
     if (m_active == id) return;
-    if (m_stroke.active()) endStroke();   // a stroke can't continue on another raster
-    if (m_editOpen) endRasterEdit();
+    endStroke();   // a stroke can't continue on another raster
     m_active = id;
     emit(ProjectEventType::ActiveRasterChanged, id);
 }
@@ -433,14 +428,14 @@ void Project::cancelPreview()
 
 // ---------------------------------------------------------------- raster edits
 
-void Project::beginStroke(const BrushParams& params, float x, float y)
+void Project::beginStroke(const BrushParams& params, StrokePoint at)
 {
     if (!activeRasterEditable()) return;
-    if (m_stroke.active()) endStroke();
-    beginRasterEdit();
+    endStroke();
     BrushParams p = params;
     p.keepAlpha = activeRaster()->alphaLocked();
-    m_stroke.begin(p, x, y);
+    m_strokeNode = m_active;
+    m_stroke.begin(p, at);
     applyStrokeChanges();
 }
 
@@ -448,7 +443,7 @@ void Project::strokeTo(std::span<const StrokePoint> path)
 {
     if (!m_stroke.active() || path.empty()) return;
     PerfScope perf(Perf::Stroke);
-    for (const StrokePoint& p : path) m_stroke.moveTo(p.x, p.y);
+    for (const StrokePoint& p : path) m_stroke.moveTo(p);
     applyStrokeChanges();
 }
 
@@ -456,75 +451,43 @@ void Project::endStroke()
 {
     if (!m_stroke.active()) return;
     m_stroke.end();
-    endRasterEdit();
+    RasterRootNode* r = strokeRaster();
+    m_strokeNode = kNoNodeId;
+    if (!r) return;
+    const RasterCommitId commit = r->commitDraft();
+    if (commit != kNoRasterCommit && m_history.push({ { { r->raster().id(), commit } } }))
+        emit(ProjectEventType::HistoryChanged);
 }
 
-const Tile* Project::tileBeforeEdit(const RasterRootNode& r, int tx, int ty) const
+RasterRootNode* Project::strokeRaster() const
 {
-    // Touched earlier in this undo step: its snapshot is the state before. Otherwise the
-    // raster still holds it unchanged.
-    if (auto p = m_pending.find(r.raster().id()); p != m_pending.end())
-        if (auto e = p->second.index.find(TileUtils::packKey(tx, ty)); e != p->second.index.end())
-            return p->second.delta.entries[e->second].state.get();
-    return r.raster().getReadTile(tx, ty);
+    return static_cast<RasterRootNode*>(find(m_strokeNode));   // only ever names a raster root
 }
 
 void Project::applyStrokeChanges()
 {
     PerfScope perf(Perf::Stroke);
     const TileSet tiles = m_stroke.takeDirty();
-    RasterRootNode* r = activeRaster();
+    RasterRootNode* r = strokeRaster();
     if (tiles.empty() || !r) return;
-    editActiveRaster([&](RasterEditor& ed) {
-        applyStroke(ed, m_stroke, tiles, [&](int tx, int ty) { return tileBeforeEdit(*r, tx, ty); });
+    r->draft([&](RasterData& raster) {
+        applyStroke(raster, m_stroke, tiles);
+        return tiles;
     });
+    emit(ProjectEventType::RasterEdited, m_strokeNode);
 }
 
-void Project::beginRasterEdit()
+size_t Project::historyBytes() const
 {
-    if (m_editOpen) commitPendingEdits();
-    m_editOpen = true;
-}
-
-EditSummary Project::editActiveRaster(const std::function<void(RasterEditor&)>& body)
-{
-    RasterRootNode* r = activeRaster();
-    if (!r || r->locked()) return {};
-
-    TileDelta delta;
-    EditSummary s = r->edit(body, &delta);
-
-    PendingStep& p = m_pending[r->raster().id()];
-    for (TileDelta::Entry& e : delta.entries)
-        if (p.index.try_emplace(e.key, p.delta.entries.size()).second) p.delta.entries.push_back(std::move(e));
-
-    if (!s.touched.empty()) emit(ProjectEventType::RasterEdited, m_active);
-    if (!m_editOpen) commitPendingEdits();
-    return s;
-}
-
-void Project::endRasterEdit()
-{
-    m_editOpen = false;
-    commitPendingEdits();
-}
-
-void Project::commitPendingEdits()
-{
-    if (m_pending.empty()) return;
-    RasterSteps steps;
-    for (auto& [rid, p] : m_pending) steps.emplace_back(rid, std::move(p.delta));
-    m_pending.clear();
-    if (m_history.push(std::move(steps))) emit(ProjectEventType::HistoryChanged);
+    size_t n = 0;
+    for (const RasterData& r : m_rasters) n += r.history().bytes();
+    return n;
 }
 
 bool Project::undo()
 {
     if (!canUndo()) return false;
-    m_history.undo([&](RasterId id, TileDelta& d) {
-        if (RasterRootNode* n = rasterNode(id)) { n->applyHistory(d); emit(ProjectEventType::RasterEdited, n->m_meta.id); }
-        else (void)applyStep(m_rasters[id], d);   // its node was deleted: keep the data consistent
-    });
+    m_history.undo([&](const RasterCommitRef& c) { flipRasterCommit(c); });
     emit(ProjectEventType::HistoryChanged);
     return true;
 }
@@ -532,12 +495,19 @@ bool Project::undo()
 bool Project::redo()
 {
     if (!canRedo()) return false;
-    m_history.redo([&](RasterId id, TileDelta& d) {
-        if (RasterRootNode* n = rasterNode(id)) { n->applyHistory(d); emit(ProjectEventType::RasterEdited, n->m_meta.id); }
-        else (void)applyStep(m_rasters[id], d);
-    });
+    m_history.redo([&](const RasterCommitRef& c) { flipRasterCommit(c); });
     emit(ProjectEventType::HistoryChanged);
     return true;
+}
+
+void Project::flipRasterCommit(const RasterCommitRef& c)
+{
+    if (RasterRootNode* n = rasterNode(c.raster)) {
+        n->flip(c.commit);
+        emit(ProjectEventType::RasterEdited, n->m_meta.id);
+    } else {
+        (void)m_rasters[c.raster].flip(c.commit);   // its node was deleted: keep the data consistent
+    }
 }
 
 // ---------------------------------------------------------------- events

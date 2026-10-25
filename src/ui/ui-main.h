@@ -4,17 +4,19 @@
 #include "ui/image-importer.h"
 #include "ui/tools/tool-manager.h"
 #include "ui/tools/toolbox-panel.h"
+#include <absl/container/flat_hash_map.h>
 #include <webgpu/webgpu.h>
 #include <string>
 #include <utility>
 
 class GpuContext;
 class Project;
+struct InputFrame;
 struct SDL_Window;
 
 class UserInterface {
 public:
-    bool init(GpuContext& gpu, Project& project);   // call after ImGui + wgpu are up
+    bool init(GpuContext& gpu, Project& project, const InputFrame& input);   // call after ImGui + wgpu are up
     void shutdown();              // call before they go down
 
     void draw();                                              // ImGui side
@@ -25,11 +27,11 @@ public:
     void setGpuInfo(std::string s) { m_gpuInfo = std::move(s); }
     void setTimings(float acquireMs, float cpuMs) { m_acquireMs = acquireMs; m_cpuMs = cpuMs; }
     void setWindow(SDL_Window* window) { m_window = window; }
+    SDL_Cursor* cursorOverride() const { return m_canvasPanel.cursorOverride(); }   // a tool's system cursor, this frame
     void openFile(std::string path) { m_importer.open(std::move(path)); }   // any thread: File > Import, command line
     // A file dropped on the window at (x, y), window coordinates: imported if it lands on the
     // canvas or the graph, ignored anywhere else (handled once the panels are laid out).
     void dropFile(std::string path, float x, float y) { m_drops.push_back({ std::move(path), ImVec2(x, y) }); }
-    void addMouseSample(float x, float y) { m_tools.addMouseSample(x, y); }
 
 private:
     void drawMenuBar();
@@ -45,9 +47,11 @@ private:
     ToolboxPanel        m_toolbox;
     ToolPropertiesPanel m_toolProperties;
     ImageImporter       m_importer;
+    absl::flat_hash_map<unsigned int, float> m_dockShares;   // dock split -> its first child's share (see drawDockspace)
     struct Drop { std::string path; ImVec2 pos; };
     std::vector<Drop>   m_drops;
     Project*            m_project = nullptr;
+    const InputFrame*   m_input = nullptr;
     SDL_Window*         m_window = nullptr;
 
     bool m_initialized = false;

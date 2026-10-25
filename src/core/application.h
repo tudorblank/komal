@@ -1,4 +1,5 @@
 #pragma once
+#include "core/input.h"
 #include "core/system-cursors.h"
 #include "core/project.h"
 #include "gfx/gpu-context.h"
@@ -15,25 +16,35 @@ public:
     ~Application();
 
     bool init(const char* title, int width, int height);
-    int  exec();                 // runs the main loop, returns exit code
-    void openFile(const char* path) { m_userInterface.openFile(path); }   // imported once running
+    int exec(); // runs the main loop, returns exit code
+    void openFile(const char* path) { m_userInterface.openFile(path); } // imported once running
 
 private:
-    void processEvents();
-    void handleEvent(const SDL_Event& e);
-    void renderFrame();
-    void applyContentScale();
+    // window
+    SDL_Window* m_window = nullptr;
+    bool m_running = false;
     void shutdown();
 
-    SDL_Window* m_window = nullptr;
-    GpuContext  m_gpu;
-    Project     m_project;   // before the window: panels hold references into it
+    // internals
+    GpuContext m_gpu;
+    Project m_project; // for canvas + graph    
+    
+    // imgui
     UserInterface m_userInterface;
+    std::vector<SDL_Event> m_imguiDeferredReleases;
+    std::string m_iniPath; // layout file
+    bool m_imguiReady = false;
+
+    // input / events
+    InputCollector m_input; // SDL-based
+    void processEvents();
+    void handleEvent(const SDL_Event& e);
+
+    // render
+    void applyContentScale();
+    float m_contentScale = 0;
+    void renderFrame();
     SystemCursors m_cursors;
-    bool        m_running = false;
-    bool        m_imguiReady = false;
-    float       m_contentScale = 0;
-    float       m_acquireMs = 0, m_cpuMs = 0;
-    std::vector<SDL_Event> m_heldBack;   // releases held back to the next frame
-    std::string m_iniPath;               // ImGui keeps a pointer to it
+    
+    float m_acquireMs = 0, m_cpuMs = 0;
 };

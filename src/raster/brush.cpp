@@ -14,7 +14,7 @@ int clampWorld(float v)
 
 } // namespace
 
-void BrushStroke::begin(const BrushParams& params, float x, float y)
+void BrushStroke::begin(const BrushParams& params, StrokePoint at)
 {
     end();
     m_params = params;
@@ -22,48 +22,62 @@ void BrushStroke::begin(const BrushParams& params, float x, float y)
     m_params.spacing  = std::max(params.spacing, 0.01f);
     const RGBA c = params.color;
     m_color = canonical({ mul255(c.r, c.a), mul255(c.g, c.a), mul255(c.b, c.a), c.a });   // premultiply
-    buildDabTable();
+    m_flowK = uint8_t(std::clamp(int(m_params.flow * 255.0f + 0.5f), 0, 255));
+    m_shapes.clear();
+    m_shapes.resize(kSizeLevels + 1);
     m_active = true;
-    m_lastX = x;
-    m_lastY = y;
+    m_last = at;
     m_sinceDab = 0;
-    stampDab(x, y);
+    stampDab(at.x, at.y, at.pressure);
 }
 
-void BrushStroke::moveTo(float x, float y)
+void BrushStroke::moveTo(StrokePoint to)
 {
     if (!m_active) return;
-    const float dx = x - m_lastX, dy = y - m_lastY;
+    const float dx = to.x - m_last.x, dy = to.y - m_last.y;
     const float dist = std::sqrt(dx * dx + dy * dy);
-    if (dist <= 0.0f) return;
+    if (dist <= 0.0f) { m_last.pressure = to.pressure; return; }
 
-    // Dabs every `step` pixels along the path; what's left over carries into the next segment,
-    // so spacing stays even however the mouse samples arrive. Never more than half the
-    // diameter apart, so a stroke has no gaps whatever the spacing setting.
-    const float step = std::min(m_params.spacing, 0.5f) * m_params.diameter;
+    // Dabs every `step` pixels along the path, the step following the dab size where it is;
+    // what's left over carries into the next segment, so spacing stays even however the samples
+    // arrive. Never more than half a diameter apart: no gaps whatever the spacing setting.
+    const auto pressureAt = [&](float along) { return m_last.pressure + (to.pressure - m_last.pressure) * (along / dist); };
+    const auto stepAt = [&](float pressure) { return std::max(0.5f, std::min(m_params.spacing, 0.5f) * diameterAt(pressure)); };
     const float ux = dx / dist, uy = dy / dist;
-    float travelled = 0.0f;
-    float need = step - m_sinceDab;
-    while (travelled + need <= dist) {
-        travelled += need;
-        stampDab(m_lastX + ux * travelled, m_lastY + uy * travelled);
-        need = step;
+    float at = 0.0f, since = m_sinceDab;
+    for (;;) {
+        const float next = at + std::max(0.0f, stepAt(pressureAt(at)) - since);
+        if (next > dist) break;
+        at = next;
+        since = 0.0f;
+        stampDab(m_last.x + ux * at, m_last.y + uy * at, pressureAt(at));
+        if (at == dist) break;
     }
-    m_sinceDab = (step - need) + (dist - travelled);
-    m_lastX = x;
-    m_lastY = y;
+    m_sinceDab = since + (dist - at);
+    m_last = to;
 }
 
 void BrushStroke::end()
 {
     m_scratch.clear();
     m_dirty.clear();
+    m_shapes.clear();
     m_active = false;
 }
 
-float BrushStroke::coverage(float d) const
+int BrushStroke::sizeLevel(float pressure) const
 {
-    const float r = m_params.diameter * 0.5f;
+    return m_params.pressureSize ? std::clamp(int(pressure * kSizeLevels + 0.5f), 1, kSizeLevels) : kSizeLevels;
+}
+
+float BrushStroke::diameterAt(float pressure) const
+{
+    return std::max(1.0f, m_params.diameter * float(sizeLevel(pressure)) / kSizeLevels);
+}
+
+float BrushStroke::coverage(float d, float diameter) const
+{
+    const float r = diameter * 0.5f;
     if (!m_params.antialias)
         return d <= std::max(r, 0.5f) ? 1.0f : 0.0f;
     const float inner   = r * std::clamp(m_params.hardness, 0.0f, 1.0f);
@@ -73,29 +87,31 @@ float BrushStroke::coverage(float d) const
     return falloff * edge;
 }
 
-void BrushStroke::buildDabTable()
+const BrushStroke::DabShape& BrushStroke::dabShape(int level)
 {
-    // Coverage (with flow) by squared distance from the dab centre, interpolated: no sqrt or
-    // smoothstep per pixel.
-    m_dabRadius = m_params.diameter * 0.5f + 0.5f;   // + half a pixel: the antialiased rim
-    const int flow = std::clamp(int(m_params.flow * 255.0f + 0.5f), 0, 255);
-    const float r2 = m_dabRadius * m_dabRadius;
-    m_dabToIndex = float(kDabTable - 1) / r2;
-    m_flowK  = uint8_t(flow);
-    m_hardR2 = std::max(m_params.diameter * 0.5f, 0.5f) * std::max(m_params.diameter * 0.5f, 0.5f);
-    for (int i = 0; i < kDabTable; ++i) {
-        const float c = coverage(std::sqrt(float(i) / m_dabToIndex));
-        m_dabTable[i] = c * 255.0f * float(flow) / 255.0f;
-    }
-    m_dabTable[kDabTable] = 0.0f;   // so interpolating at the very edge reads past nothing
+    std::unique_ptr<DabShape>& slot = m_shapes[size_t(level)];
+    if (slot) return *slot;
+    slot = std::make_unique<DabShape>();
+    DabShape& s = *slot;
+    const float diameter = std::max(1.0f, m_params.diameter * float(level) / kSizeLevels);
+    s.radius  = diameter * 0.5f + 0.5f;   // + half a pixel: the antialiased rim
+    s.toIndex = float(kDabTable - 1) / (s.radius * s.radius);
+    s.hardR2  = std::max(diameter * 0.5f, 0.5f) * std::max(diameter * 0.5f, 0.5f);
+    for (int i = 0; i < kDabTable; ++i)
+        s.table[i] = coverage(std::sqrt(float(i) / s.toIndex), diameter) * float(m_flowK);
+    s.table[kDabTable] = 0.0f;   // so interpolating at the very edge reads past nothing
+    return s;
 }
 
-void BrushStroke::stampDab(float cx, float cy)
+void BrushStroke::stampDab(float cx, float cy, float pressure)
 {
-    const float r = m_dabRadius;
+    const float flowScale = m_params.pressureFlow ? std::clamp(pressure, 0.0f, 1.0f) : 1.0f;
+    if (m_flowK == 0 || flowScale <= 0.0f) return;
+    const DabShape& shape = dabShape(sizeLevel(pressure));
+    const float r = shape.radius;
     const BoundsI area{ clampWorld(cx - r), clampWorld(cy - r), clampWorld(cx + r), clampWorld(cy + r) };
-    if (m_params.flow <= 0.0f) return;
     const float r2 = r * r;
+    const int hardK = int(float(m_flowK) * flowScale + 0.5f);
 
     forEachTileSpan(area, [&](const TileSpan& s) {
         Tile* existing = m_scratch.getWriteTile(s.tx, s.ty);
@@ -121,11 +137,11 @@ void BrushStroke::stampDab(float cx, float cy)
                     if (d2 >= r2) continue;
                     int k;
                     if (m_params.antialias) {
-                        const float f = d2 * m_dabToIndex;
+                        const float f = d2 * shape.toIndex;
                         const int   i = int(f);
-                        k = int(m_dabTable[i] + (m_dabTable[i + 1] - m_dabTable[i]) * (f - float(i)) + 0.5f);
+                        k = int((shape.table[i] + (shape.table[i + 1] - shape.table[i]) * (f - float(i))) * flowScale + 0.5f);
                     } else {
-                        k = d2 <= m_hardR2 ? m_flowK : 0;   // a hard edge: exact
+                        k = d2 <= shape.hardR2 ? hardK : 0;   // a hard edge: exact
                     }
                     if (k == 0) continue;
                     const int a = std::min(255, p.a + (k * (255 - p.a) + 127) / 255);   // coverage builds up
@@ -178,15 +194,12 @@ bool BrushStroke::composeTile(Tile& out, const Tile* original, int tx, int ty) c
     return !out.isEmpty();
 }
 
-void applyStroke(RasterEditor& ed, const BrushStroke& stroke, const TileSet& tiles,
-                 const std::function<const Tile*(int tx, int ty)>& original)
+void applyStroke(RasterData& raster, const BrushStroke& stroke, const TileSet& tiles)
 {
     auto composed = std::make_unique<Tile>();
     for (TileKey key : tiles) {
         const auto [tx, ty] = TileUtils::unpackKey(key);
-        if (stroke.composeTile(*composed, original(tx, ty), tx, ty))
-            ed.applyTile(tx, ty, *composed, { 255, CompositeMode::Replace });
-        else
-            ed.eraseTile(tx, ty);   // erased down to nothing
+        const bool any = stroke.composeTile(*composed, raster.committedTile(tx, ty), tx, ty);
+        raster.setDraftTile(tx, ty, any ? composed.get() : nullptr);   // null: erased down to nothing
     }
 }

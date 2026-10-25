@@ -12,10 +12,9 @@ std::shared_ptr<RasterRootNode> RasterRootNode::create(RasterData& r)
     return n;
 }
 
-EditSummary RasterRootNode::edit(const std::function<void(RasterEditor&)>& body, TileDelta* record)
+EditSummary RasterRootNode::edit(const std::function<void(RasterEditor&)>& body)
 {
     RasterEditor ed(*m_raster);
-    if (record) ed.record(record);
     try {
         body(ed);
     } catch (...) {
@@ -27,21 +26,46 @@ EditSummary RasterRootNode::edit(const std::function<void(RasterEditor&)>& body,
     return s;
 }
 
-EditSummary RasterRootNode::applyHistory(TileDelta& step)
+void RasterRootNode::draft(const std::function<TileSet(RasterData&)>& body)
 {
-    EditSummary s = applyStep(*m_raster, step);
-    publish(s);
-    return s;
+    const BoundsI before = m_raster->getBounds();
+    const TileSet changed = body(*m_raster);
+    if (m_raster->getBounds() != before) invalidateBounds();
+    emitDirty(changed, Evict::All);
+}
+
+RasterCommitId RasterRootNode::commitDraft()
+{
+    // What the raster shows doesn't change (it already showed the draft): only its bounds can,
+    // where the draft erased down to nothing.
+    const BoundsI before = m_raster->getBounds();
+    const RasterCommitId commit = m_raster->commitDraft();
+    if (m_raster->getBounds() != before) invalidateBounds();
+    return commit;
+}
+
+void RasterRootNode::discardDraft()
+{
+    const BoundsI before = m_raster->getBounds();
+    const TileSet covered = m_raster->discardDraft();
+    if (m_raster->getBounds() != before) invalidateBounds();
+    emitDirty(covered, Evict::All);
+}
+
+void RasterRootNode::flip(RasterCommitId commit)
+{
+    publish(m_raster->flip(commit));
 }
 
 void RasterRootNode::wetFootprint(TileSet& out)
 {
-    if (m_fpRev != m_raster->revision()) {
+    if (m_fpRev != m_raster->revision()) {   // the committed tiles, cached
         m_fp.clear();
         m_raster->forEachTile([&](int tx, int ty, const Tile&) { m_fp.insert(TileUtils::packKey(tx, ty)); });
         m_fpRev = m_raster->revision();
     }
     out.insert(m_fp.begin(), m_fp.end());
+    if (m_raster->hasDraft()) m_raster->forEachDraftTile([&](int tx, int ty) { out.insert(TileUtils::packKey(tx, ty)); });
 }
 
 void RasterRootNode::publish(const EditSummary& s)
