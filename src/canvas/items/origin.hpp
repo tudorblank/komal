@@ -1,7 +1,6 @@
 #pragma once
-// OriginItem: a thin "+" on the world origin (0, 0), the canvas's top-left corner. Two
-// RectItems (color.wgsl) re-sized every frame so the lines stay one target pixel thick and the
-// arms a fixed length on screen, whatever the zoom.
+// A thin "+" on the world origin: two RectItems re-sized every frame, so the lines stay one
+// target pixel thick and the arms a fixed length on screen.
 
 #include "canvas/items/rect.hpp"
 

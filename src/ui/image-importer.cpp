@@ -1,6 +1,5 @@
 #include "image-importer.hpp"
 #include "raster/raster-data.hpp"
-#include "graph/style.hpp"
 
 #include <SDL3/SDL.h>
 #include <algorithm>
@@ -19,7 +18,7 @@ void ImageImporter::open(std::string path, Placement placement)
         std::lock_guard lock(m_mutex);
         m_queued.push_back({ std::move(path), placement });
     }
-    SDL_Event wake{};   // the main loop may be asleep waiting for input (any thread may push)
+    SDL_Event wake{};   // wake the main loop (it may be idle)
     wake.type = SDL_EVENT_USER;
     SDL_PushEvent(&wake);
 }
@@ -72,8 +71,8 @@ std::vector<ImageImporter::Imported> ImageImporter::poll(Project& project)
                 options.addToMaster = false;
                 options.makeActive  = false;
                 options.placeNode   = true;
-                options.nodeX = p.x - GraphStyle::kNodeWidth * 0.5f;
-                options.nodeY = p.y - GraphStyle::kHeaderH * 0.5f;
+                options.nodeX = p.x;
+                options.nodeY = p.y;
             }
             imported.push_back({ project.importTiles(j.tiles, j.image.name, options), p });
             m_lastError.clear();

@@ -13,6 +13,17 @@ void TilePyramid::reset(Source source, TileSet footprint)
     m_levels[0].footprintReady = true;
 }
 
+void TilePyramid::invalidate(TileKey key)
+{
+    m_levels[0].footprint.insert(key);
+    for (int l = 1; l < kLevels; ++l) {
+        Level& lv = m_levels[l];
+        const TileKey k = parentKey(key, l);
+        if (lv.footprintReady) lv.footprint.insert(k);
+        lv.current.erase(k);   // the old pixels stay in cpu until rebuilt
+    }
+}
+
 const TileSet& TilePyramid::footprint(int level)
 {
     Level& lv = m_levels[level];
@@ -25,25 +36,25 @@ const TileSet& TilePyramid::footprint(int level)
 
 const Tile* TilePyramid::tile(const CanvasFrame& frame, int level, int tx, int ty, bool& complete)
 {
-    if (level == 0) return m_source(tx, ty);
+    if (level == 0) return m_source ? m_source(tx, ty) : nullptr;
 
     Level& lv = m_levels[level];
     const TileKey key = TileUtils::packKey(tx, ty);
     if (lv.current.contains(key)) return lv.cpu.getReadTile(tx, ty);
 
-    // The four children first: each is kept at its level once built.
+    // Children first: each is kept once built.
     const TileSet& below = footprint(level - 1);
-    for (int j = 0; j < 2; ++j)
-        for (int i = 0; i < 2; ++i) {
-            const int cx = 2 * tx + i, cy = 2 * ty + j;
-            if (level - 1 == 0 || !below.contains(TileUtils::packKey(cx, cy)) ||
-                m_levels[level - 1].current.contains(TileUtils::packKey(cx, cy))) continue;
-            if (!frame.inBudget()) { complete = false; return nullptr; }
-            bool childComplete = true;
-            tile(frame, level - 1, cx, cy, childComplete);
-            if (!childComplete) { complete = false; return nullptr; }
-        }
-    if (level - 1 == 0 && !frame.inBudget()) { complete = false; return nullptr; }
+    if (level > 1)
+        for (int j = 0; j < 2; ++j)
+            for (int i = 0; i < 2; ++i) {
+                const TileKey child = TileUtils::packKey(2 * tx + i, 2 * ty + j);
+                if (!below.contains(child) || m_levels[level - 1].current.contains(child)) continue;
+                if (!frame.inBudget()) { complete = false; return nullptr; }
+                bool childComplete = true;
+                tile(frame, level - 1, 2 * tx + i, 2 * ty + j, childComplete);
+                if (!childComplete) { complete = false; return nullptr; }
+            }
+    if (level == 1 && !frame.inBudget()) { complete = false; return nullptr; }
 
     Tile& out = lv.cpu.writeOrCreateTile(tx, ty);
     out.clear();
@@ -52,10 +63,9 @@ const Tile* TilePyramid::tile(const CanvasFrame& frame, int level, int tx, int t
         Tile::BulkWrite w(out, Tile::BulkWrite::Trusted);
         for (int j = 0; j < 2; ++j)
             for (int i = 0; i < 2; ++i) {
-                const int cx = 2 * tx + i, cy = 2 * ty + j;
-                if (!below.contains(TileUtils::packKey(cx, cy))) continue;
+                if (!below.contains(TileUtils::packKey(2 * tx + i, 2 * ty + j))) continue;
                 bool unused = true;
-                if (const Tile* child = tile(frame, level - 1, cx, cy, unused)) {   // level 0: rendered now
+                if (const Tile* child = tile(frame, level - 1, 2 * tx + i, 2 * ty + j, unused)) {   // level 0: rendered now
                     downsampleQuadrant(w.data(), *child, i, j);
                     any = true;
                 }

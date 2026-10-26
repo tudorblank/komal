@@ -1,46 +1,23 @@
 #include "camera.hpp"
 #include "gfx/math.hpp"
 #include <algorithm>
-
-namespace {
-struct CameraUniform { float viewProj[16]; };
-}
+#include <cmath>
 
 bool CanvasCamera::create(const GpuHandles& ctx, WGPUBindGroupLayout layout)
 {
-    m_ctx = ctx;
-
-    WGPUBufferDescriptor bd{};
-    bd.label = sv("Canvas Camera Uniform");
-    bd.size  = sizeof(CameraUniform);
-    bd.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
-    m_buffer = wgpuDeviceCreateBuffer(ctx.device, &bd);
-
-    WGPUBindGroupEntry ge{};
-    ge.binding = 0;
-    ge.buffer  = m_buffer;
-    ge.size    = sizeof(CameraUniform);
-
-    WGPUBindGroupDescriptor gd{};
-    gd.label      = sv("Canvas Camera Bind Group");
-    gd.layout     = layout;
-    gd.entryCount = 1;
-    gd.entries    = &ge;
-    m_bindGroup = wgpuDeviceCreateBindGroup(ctx.device, &gd);
-
-    return m_buffer && m_bindGroup;
+    m_queue = ctx.queue;
+    return m_uniform.create(ctx.device, layout, sizeof(Mat4::m), "Canvas Camera");
 }
 
 void CanvasCamera::release()
 {
-    if (m_bindGroup) { wgpuBindGroupRelease(m_bindGroup); m_bindGroup = nullptr; }
-    if (m_buffer)    { wgpuBufferRelease(m_buffer);       m_buffer    = nullptr; }
+    m_uniform.release();
 }
 
 void CanvasCamera::upload(float viewW, float viewH) const
 {
-    const Mat4 viewProj = Mat4::ortho(viewW, viewH) * Mat4::translateScale(pan.x, pan.y, zoom, zoom);
-    wgpuQueueWriteBuffer(m_ctx.queue, m_buffer, 0, viewProj.m, sizeof(viewProj.m));
+    const Mat4 m = viewProj(viewW, viewH);
+    m_uniform.write(m_queue, m.m, sizeof(m.m));
 }
 
 bool CanvasCamera::zoomAt(Vec2 screen, float factor)
@@ -58,7 +35,26 @@ void CanvasCamera::frame(float minX, float minY, float maxX, float maxY, float v
 {
     if (viewW <= 0.0f || viewH <= 0.0f) return;
     constexpr float kMargin = 0.9f;   // of the view the rectangle fills
-    const float w = std::max(maxX - minX, 1.0f), h = std::max(maxY - minY, 1.0f);
+    // The rectangle as it stands on screen: rotated, it needs its bounding box's room.
+    const float c = std::abs(std::cos(rotation)), s = std::abs(std::sin(rotation));
+    const float rw = std::max(maxX - minX, 1.0f), rh = std::max(maxY - minY, 1.0f);
+    const float w = rw * c + rh * s, h = rw * s + rh * c;
     zoom = std::clamp(std::min(viewW / w, viewH / h) * kMargin, kMinZoom, kMaxZoom);
     centerOn((minX + maxX) * 0.5f, (minY + maxY) * 0.5f, viewW, viewH);
+}
+
+float CanvasCamera::wrapAngle(float radians)
+{
+    constexpr float kTau = 6.28318530718f;
+    float r = std::fmod(radians, kTau);
+    if (r < 0.0f) r += kTau;
+    return r >= kTau ? 0.0f : r;   // 360 is 0
+}
+
+void CanvasCamera::rotateAt(Vec2 screen, float radians)
+{
+    const Vec2 w = screenToWorld(screen);
+    rotation = wrapAngle(radians);
+    const Vec2 r = rotated({ w.x * zoom, w.y * zoom });
+    pan = { screen.x - r.x, screen.y - r.y };
 }

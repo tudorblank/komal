@@ -1,5 +1,7 @@
 #include "graph/node-menu.hpp"
 
+#include "ui/widgets.hpp"
+
 #include <imgui.h>
 #include <cctype>
 #include <cstring>
@@ -34,7 +36,7 @@ bool matches(const char* name, const char* search)
     return m == 0;
 }
 
-} // namespace
+}
 
 void NodeMenu::open(Fit fit)
 {
@@ -53,16 +55,14 @@ bool NodeMenu::draw(NodeType& picked)
 
     // Search field first, focused when the menu opens.
     if (m_justOpened) { ImGui::SetKeyboardFocusHere(); m_justOpened = false; }
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
-    ImGui::InputTextWithHint("##search", "Search...", m_search, sizeof m_search);
+    Widgets::searchField("##search", "Search...", m_search, sizeof m_search, ImGui::GetFontSize() * 12.0f);
 
     std::vector<const NodeTypeInfo*> items;
     for (const NodeTypeInfo& t : kTypes) {
         if (m_fit == Fit::NeedsInput && !t.hasInput) continue;   // every type has an output
         if (matches(t.name, m_search)) items.push_back(&t);
     }
-    // Keys of the search field below: ImGui's, as it owns the text focus (app shortcuts come
-    // from InputFrame).
+    // ImGui's keys: the search field owns the text focus.
     if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) ++m_highlight;
     if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))   --m_highlight;
     m_highlight = items.empty() ? 0 : (m_highlight + int(items.size())) % int(items.size());

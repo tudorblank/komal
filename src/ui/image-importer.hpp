@@ -1,14 +1,11 @@
 #pragma once
-// Brings image files into the project as new raster nodes: stb_image decodes, the pixels are
-// cut into tiles where the image goes (both on a worker thread: a big PNG takes a while), then
-// poll() wraps them in a raster node on the main thread.
-//
-// Where it goes depends on how it came:
+// Image files -> new raster nodes. Decoding and tiling run on a worker thread; poll() makes the
+// node on the main thread. Placement:
 //   Canvas  dropped on the canvas: centred on that world point, on top of the master, active
 //   Graph   dropped on the graph: the node where it was dropped, at the world origin, unlinked
 //   Default File > Import, the command line: at the world origin, on top of the master, active
 //
-// open() may be called from any thread: the native file dialog answers on its own thread.
+// open() is thread-safe (the native file dialog answers on its own thread).
 
 #include "core/image-load.hpp"
 #include "core/project.hpp"
@@ -27,7 +24,7 @@ public:
     struct Placement {
         enum class Target : uint8_t { Default, Canvas, Graph };
         Target target = Target::Default;
-        float  x = 0.0f, y = 0.0f;   // Canvas: world point; Graph: graph point
+        float  x = 0.0f, y = 0.0f;   // Canvas: world point; Graph: the node's position
     };
     struct Imported { NodeId node; Placement placement; };
 

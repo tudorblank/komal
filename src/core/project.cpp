@@ -29,7 +29,7 @@ void paintStarterContent(RasterRootNode& background, RasterRootNode& paint)
     });
 }
 
-} // namespace
+}
 
 void Project::init()
 {
@@ -174,7 +174,7 @@ NodePtr singleInput(const Node& n)
     return nullptr;
 }
 
-} // namespace
+}
 
 NodePtr Project::bridgeSource(const Node& n, const absl::flat_hash_set<NodeId>& deleted) const
 {
@@ -192,8 +192,7 @@ bool Project::deleteNodes(const std::vector<NodeId>& ids)
     if (doomed.contains(m_preview.node)) cancelPreview();
     if (doomed.contains(m_strokeNode)) endStroke();   // committed while its node is still there
 
-    // Re-feed every slot of a surviving node that a doomed node fed, before anything is
-    // removed (stack indices are still valid, and nothing is removed from a stack here).
+    // Re-feed every surviving slot a doomed node fed, before anything is removed (indices stay valid).
     absl::flat_hash_set<NodeId> rewired;
     for (const NodePtr& n : m_order) {
         const NodeId id = n->m_meta.id;
@@ -215,7 +214,7 @@ bool Project::deleteNodes(const std::vector<NodeId>& ids)
                 if (NodePtr src = source(n->signal(NodeSignal(s)).mask[ch])) n->linkMask(src, NodeSignal(s), NodeChannel(ch));
     }
 
-    // Whatever wasn't re-fed (no bridge, or the bridge was already in that stack) is dropped here.
+    // Whatever wasn't re-fed is dropped here.
     for (NodeId id : doomed) {
         auto it = m_nodes.find(id);
         NodePtr node = it->second;
@@ -515,18 +514,26 @@ void Project::flipRasterCommit(const RasterCommitRef& c)
 int Project::subscribe(Listener l)
 {
     const int token = m_nextToken++;
-    m_listeners.emplace_back(token, std::move(l));
+    m_listeners.push_back(std::make_unique<Subscriber>(Subscriber{ token, std::move(l) }));
     return token;
 }
 
 void Project::unsubscribe(int token)
 {
-    std::erase_if(m_listeners, [&](const auto& p) { return p.first == token; });
+    // Flagged, not destroyed: it may be the listener running right now. Swept once no emit runs.
+    for (auto& s : m_listeners)
+        if (s->token == token) s->removed = true;
+    if (m_emitting == 0) std::erase_if(m_listeners, [](const auto& s) { return s->removed; });
 }
 
 void Project::emit(ProjectEventType t, NodeId n)
 {
     const ProjectEvent e{ t, n };
-    for (const auto& [token, l] : std::vector(m_listeners))   // a listener may unsubscribe
-        l(e);
+    ++m_emitting;
+    const size_t count = m_listeners.size();   // subscribed during this emit: next event on
+    for (size_t i = 0; i < count; ++i) {
+        Subscriber* s = m_listeners[i].get();
+        if (!s->removed) s->listener(e);
+    }
+    if (--m_emitting == 0) std::erase_if(m_listeners, [](const auto& s) { return s->removed; });
 }

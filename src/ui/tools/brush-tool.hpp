@@ -4,10 +4,9 @@
 
 #include <vector>
 
-// Paints into the active raster through the Project's stroke API (one stroke = one undo
-// step). LMB / pen tip paints, or erases in Erase mode; RMB / pen barrel button and the pen's
-// eraser end always erase. [ and ] resize. A stroke is built from the raw pointer events: the
-// exact press, every sample in between with its pressure, the exact release.
+// Paints into the active raster (one stroke = one undo step) from the raw pointer events, with
+// pressure. LMB / pen tip paints (erases in Erase mode); RMB, barrel button and eraser end erase.
+// [ and ] resize.
 class BrushTool : public Tool {
 public:
     explicit BrushTool(ToolColors& colors) : m_colors(colors) {}

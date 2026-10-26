@@ -1,12 +1,9 @@
 #pragma once
-// Node thumbnails: each node's output, fitted into 256x192 and composited over a checkerboard,
-// kept in slots of a few atlas textures (one texture for many nodes, never re-created, so
-// ImGui's per-texture bind groups stay valid).
+// Each node's output fitted into 256x192 over a checkerboard, in slots of shared atlas textures.
 //
-// Only thumbnails that were asked for (drawn) this frame are refreshed, and only when the
-// node's output may have changed (its revision), at most every kMinInterval per node while it
-// keeps changing, within a per-frame time budget. Nothing is refreshed during a brush stroke:
-// the thumbnails catch up when it ends.
+// Only thumbnails drawn this frame are refreshed, only when the node's revision changed, at most
+// every kMinInterval per node, within a per-frame budget, and never during a stroke (they catch
+// up when it ends).
 
 #include "node/node.hpp"
 
@@ -32,8 +29,7 @@ public:
     void init(WGPUDevice device, WGPUQueue queue);
     void shutdown();
 
-    // The last rendered thumbnail of `id`, and a request to keep it fresh. False until the
-    // first render.
+    // The last render of `id` (false until there is one); also asks to keep it fresh.
     bool get(NodeId id, View& out);
     void forget(NodeId id);
     void refresh(Project& project, double budgetMs);   // once per frame, after drawing
@@ -70,6 +66,5 @@ private:
     absl::flat_hash_map<NodeId, Thumb> m_thumbs;
     absl::flat_hash_set<NodeId> m_requested;   // drawn this frame
     RenderCtx m_render;
-    std::vector<RGBA>     m_pixels;
-    std::vector<uint32_t> m_accum;
+    std::vector<RGBA> m_pixels;
 };

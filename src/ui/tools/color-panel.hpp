@@ -1,13 +1,9 @@
 #pragma once
-// The Color panel, Photoshop's colour wheel: the primary / secondary swatch pair in the corner,
-// a hue ring with a saturation / brightness square inside, the colour's #hex code with its
-// R G B values beside it, and Hue, Saturation and Brightness sliders whose tracks show the
-// gradient they pick from.
+// The Color panel (Photoshop style): primary / secondary swatches, a hue ring around a
+// saturation / brightness square, hex and RGB fields, and HSB sliders.
 //
-// It edits one of the tools' two colours (ToolColors): the primary, or the secondary once its
-// swatch is clicked. The swatches' arrow (or X) swaps them. It keeps its own hue, saturation and
-// brightness, so a hue survives the colour going grey or black (RGB alone can't hold it), and
-// follows the colour when something else changes it.
+// Edits the clicked swatch's colour. Keeps its own HSB, so a hue survives the colour going grey
+// or black, and follows the colour when something else changes it.
 
 struct ToolColors;
 
@@ -27,6 +23,4 @@ private:
     float m_last[3] = { -1.0f, -1.0f, -1.0f };  // the colour as this panel last saw / wrote it
     enum class WheelDrag : unsigned char { None, Hue, SatBright } m_wheelDrag = WheelDrag::None;
     bool  m_editSecondary = false;              // which colour the wheel edits
-    char  m_hex[8] = "";
-    bool  m_hexEditing = false;
 };

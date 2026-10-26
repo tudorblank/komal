@@ -1,6 +1,5 @@
 #pragma once
-// The add-node menu: a search field (focused, so typing filters right away) over the node
-// types that fit where the node will go. Enter or a click picks; arrows move the highlight.
+// The add-node menu: a focused search field over the node types that fit. Enter or click picks.
 
 #include "node/node.hpp"
 

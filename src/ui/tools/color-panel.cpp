@@ -1,6 +1,7 @@
 #include "color-panel.hpp"
 #include "ui/theme.hpp"
 #include "ui/tools/tool.hpp"
+#include "ui/widgets.hpp"
 
 #include <imgui.h>
 #include <algorithm>
@@ -24,56 +25,7 @@ ImU32 hsv(float h, float s, float v, float a = 1.0f)
 float hueAt(float angle) { return std::fmod(angle / (2.0f * kPi) + 0.25f + 1.0f, 1.0f); }
 float angleOf(float hue) { return (hue - 0.25f) * 2.0f * kPi; }
 
-// A gradient slider: its track shows `stops` evenly spaced colours, the grab marks `value`
-// (0..1). Click or drag anywhere on it. Returns true while it changes the value.
-bool gradientSlider(const char* id, const char* label, float& value, const ImU32* stops, int count, const char* valueText)
-{
-    const ImGuiStyle& st = ImGui::GetStyle();
-    const float h      = ImGui::GetFrameHeight();
-    const float labelW = ImGui::CalcTextSize("M").x + st.ItemSpacing.x;
-    const float valueW = ImGui::CalcTextSize("360°").x + st.ItemSpacing.x;
-    const float width  = ImGui::GetContentRegionAvail().x;
-
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted(label);
-    ImGui::SameLine(labelW);
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    const float trackW = std::max(20.0f, width - labelW - valueW);
-    ImGui::InvisibleButton(id, ImVec2(trackW, h));
-    // The gradient runs between the grab's two extreme positions, so the grab never leaves it.
-    const float gw = std::max(3.0f, std::round(h * 0.14f));
-    const float x0 = p.x + gw + 1.0f, x1 = p.x + trackW - gw - 1.0f, len = std::max(1.0f, x1 - x0);
-    bool changed = false;
-    if (ImGui::IsItemActive()) {
-        const float v = std::clamp((ImGui::GetIO().MousePos.x - x0) / len, 0.0f, 1.0f);
-        if (v != value) { value = v; changed = true; }
-    }
-
-    // The track: the gradient, its corners rounded by drawing the panel colour over them.
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float trackH = std::round(h * 0.42f);
-    const float y0 = p.y + std::round((h - trackH) * 0.5f), y1 = y0 + trackH;
-    for (int i = 0; i + 1 < count; ++i) {
-        const float a = x0 + len * float(i) / float(count - 1);
-        const float b = x0 + len * float(i + 1) / float(count - 1);
-        dl->AddRectFilledMultiColor(ImVec2(a, y0), ImVec2(b, y1), stops[i], stops[i + 1], stops[i + 1], stops[i]);
-    }
-    const float r = trackH * 0.5f;
-    dl->AddRect(ImVec2(x0 - 1.0f, y0 - 1.0f), ImVec2(x1 + 1.0f, y1 + 1.0f), ImGui::GetColorU32(ImGuiCol_WindowBg), r + 1.0f, 0, 2.0f);
-
-    // The grab: a light pill across the track, outlined dark so it reads on any colour.
-    const float gx = x0 + value * len;
-    const ImVec2 g0(gx - gw, p.y + 2.0f), g1(gx + gw, p.y + h - 2.0f);
-    dl->AddRectFilled(ImVec2(g0.x - 1.0f, g0.y - 1.0f), ImVec2(g1.x + 1.0f, g1.y + 1.0f), IM_COL32(0, 0, 0, 170), gw + 1.0f);
-    dl->AddRectFilled(g0, g1, (ImGui::IsItemActive() || ImGui::IsItemHovered()) ? IM_COL32(255, 255, 255, 255) : IM_COL32(225, 225, 225, 255), gw);
-
-    ImGui::SameLine(labelW + trackW + st.ItemSpacing.x);
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted(valueText);
-    return changed;
 }
-
-} // namespace
 
 void ColorPanel::syncFrom(const float rgb[3])
 {
@@ -93,18 +45,18 @@ void ColorPanel::writeTo(float rgb[3])
 
 void ColorPanel::draw(bool* open, ToolColors& colors)
 {
-    if (!ImGui::Begin("Color", open)) { ImGui::End(); return; }
+    if (!Widgets::beginPanel("Color", open)) { Widgets::endPanel(); return; }
     float* fg = m_editSecondary ? colors.background : colors.foreground;   // the colour being edited
     if (std::memcmp(fg, m_last, sizeof m_last) != 0) syncFrom(fg);
 
     // The wheel as large as the panel allows, leaving the swatches' corner free at the side and
-    // room for the rows under it.
+    // room below for a gap, the codes row, a gap and the three sliders.
     const ImGuiStyle& st = ImGui::GetStyle();
-    const float rowsH = ImGui::GetFrameHeightWithSpacing() * 4.0f + st.ItemSpacing.y * 2.0f;
+    const float rowsBelow = Widgets::stackHeight(4, 0, 2) + st.ItemSpacing.y;
     const float block = std::round(ImGui::GetFontSize() * 2.6f);
     const ImVec2 avail = ImGui::GetContentRegionAvail();
-    const float wheel = std::clamp(std::min(avail.x - 2.0f * (block + st.ItemSpacing.x), avail.y - rowsH), 80.0f,
-                                   320.0f * (ImGui::GetFontSize() / 15.0f));
+    const float wheel = std::clamp(std::min(avail.x - 2.0f * (block + st.ItemSpacing.x), avail.y - rowsBelow), 80.0f,
+                                   320.0f * Widgets::metrics().unit);
     float h0 = m_h, s0 = m_s, v0 = m_v;
     const ImVec2 top = ImGui::GetCursorScreenPos();
     drawWheel(wheel);
@@ -117,13 +69,13 @@ void ColorPanel::draw(bool* open, ToolColors& colors)
         syncFrom(fg);
         h0 = m_h, s0 = m_s, v0 = m_v;
     }
-    ImGui::Spacing();
+    Widgets::sectionGap();
     drawCodes();
-    ImGui::Spacing();
+    Widgets::sectionGap();
     drawSliders();
 
     if (m_h != h0 || m_s != s0 || m_v != v0) writeTo(fg);   // a control changed the colour
-    ImGui::End();
+    Widgets::endPanel();
 }
 
 void ColorPanel::drawSwatches(ToolColors& colors, float block)
@@ -238,64 +190,47 @@ void ColorPanel::drawWheel(float size)
 
 void ColorPanel::drawCodes()
 {
+    // [#hex, stretching] [R] [G] [B], the last flush right.
+    using namespace Widgets;
+    const Metrics m = metrics();
     float rgb[3];
     ImGui::ColorConvertHSVtoRGB(m_h, m_s, m_v, rgb[0], rgb[1], rgb[2]);
-    int ri[3] = { int(rgb[0] * 255.0f + 0.5f), int(rgb[1] * 255.0f + 0.5f), int(rgb[2] * 255.0f + 0.5f) };
+    if (hexField("##hex", rgb, stretchWidth(3.0f * m.fieldWidth + 2.0f * m.spacing))) syncFrom(rgb);   // written out by draw()
 
-    // #hex: shows the colour, takes a typed one when the field is left.
-    const ImGuiStyle& st = ImGui::GetStyle();
-    const float width = ImGui::GetContentRegionAvail().x;
-    const float hexW  = std::round(width * 0.34f);
-    const float chanW = std::floor((width - hexW - st.ItemSpacing.x * 3.0f) / 3.0f);
-    if (!m_hexEditing) std::snprintf(m_hex, sizeof m_hex, "%02X%02X%02X", ri[0], ri[1], ri[2]);
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextDisabled("#");
-    ImGui::SameLine(0.0f, 2.0f);
-    ImGui::SetNextItemWidth(hexW - ImGui::CalcTextSize("#").x - 2.0f);
-    {
-        NumberFont font;
-        ImGui::InputText("##hex", m_hex, sizeof m_hex, ImGuiInputTextFlags_CharsHexadecimal | ImGuiInputTextFlags_CharsUppercase |
-                                                        ImGuiInputTextFlags_AutoSelectAll);
-    }
-    m_hexEditing = ImGui::IsItemActive();
-    if (ImGui::IsItemDeactivatedAfterEdit() && std::strlen(m_hex) == 6) {
-        unsigned v = 0;
-        if (std::sscanf(m_hex, "%06x", &v) == 1) {
-            const float typed[3] = { float((v >> 16) & 0xFF) / 255.0f, float((v >> 8) & 0xFF) / 255.0f, float(v & 0xFF) / 255.0f };
-            syncFrom(typed);   // written out by draw(), with the HSB values
-        }
-    }
-
-    // R G B, 0..255: drag or type.
-    static const char* kNames[3] = { "##red", "##green", "##blue" };
-    static const char* kFormats[3] = { "R %d", "G %d", "B %d" };
-    bool rgbChanged = false;
+    static const char* kIds[3] = { "##red", "##green", "##blue" };
+    static const char* kPrefixes[3] = { "R", "G", "B" };
     for (int i = 0; i < 3; ++i) {
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(chanW);
-        NumberFont font;
-        rgbChanged |= ImGui::DragInt(kNames[i], &ri[i], 0.5f, 0, 255, kFormats[i], ImGuiSliderFlags_AlwaysClamp);
-    }
-    if (rgbChanged) {
-        const float typed[3] = { ri[0] / 255.0f, ri[1] / 255.0f, ri[2] / 255.0f };
-        syncFrom(typed);
+        if (i < 2) sameRow(); else alignRight(m.fieldWidth);
+        float channel = std::round(rgb[i] * 255.0f);
+        if (numberField(kIds[i], channel, 0.0f, 255.0f, "%.0f", 0.0f, kPrefixes[i])) {
+            rgb[i] = std::round(channel) / 255.0f;
+            syncFrom(rgb);
+        }
     }
 }
 
 void ColorPanel::drawSliders()
 {
-    char text[16];
+    // [letter] [gradient] [value]: hue in degrees (0..360, both ends kept), the others in percent.
+    using namespace Widgets;
+    const Metrics m = metrics();
+    const auto row = [&](const char* label, const char* id, float& value, const ImU32* stops, int count, float shown, const char* format) {
+        ImGui::PushID(id);
+        rowLabel(label, m.shortLabelWidth);
+        gradientSlider("##slider", value, stops, count, stretchWidth(m.fieldWidth));
+        alignRight(m.fieldWidth);
+        float typed = std::round(value * shown);
+        if (numberField("##value", typed, 0.0f, shown, format)) value = typed / shown;
+        ImGui::PopID();
+    };
 
-    ImU32 hue[7];   // the full circle, at full saturation and brightness (as Photoshop shows it)
+    ImU32 hue[7];   // the full circle at full saturation and brightness
     for (int i = 0; i < 7; ++i) hue[i] = hsv(float(i) / 6.0f, 1.0f, 1.0f);
-    std::snprintf(text, sizeof text, "%d°", int(std::lround(m_h * 360.0f)) % 360);
-    gradientSlider("##hue", "H", m_h, hue, 7, text);
+    row("H", "hue", m_h, hue, 7, 360.0f, "%.0f°");
 
     const ImU32 sat[2] = { hsv(m_h, 0.0f, m_v), hsv(m_h, 1.0f, m_v) };   // grey -> the full colour
-    std::snprintf(text, sizeof text, "%d%%", int(std::lround(m_s * 100.0f)));
-    gradientSlider("##saturation", "S", m_s, sat, 2, text);
+    row("S", "saturation", m_s, sat, 2, 100.0f, "%.0f%%");
 
     const ImU32 bri[2] = { hsv(m_h, m_s, 0.0f), hsv(m_h, m_s, 1.0f) };   // black -> the full colour
-    std::snprintf(text, sizeof text, "%d%%", int(std::lround(m_v * 100.0f)));
-    gradientSlider("##brightness", "B", m_v, bri, 2, text);
+    row("B", "brightness", m_v, bri, 2, 100.0f, "%.0f%%");
 }

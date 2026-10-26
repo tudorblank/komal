@@ -6,14 +6,9 @@
 
 namespace {
 
-int worldToTileClamped(float w)
-{
-    return TileUtils::worldToTile((int)std::clamp(std::floor(w), (float)-TileUtils::kWorldLimit, (float)TileUtils::kWorldLimit));
-}
-
 int maskSlot(NodeSignal s, NodeChannel c) { return int(s) * kChannelCount + int(c); }
 
-} // namespace
+}
 
 // ---------------------------------------------------------------- plan
 
@@ -210,9 +205,10 @@ int EditPreviewItem::build(int plan, Vec2 offset)
     return op;
 }
 
-EditPreviewItem::TileRange EditPreviewItem::leafRange(const CanvasFrame& frame, const Op& op) const
+TileRect EditPreviewItem::leafRange(const CanvasFrame& frame, const Op& op) const
 {
     // The leaf's tiles that land on screen once shifted by the op's offset.
+    using TileUtils::worldToTileClamped;
     return { worldToTileClamped(frame.view.minX - op.offset.x) >> m_level, worldToTileClamped(frame.view.minY - op.offset.y) >> m_level,
              worldToTileClamped(frame.view.maxX - op.offset.x) >> m_level, worldToTileClamped(frame.view.maxY - op.offset.y) >> m_level };
 }
@@ -231,6 +227,7 @@ EditPreviewItem::FrameKey EditPreviewItem::frameKey(const CanvasFrame& frame) co
     k.panX    = frame.camera.pan.x;
     k.panY    = frame.camera.pan.y;
     k.zoom    = frame.camera.zoom;
+    k.rotation = frame.camera.rotation;
     k.width   = frame.target.pixelW;
     k.height  = frame.target.pixelH;
     k.level   = m_level;
@@ -245,11 +242,10 @@ bool EditPreviewItem::catchUp(CanvasFrame& frame)
         if (op.kind != Op::Kind::Leaf) continue;
         Leaf& leaf = *m_leaves[size_t(op.leaf)];
         Leaf::Level& lv = leaf.levels[m_level];
-        const TileRange r = leafRange(frame, op);
-        const auto need = [&](TileKey key) {
-            const auto t = TileUtils::unpackKey(key);
-            if (t.x < r.minX || t.x > r.maxX || t.y < r.minY || t.y > r.maxY || lv.done.contains(key)) return true;
+        forEachTileIn(leaf.pyramid.footprint(m_level), leafRange(frame, op), [&](TileKey key) {
+            if (lv.done.contains(key)) return true;
             if (!frame.inBudget()) { ready = false; return false; }
+            const auto t = TileUtils::unpackKey(key);
             bool complete = true;
             const Tile* tile = leaf.pyramid.tile(frame, m_level, t.x, t.y, complete);
             if (!complete) { ready = false; return false; }
@@ -257,16 +253,7 @@ bool EditPreviewItem::catchUp(CanvasFrame& frame)
             lv.done.insert(key);
             ++lv.revision;
             return true;
-        };
-        const TileSet& footprint = leaf.pyramid.footprint(m_level);
-        const double rangeTiles = double(r.maxX - r.minX + 1) * double(r.maxY - r.minY + 1);
-        if (double(footprint.size()) <= rangeTiles) {
-            for (TileKey key : footprint) if (!need(key)) break;
-        } else {
-            for (int ty = r.minY; ty <= r.maxY && ready; ++ty)
-                for (int tx = r.minX; tx <= r.maxX && ready; ++tx)
-                    if (const TileKey key = TileUtils::packKey(tx, ty); footprint.contains(key) && !need(key)) break;
-        }
+        });
     }
     return ready;
 }
@@ -274,8 +261,7 @@ bool EditPreviewItem::catchUp(CanvasFrame& frame)
 bool EditPreviewItem::prepare(CanvasFrame& frame)
 {
     if (!m_active) return false;
-    // The drag ended: the graph has the value now, and the picture already shows it. Kept as is
-    // until the output catches up (CanvasPanel then ends the preview).
+    // The drag ended and the picture already shows the value: kept until the output catches up.
     if (!m_project.preview().active() && m_hasResult) return false;
 
     m_level = frame.lodLevel(TilePyramid::kLevels);
@@ -321,27 +307,9 @@ EditPreviewItem::Target& EditPreviewItem::target(const CanvasFrame& frame, size_
     return m_targets[i];
 }
 
-EditPreviewItem::Uniform& EditPreviewItem::uniform(const CanvasFrame& frame, UniformPool& pool, WGPUBindGroupLayout layout, uint64_t size)
+GpuUniform& EditPreviewItem::uniform(const CanvasFrame& frame, UniformPool& pool, WGPUBindGroupLayout layout, uint64_t size)
 {
-    if (pool.used == pool.items.size()) {
-        Uniform u;
-        WGPUBufferDescriptor bd{};
-        bd.label = sv("Edit Preview Uniform");
-        bd.size  = size;
-        bd.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
-        u.buffer = wgpuDeviceCreateBuffer(frame.pipelines.ctx.device, &bd);
-        WGPUBindGroupEntry e{};
-        e.binding = 0;
-        e.buffer  = u.buffer;
-        e.size    = size;
-        WGPUBindGroupDescriptor gd{};
-        gd.label      = sv("Edit Preview Uniform Group");
-        gd.layout     = layout;
-        gd.entryCount = 1;
-        gd.entries    = &e;
-        u.group = wgpuDeviceCreateBindGroup(frame.pipelines.ctx.device, &gd);
-        pool.items.push_back(u);
-    }
+    if (pool.used == pool.items.size()) pool.items.emplace_back().create(frame.pipelines.ctx.device, layout, size, "Edit Preview Uniform");
     return pool.items[pool.used++];
 }
 
@@ -383,7 +351,7 @@ WGPUBindGroup textureGroup(WGPUDevice device, WGPUBindGroupLayout layout, const 
     return wgpuDeviceCreateBindGroup(device, &gd);
 }
 
-} // namespace
+}
 
 void EditPreviewItem::execute(CanvasFrame& frame)
 {
@@ -423,7 +391,7 @@ void EditPreviewItem::execute(CanvasFrame& frame)
         LeafPass content;   // stays "none" unless this is a leaf pass
         if (op.kind == Op::Kind::Leaf) {
             content = { op.leaf, m_level, m_leaves[size_t(op.leaf)]->levels[m_level].revision,
-                        op.offset.x, op.offset.y, cam.pan.x, cam.pan.y, cam.zoom };
+                        op.offset.x, op.offset.y, cam.pan.x, cam.pan.y, cam.zoom, cam.rotation };
             if (m_targetContent[i] == content) continue;   // its texture already shows exactly this
         }
         m_targetContent[i] = content;
@@ -434,29 +402,23 @@ void EditPreviewItem::execute(CanvasFrame& frame)
         case Op::Kind::Leaf: {
             Leaf::Level& lv = m_leaves[size_t(op.leaf)]->levels[m_level];
             if (lv.atlas.empty()) break;
-            // The tiles on screen, at this level's size.
-            const TileRange r = leafRange(frame, op);
-            const float size = float(Tile::kSize << m_level);
-            const auto place = [&](TileKey key) {
-                const auto t = TileUtils::unpackKey(key);
-                if (t.x < r.minX || t.x > r.maxX || t.y < r.minY || t.y > r.maxY) return;
-                lv.atlas.add(key, float(TileUtils::tileToWorld(t.x)) * float(1 << m_level),
-                             float(TileUtils::tileToWorld(t.y)) * float(1 << m_level), size);
-            };
-            lv.atlas.beginInstances();
-            const double rangeTiles = double(r.maxX - r.minX + 1) * double(r.maxY - r.minY + 1);
-            if (double(lv.done.size()) <= rangeTiles) {
-                for (TileKey key : lv.done) place(key);
-            } else {
-                for (int ty = r.minY; ty <= r.maxY; ++ty)
-                    for (int tx = r.minX; tx <= r.maxX; ++tx) place(TileUtils::packKey(tx, ty));
+            // Every uploaded tile (all near the view; the GPU clips the rest), one list for every
+            // offset this frame: buffer writes land before the passes run, so per-pass lists clash.
+            if (lv.placed != lv.revision) {
+                const float size = float(Tile::kSize << m_level);
+                lv.atlas.beginInstances();
+                for (TileKey key : lv.done) {
+                    const auto t = TileUtils::unpackKey(key);
+                    lv.atlas.add(key, float(TileUtils::tileToWorld(t.x)) * float(1 << m_level),
+                                 float(TileUtils::tileToWorld(t.y)) * float(1 << m_level), size);
+                }
+                lv.atlas.endInstances(p, 1.0f);
+                lv.placed = lv.revision;
             }
-            lv.atlas.endInstances(p, 1.0f);
             // The view's camera, with the content shifted by the op's offset.
-            Uniform& u = uniform(frame, m_cameras, p.cameraLayout, sizeof(Mat4::m));
-            const Mat4 viewProj = Mat4::ortho(frame.target.viewW, frame.target.viewH) *
-                                  Mat4::translateScale(cam.pan.x + op.offset.x * cam.zoom, cam.pan.y + op.offset.y * cam.zoom, cam.zoom, cam.zoom);
-            wgpuQueueWriteBuffer(queue, u.buffer, 0, viewProj.m, sizeof(viewProj.m));
+            GpuUniform& u = uniform(frame, m_cameras, p.cameraLayout, sizeof(Mat4::m));
+            const Mat4 viewProj = cam.viewProj(frame.target.viewW, frame.target.viewH, op.offset);
+            u.write(queue, viewProj.m, sizeof(viewProj.m));
             wgpuRenderPassEncoderSetPipeline(pass, p.atlasPipeline);
             wgpuRenderPassEncoderSetBindGroup(pass, 0, u.group, 0, nullptr);
             lv.atlas.draw(pass);
@@ -475,8 +437,8 @@ void EditPreviewItem::execute(CanvasFrame& frame)
             }
             params.flags[0] = op.wet >= 0;
             params.flags[1] = op.dry >= 0;
-            Uniform& u = uniform(frame, m_params, p.previewParamsLayout, sizeof(params));
-            wgpuQueueWriteBuffer(queue, u.buffer, 0, &params, sizeof(params));
+            GpuUniform& u = uniform(frame, m_params, p.previewParamsLayout, sizeof(params));
+            u.write(queue, &params, sizeof(params));
 
             WGPUTextureView views[2 + kPreviewMaskTextures];
             views[0] = viewOf(op.wet);
@@ -535,10 +497,7 @@ void EditPreviewItem::releaseGpu()
     end();
     releaseTargets();
     for (UniformPool* pool : { &m_cameras, &m_params }) {
-        for (Uniform& u : pool->items) {
-            if (u.group)  wgpuBindGroupRelease(u.group);
-            if (u.buffer) wgpuBufferRelease(u.buffer);
-        }
+        for (GpuUniform& u : pool->items) u.release();
         pool->items.clear();
         pool->used = 0;
     }

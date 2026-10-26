@@ -7,14 +7,13 @@ namespace {
 
 [[maybe_unused]] bool sameShortcut(const Shortcut& a, const Shortcut& b) { return a.key == b.key && a.mods == b.mods; }
 
-} // namespace
+}
 
 void ActionRegistry::add(Action action)
 {
     assert(!find(action.id) && "action ids are unique");
 #ifndef NDEBUG
-    // Panel scopes are never live together (one has focus, the other the pointer), but the global
-    // scope is live with either: a shortcut must not mean two things at once.
+    // Panel scopes are never live together, but the global scope is live with either.
     for (const Action& other : m_actions)
         if (other.scope == action.scope || other.scope == ActionScope::Global || action.scope == ActionScope::Global)
             for (const Shortcut& s : action.shortcuts)

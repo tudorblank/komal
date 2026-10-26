@@ -30,8 +30,7 @@ struct ProjectEvent {
 
 // Where a link lands on a node.
 struct InputSlot {
-    // Layer is an existing layer of a stack (connecting replaces it); NewLayer is a position
-    // in the stack (connecting inserts there, pushing the layers above it up).
+    // Layer: an existing stack layer (connecting replaces it). NewLayer: a position (inserts there).
     enum class Kind : uint8_t { Input, Layer, NewLayer, Mask };
     Kind        kind    = Kind::Input;
     uint32_t    layer   = 0;                   // Layer: stack index, 0 = bottom; NewLayer: 0..count (count = on top)
@@ -52,10 +51,8 @@ struct InputSlot {
     }
 };
 
-// An edit being dragged (a slider, an offset field). While it is previewed the graph is left
-// alone: no tile is recomputed and the canvas keeps its picture, while views show the
-// previewed value (the node's control, an outline on the canvas). applyPreview() makes it
-// one real change, when the drag ends.
+// An edit being dragged (a slider, an offset). While previewed the graph is untouched (nothing
+// recomputes); views show the previewed value. applyPreview() makes it one real change.
 struct EditPreview {
     enum class Kind : uint8_t { None, SignalScale, MoveOffset };
     Kind        kind    = Kind::None;
@@ -90,9 +87,8 @@ public:
     NodeId createMove(float x, float y);
     NodeId createCompositor(float x, float y);
     NodeId createNode(NodeType type, float x, float y);
-    // A new raster node holding an image. Not undoable (creating nodes isn't). importImage puts
-    // the image at the world origin; importTiles takes it already cut into tiles, wherever they
-    // were placed (tilesFromImage, which can run on another thread).
+    // A new raster node holding an image (not undoable). importImage: at the world origin;
+    // importTiles: already cut into tiles where they go (tilesFromImage, any thread).
     struct ImportOptions {
         bool  addToMaster = true;    // as the master's new top layer
         bool  makeActive  = true;    // the raster the canvas paints into
@@ -101,10 +97,8 @@ public:
     };
     NodeId importImage(const ImageFile& image, const ImportOptions& options);
     NodeId importTiles(const TileGrid& tiles, const std::string& name, const ImportOptions& options);
-    // Deletes nodes and heals the graph around them: whatever a deleted node fed is re-fed by
-    // the node upstream of it, found by walking up through deleted nodes that have exactly one
-    // input (a unary input, or a one-layer stack). Nodes with several inputs or none (a
-    // compositor, a raster) leave their users unconnected. The master is never deleted.
+    // Deletes nodes and heals the graph: what a deleted node fed is re-fed from upstream, through
+    // deleted nodes with exactly one input. Others leave their users unconnected. Never the master.
     bool   deleteNodes(const std::vector<NodeId>& ids);
     bool   deleteNode(NodeId id) { return deleteNodes({ id }); }
     void   setNodePosition(NodeId id, float x, float y);
@@ -127,24 +121,21 @@ public:
     void cancelPreview();
     const EditPreview& preview() const { return m_preview; }
 
-    // ---- brush strokes on the active raster (viewport). Dabs go into the Project's scratch
-    // stroke and are recomposed over the raster's committed pixels into its draft every call:
-    // the graph and the viewport update live, the committed pixels stay untouched. endStroke()
-    // commits the draft (one commit in the raster's own history, one step in the project's).
+    // ---- brush strokes on the active raster, into its draft (everything updates live).
+    // endStroke() commits it: one raster commit, one history step.
     void beginStroke(const BrushParams& params, StrokePoint at);
     void strokeTo(std::span<const StrokePoint> path);   // through every point, applied once
     void endStroke();
     bool strokeActive() const { return m_stroke.active(); }
 
-    // ---- history: one step per user action. Raster pixels live in each raster's own commits
-    // (RasterData::history()); a step refers to the commits it made.
+    // ---- history: one step per user action, referring to the raster commits it made
     bool canUndo() const { return !m_stroke.active() && m_history.canUndo(); }
     bool canRedo() const { return !m_stroke.active() && m_history.canRedo(); }
     bool undo();
     bool redo();
     size_t historyBytes() const;   // what the rasters keep for undo
 
-    // ---- events (delivered synchronously, in subscription order)
+    // ---- events (synchronous, in subscription order; listeners may (un)subscribe while called)
     using Listener = std::function<void(const ProjectEvent&)>;
     int  subscribe(Listener l);
     void unsubscribe(int token);
@@ -176,6 +167,8 @@ private:
 
     EditPreview m_preview;
 
-    std::vector<std::pair<int, Listener>> m_listeners;
+    struct Subscriber { int token; Listener listener; bool removed = false; };
+    std::vector<std::unique_ptr<Subscriber>> m_listeners;  // stable addresses: safe to grow mid-emit
     int m_nextToken = 1;
+    int m_emitting  = 0;                                    // emit() depth
 };

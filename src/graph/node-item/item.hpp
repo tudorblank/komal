@@ -1,33 +1,30 @@
 #pragma once
-// A node as the graph draws it (not the document Node): every box, port and control of one node, laid out in graph space from
-// the node's type and state. It is the single source of truth for drawing (painter) and
-// for hit testing (panel), so the two can never disagree.
+// A node as the graph draws it (not the document Node): every box, port and control, laid out
+// in graph space. Drawing (painter) and hit testing (panel) both read it, so they always agree.
 //
-//   ┌ Title ─────────────┐   header band + body: the node's own I/O and its thumbnail
+//   ┌ Title ─────────────┐   header + body: I/O and thumbnail
 //   │ Input       Output ○
 //   │   ┌──────────────┐ │
 //   │   │    thumb     │ │
 //   │   └──────────────┘ │
 //   └────────────────────┘
-//   ┌────────────────────┐   properties (only nodes that have some): Move offset,
-//   ○ thumb  Layer   ... │   a compositor's layer stack (one input port per layer; empty, a
-//   ┆   drop here        ┆   drop zone). While a link or a layer is dragged over a stack, a
-//   ○ thumb  Layer   ... │   gap opens where it would land, wherever the mouse is.
+//   ┌────────────────────┐   properties: Move offset, or a layer stack (a port per layer;
+//   ○ thumb  Layer   ... │   a gap opens where a dragged link or layer would land)
+//   ┆   drop here        ┆
+//   ○ thumb  Layer   ... │
 //   └────────────────────┘
-//   ┌────────────────────┐   signals: Main (+ Wet and Dry on effect nodes), each collapsible.
-//   │ v Main             │   Collapsed shows alpha (and any masked channel), expanded all four.
-//   ○ ───────[]──  100 A │   Every channel row has a mask input port on the left edge.
+//   ┌────────────────────┐   signals: Main (+ Wet, Dry), collapsible. Collapsed: alpha and any
+//   │ v Main             │   masked channel. Each channel row has a mask port.
+//   ○ ───────[]──  100 A │
 //   ○ ───[]──────   50 R │
 //   └────────────────────┘
 //
-// The master output has no body (it has no output and the canvas is its picture): its
-// header sits on top of its layer stack. Layers are added by dropping into the stack itself:
-// there is no separate "add" input.
+// The master has no body (no output; the canvas is its picture): its header sits on its stack.
 
 #include "core/project.hpp"
 
 #include <imgui.h>
-#include <imgui_internal.h>   // ImRect: plain geometry, stable across ImGui versions
+#include <imgui_internal.h>   // ImRect
 #include <vector>
 
 struct NodeItemPort {
@@ -93,14 +90,14 @@ struct NodeItem {
     const NodeItemPort* input(const InputSlot& slot) const;
 };
 
-// A stack laid out around a drag: `hidden` (a layer being dragged) is left out, and a gap opens
-// at `gap`, a position among the layers shown (0 = bottom). -1: none.
+// A stack laid out around a drag: `hidden` layer left out, a gap at position `gap` (0 = bottom). -1: none.
 struct StackLayout {
     int gap    = -1;
     int hidden = -1;
 };
 
-NodeItem buildNodeItem(const Project& project, const Node& n, const NodeItemState& view, StackLayout stack = {});
+// Lays `n` out into `out`, reusing its storage.
+void buildNodeItem(const Project& project, const Node& n, const NodeItemState& view, StackLayout stack, NodeItem& out);
 
 // A layer row's thumbnail, inside its rect.
 ImRect layerThumbRect(const ImRect& row);

@@ -1,7 +1,6 @@
 #pragma once
-// Draws node items and links. Everything is transformed to screen space before it reaches
-// the draw list, so ImGui tessellates curves and antialiases edges for the size they really
-// have on screen: crisp at any zoom, with no vertex rescaling afterwards.
+// Draws node items and links, transformed to screen space first so ImGui tessellates and
+// antialiases at the real size: crisp at any zoom.
 
 #include "graph/camera.hpp"
 #include "graph/node-item/item.hpp"
@@ -30,17 +29,15 @@ struct NodeItemVisual {
     int  activeWidget  = -1;
 };
 
-// Text at `size` graph units. Glyphs are baked at a few quantized sizes (a smooth zoom would
-// otherwise bake a new font size every frame) and scaled to the exact size. `font`:
-// graphFont() when null (graphNumberFont() for values).
+// Text at `size` graph units, baked at quantized sizes and scaled to fit (a smooth zoom would
+// bake a new size every frame). `font`: graphFont() when null.
 void  drawText(const GraphPaint& g, ImVec2 graphPos, float size, ImU32 color, const char* text, const char* end = nullptr,
                ImFont* font = nullptr);
 float textWidth(float size, const char* text, const char* end = nullptr, ImFont* font = nullptr);   // graph units
 std::string elide(const std::string& text, float size, float maxWidth);
 
-// A node is painted in three layers, in this order: its boxes and controls, the outline of
-// its state (active raster, selected, hovered: one ring each around the whole node), then
-// its ports, so they always sit on top of every edge.
+// A node paints in three layers: boxes and controls, state rings (active, selected, hovered),
+// then ports, so they sit on top of every edge.
 void paintNode(const GraphPaint& g, const Project& project, const Node& n, const NodeItem& item,
                const NodeItemVisual& visual, NodeItemThumbnails& thumbs);
 void paintNodeOutline(const GraphPaint& g, const NodeItem& item, const NodeItemVisual& visual);
@@ -55,7 +52,7 @@ ImVec2    linkPoint(const LinkCurve& c, float t);
 float     linkDistance(const LinkCurve& c, ImVec2 p);   // screen pixels
 float     linkNearest(const LinkCurve& c, ImVec2 p);    // the t (0..1) of the curve's point nearest to p
 void      paintLink(const GraphPaint& g, const LinkCurve& c, ImU32 color, bool highlight);
-// A link into the pinned master: dashed, fading out on its way there (it may cross the panel).
+// A link into the pinned master: dashed, fading out on the way.
 void      paintFadingLink(const GraphPaint& g, const LinkCurve& c, ImU32 color, bool highlight);
 void      paintPort(const GraphPaint& g, ImVec2 graphPos, ImU32 color, bool connected, bool hovered, bool placeholder);
 void      paintInsertButton(const GraphPaint& g, ImVec2 screenPos, bool hovered);

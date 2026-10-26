@@ -3,6 +3,7 @@
 #include "canvas/canvas-panel.hpp"
 #include "graph/panel.hpp"
 #include "ui/image-importer.hpp"
+#include "ui/navigator.hpp"
 #include "ui/tools/color-panel.hpp"
 #include "ui/tools/tool-manager.hpp"
 #include "ui/tools/toolbox-panel.hpp"
@@ -26,16 +27,14 @@ public:
     void setUiScale(float scale) { m_graphPanel.setUiScale(scale); }
 
     bool quitRequested() const { return m_quit; }
-    // Work in progress that needs frames without new input (an import, tiles still coming in, a
-    // stroke, thumbnails): the app keeps rendering while true, and may sleep otherwise.
+    // Work that needs frames without new input (imports, tiles, strokes, thumbnails): no idle sleep.
     bool busy() const;
     void setGpuInfo(std::string s) { m_gpuInfo = std::move(s); }
     void setTimings(float acquireMs, float cpuMs) { m_acquireMs = acquireMs; m_cpuMs = cpuMs; }
     void setWindow(SDL_Window* window) { m_window = window; }
     SDL_Cursor* cursorOverride() const { return m_canvasPanel.cursorOverride(); }   // a tool's system cursor, this frame
     void openFile(std::string path) { m_importer.open(std::move(path)); }   // any thread: File > Import, command line
-    // A file dropped on the window at (x, y), window coordinates: imported if it lands on the
-    // canvas or the graph, ignored anywhere else (handled once the panels are laid out).
+    // A file dropped at window (x, y): imported if it lands on the canvas or the graph.
     void dropFile(std::string path, float x, float y) { m_drops.push_back({ std::move(path), ImVec2(x, y) }); }
 
 private:
@@ -54,6 +53,7 @@ private:
     ToolboxPanel        m_toolbox;
     ToolPropertiesPanel m_toolProperties;
     ColorPanel          m_colorPanel;
+    Navigator           m_navigator;
     absl::flat_hash_map<unsigned int, float> m_dockShares;   // dock split -> its first child's share (see drawDockspace)
 
     ImageImporter       m_importer;
@@ -68,7 +68,7 @@ private:
     bool m_quit = false;
     bool m_resetLayout = false;
     bool m_showCanvas = true, m_showGraph = true, m_showTools = true, m_showToolProperties = true, m_showInfo = false;
-    bool m_showColor = true;
+    bool m_showColor = true, m_showNavigator = true;
     bool m_showDemo = false;
 
     std::string m_gpuInfo;

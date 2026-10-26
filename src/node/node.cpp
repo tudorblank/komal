@@ -6,7 +6,7 @@ namespace {
 
 int gainAt(const Gain& g, int i) { return g.perPixel ? mul255(g.k, g.perPixel[i]) : g.k; }
 
-// dst (cleared) = src * gains. Canonical in => canonical out. Returns true if non-empty.
+// dst (cleared) = src * gains. Canonical in, canonical out. True if non-empty.
 bool applyGainInto(Tile& dst, const Tile& src, const Gain (&g)[4])
 {
     const RGBA* s = src.getReadAll();
@@ -39,8 +39,7 @@ bool applyGainInto(Tile& dst, const Tile& src, const Gain (&g)[4])
 
 bool allUnit(const Gain (&g)[4]) { return g[0].isUnit() && g[1].isUnit() && g[2].isUnit() && g[3].isUnit(); }
 
-// a then b, as one gain per channel. Only possible while at most one of each pair is per-pixel
-// (two per-pixel masks on one channel would need a combined buffer).
+// a then b as one gain per channel; false if a channel has two per-pixel masks.
 bool foldGains(const Gain (&a)[4], const Gain (&b)[4], Gain (&out)[4])
 {
     for (int c = 0; c < 4; ++c) {
@@ -51,9 +50,9 @@ bool foldGains(const Gain (&a)[4], const Gain (&b)[4], Gain (&out)[4])
     return true;
 }
 
-MaskTile g_fullMask;   // contents unused: only its address marks "255 everywhere"
+MaskTile g_fullMask;   // only its address is used: "255 everywhere"
 
-} // namespace
+}
 
 // ============================ RENDER CONTEXT ============================
 const MaskTile* const RenderCtx::kFullMask = &g_fullMask;
@@ -91,13 +90,12 @@ const Tile* Node::fetch(int tx, int ty, RenderCtx& ctx)
     if (!TileUtils::tileOverlaps(bounds(), tx, ty)) return nullptr;
     if (isPassthrough()) return fetchWet(tx, ty, ctx);   // zero-copy
 
-    // Main first: where the output's alpha is zero (scale 0, or its mask is empty here),
-    // nothing below needs to be fetched at all.
+    // Main first: where its alpha is zero here, nothing below is fetched.
     Gain main[4];
     if (!planGains(signal(NodeSignal::Main), tx, ty, ctx, main)) return nullptr;
 
     if (!dryOn()) {
-        // Output = Main(Wet(raw)): fold both into one pass when the masks allow it.
+        // Main(Wet(raw)), folded into one pass when the masks allow.
         Gain wet[4];
         if (!planGains(signal(NodeSignal::Wet), tx, ty, ctx, wet)) return nullptr;
         Gain folded[4];
@@ -133,8 +131,7 @@ void Node::setScale(NodeSignal sig, NodeChannel ch, float v)
     float& slot = m_signals[int(sig)].scale[int(ch)];
     if (slot == v) return;
 
-    // Switching Wet or Dry on/off changes bounds and footprint; anything else only re-shapes
-    // the same tiles.
+    // Turning Wet or Dry on/off changes bounds and footprint; anything else reshapes the same tiles.
     const bool flips = ch == NodeChannel::A && (gainByte(slot) != 0) != (gainByte(v) != 0);
     if (flips && sig != NodeSignal::Main) change([&] { slot = v; }, Evict::Output);
     else changeKnown(footprint(), Bounds::Keep, Evict::Output, [&] { slot = v; });
@@ -279,8 +276,7 @@ void Node::emitDirty(const TileSet& tiles, Evict e)
 
 void Node::invalidateBounds()
 {
-    // A clean node's listeners may be clean; a dirty one's listeners are already dirty (they
-    // can only recompute through this node, which would clean it). So stopping here is safe.
+    // Already dirty: so are its listeners (they can only recompute through this node).
     if (m_boundsDirty) return;
     m_boundsDirty = true;
     for (auto& w : std::vector<std::weak_ptr<Node>>(m_listeners))
@@ -307,8 +303,7 @@ const MaskTile* Node::maskTile(Node& mask, int tx, int ty, RenderCtx& ctx)
     const MaskTile* m = nullptr;
     if (ctx.findMask(&mask, tx, ty, m)) return m;
 
-    // The mask over white: transparent leaves the channel alone, opaque pixels give their
-    // luma. With premultiplied pixels that is 255 - a + luma(rgb), luma(rgb) <= a.
+    // The mask over white: premultiplied, 255 - a + luma(rgb), with luma(rgb) <= a.
     m = RenderCtx::kFullMask;   // no tile: nothing of the mask here, the channel is untouched
     const size_t mk = ctx.mark();
     if (const Tile* src = mask.fetch(tx, ty, ctx)) {

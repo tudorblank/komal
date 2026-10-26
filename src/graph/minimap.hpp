@@ -1,12 +1,11 @@
 #pragma once
-// The navigator: a small map of the whole graph in the panel's bottom-right corner (left of the
-// pinned master if they would overlap), with the part on screen outlined.
+// A small map of the whole graph, bottom-right (left of the pinned master if they'd overlap),
+// with the part on screen outlined.
 //
 //   click a node        centres the view on it
 //   click / drag empty  centres the view on that point, following the mouse
 //
-// It keeps no nodes of its own: every frame it draws the panel's node items (their bounds and
-// header colour) and links, scaled down, so it can never disagree with the graph.
+// Draws the panel's own node items and links, scaled down: it can't disagree with the graph.
 
 #include "graph/camera.hpp"
 #include "graph/node-item/item.hpp"

@@ -1,11 +1,9 @@
 #pragma once
-// A raster: its committed pixels (sparse tile grid + bounds), the draft an edit in progress
-// paints into, and its own history of commits (raster-history.h). RasterEditor is the one way
-// to change committed pixels.
+// A raster: committed pixels (sparse tiles + bounds), the draft an edit in progress paints into,
+// and its own history. RasterEditor is the one way to change committed pixels.
 //
-// Edits that take a while (a brush stroke) go to the draft: reads show it on top of the
-// committed tiles, so everything downstream updates live, but the committed pixels are left
-// alone until commitDraft() turns the whole edit into one commit, at once.
+// Long edits (a stroke) go to the draft: reads show it over the committed tiles, so everything
+// downstream updates live, and commitDraft() turns it into one commit.
 
 #include "raster/raster-history.hpp"
 #include "raster/tile-grid.hpp"
@@ -123,8 +121,8 @@ inline void gatherFromImage(Tile& out, const FlatImage& image, const TileSpan& a
     w.markChanged();
 }
 
-// The image placed at (imageX, imageY), as tiles: canonical, stats settled, empty ones left
-// out. Touches nothing but `out`, so the slow part of an import can run on another thread.
+// The image placed at (imageX, imageY), as tiles: canonical, stats settled, empty ones left out.
+// Touches only `out`: safe on a worker thread.
 inline void tilesFromImage(TileGrid& out, const FlatImage& image, int imageX, int imageY)
 {
     if (image.width <= 0 || image.height <= 0) return;
@@ -136,8 +134,7 @@ inline void tilesFromImage(TileGrid& out, const FlatImage& image, int imageX, in
     });
 }
 
-// out = the source world shifted by (shiftX, shiftY), over destination tile `destArea`.
-// Returns false (and leaves `out` clear) when no source tile contributes.
+// out = the source shifted by (shiftX, shiftY), over `destArea`. False (out clear) if nothing contributes.
 inline bool gatherFromTiles(Tile& out, TileReader& source, const TileSpan& destArea, int shiftX, int shiftY)
 {
     out.clear();
@@ -261,7 +258,7 @@ public:
         assert(params.mode != CompositeMode::Replace);
         assert(TileUtils::inWorld(shiftX) && TileUtils::inWorld(shiftY));
 
-        // Whole-tile shift: every source tile lines up with one destination tile, apply directly.
+        // Whole-tile shift: source tiles line up with destination tiles.
         const bool wholeTiles = ((shiftX | shiftY) & TileUtils::kTileMask) == 0;
         const int  dtx = shiftX >> TileUtils::kTileShift, dty = shiftY >> TileUtils::kTileShift;
 
@@ -283,8 +280,8 @@ public:
         const BoundsI before = m_r.m_bounds;
         BoundsI grown = before;
 
-        // Per side (0=minX 1=maxX 2=minY 3=maxY): could a touched tile have held the old
-        // extreme, and does a touched tile still reach it? Shrinking needs a full recompute.
+        // Per side (minX, maxX, minY, maxY): could a touched tile have held the old extreme, and
+        // does one still reach it? Shrinking needs a full recompute.
         bool cand[4]  = {};
         bool reach[4] = {};
 

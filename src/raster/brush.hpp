@@ -1,9 +1,7 @@
 #pragma once
-// Brush strokes: dabs accumulate in a scratch raster (coverage only), which is then applied
-// over the raster's committed pixels into its draft. The committed pixels stay as they were
-// before the stroke until it is committed, so re-applying from them every time means stroke
-// opacity is applied exactly once, however many dabs overlap, and Over (paint) / Erase are the
-// ordinary TileEdit::apply modes.
+// Brush strokes: dabs accumulate coverage in a scratch grid, re-applied over the raster's
+// committed pixels into its draft each time. So stroke opacity applies exactly once however many
+// dabs overlap, and paint / erase are plain TileEdit::apply modes.
 //
 //   stroke.begin(params, point);                       // first dab
 //   stroke.moveTo(point);                              // dabs along the segment, spaced by params.spacing
@@ -12,8 +10,7 @@
 //   stroke.end();
 //   raster.commitDraft();                              // one commit in the raster's history
 //
-// Each point has a pressure (a pen's; 1 for a mouse) that can scale the dab's size and its
-// flow (BrushParams::pressureSize / pressureFlow), interpolated along every segment.
+// Pressure (1 for a mouse) can scale dab size and flow, interpolated along each segment.
 
 #include "raster/raster-data.hpp"
 
@@ -57,8 +54,8 @@ private:
     static constexpr int kDabTable  = 4096;
     static constexpr int kSizeLevels = 64;   // pressure steps of the diameter
 
-    // One dab size: coverage * flow (0..255) by squared distance from the centre, so stamping
-    // needs no sqrt or smoothstep per pixel. Built on first use, one per size level.
+    // One dab size: coverage * flow (0..255) by squared distance, so stamping needs no sqrt per
+    // pixel. Built on first use, per size level.
     struct DabShape {
         float radius  = 0.0f;   // reach, rim included
         float toIndex = 0.0f;   // squared distance -> table index
@@ -84,7 +81,5 @@ private:
     mutable std::unique_ptr<Tile> m_colored = std::make_unique<Tile>();   // composeTile scratch
 };
 
-// Re-applies `stroke` to `tiles` of the raster being edited. original(tx, ty) must return the
-// tile as it was before the stroke began (nullptr if it didn't exist).
 // Recomposes `tiles` of the raster's draft: its committed pixels with the stroke applied.
 void applyStroke(RasterData& raster, const BrushStroke& stroke, const TileSet& tiles);

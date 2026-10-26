@@ -3,9 +3,7 @@
 
 class ToolManager;
 
-// ToolOverlayItem (drawOverlay): what the active tool shows over the canvas (the pixel under the
-// mouse when zoomed in, a ring too big for a system cursor), drawn by the tool itself: the
-// bridge between the canvas and the tools.
+// What the active tool draws over the canvas (Tool::drawOverlay): the bridge to the tools.
 class ToolOverlayItem : public CanvasItem {
 public:
     explicit ToolOverlayItem(ToolManager& tools) : m_tools(tools) {}

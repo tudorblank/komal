@@ -18,8 +18,7 @@ extern const unsigned int  kAppIconSize;
 
 namespace {
 
-// The window's icon (title bar, taskbar, Alt+Tab, the Dock while running), the same on every
-// platform. Windows and macOS builds also carry it in the .exe / the app bundle (CMakeLists.txt).
+// The window icon at runtime (the .exe / app bundle carry it too, see CMakeLists.txt).
 void setWindowIcon(SDL_Window* window)
 {
     int w = 0, h = 0, channels = 0;
@@ -47,13 +46,12 @@ bool Application::init(const char* title, int width, int height)
 {
     // ---- SDL
 #if defined(__linux__)
-    // prefer X11 (XWayland on KDE Wayland) [swapchains pace much better there]
-    // fallback: Wayland if X11 is unavailable.
+    // Prefer X11 (XWayland): swapchains pace better there. Wayland if X11 is unavailable.
     if (!SDL_getenv("SDL_VIDEO_DRIVER"))
         SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11,wayland");
 #endif
 
-    // The app id: Wayland compositors and X11 docks match the window to komal.desktop by it.
+    // The app id: desktops match the window to komal.desktop by it.
     SDL_SetAppMetadata("Komal", nullptr, "komal");
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -88,10 +86,7 @@ bool Application::init(const char* title, int width, int height)
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
-    // Linux ~/.local/share/Komal
-    // Windows %APPDATA%\Komal
-    // macOS ~/Library/Application Support/Komal
-    
+    // Layout file: ~/.local/share/Komal, %APPDATA%\Komal, ~/Library/Application Support/Komal.
     if (char* dir = SDL_GetPrefPath(nullptr, "Komal")) {
         m_iniPath = std::string(dir) + "imgui.ini";
         SDL_free(dir);
@@ -145,7 +140,7 @@ int Application::exec()
             processEvents();
             continue;
         }
-        // Idle: sleep until input arrives, rather than redrawing an unchanged UI at the refresh rate.
+        // Idle: sleep until input arrives.
         if (m_quietFrames >= kIdleFrames && !needsFrame()) {
             const int timeoutMs = ImGui::GetIO().WantTextInput ? 500 : 1000;   // a text caret blinks; otherwise a safety net
             SDL_WaitEventTimeout(nullptr, timeoutMs);   // leaves the event queued for processEvents()

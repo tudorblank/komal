@@ -11,7 +11,7 @@ static_assert(ImGuiMouseCursor_COUNT == 11, "update SystemCursors::kCount and th
 
 namespace {
 
-// libXcursor, loaded at runtime (no build dependency; SDL loads the same library).
+// libXcursor, loaded at runtime (no build dependency).
 struct XcursorImage {
     unsigned int  version, size, width, height, xhot, yhot, delay;
     unsigned int* pixels;   // premultiplied ARGB
@@ -84,7 +84,7 @@ SDL_Cursor* cursorFromImage(const XcursorImage* img)
     return cursor;
 }
 
-} // namespace
+}
 
 void SystemCursors::init(SDL_Window* window)
 {

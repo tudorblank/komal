@@ -1,6 +1,5 @@
 #pragma once
-// Menu entries made from registered actions (core/actions.h): the title, shortcut, enabled
-// state and check mark all come from the action, and picking the entry runs it.
+// A menu entry from a registered action: title, shortcut, enabled and checked come from it.
 
 #include "core/actions.hpp"
 

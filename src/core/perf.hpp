@@ -1,6 +1,5 @@
 #pragma once
-// Per-frame CPU timings of the main subsystems, for the Info panel (and KOMAL_PERF=1, which
-// prints a summary to stderr every second: average and worst frame per counter).
+// Per-frame CPU timings for the Info panel (KOMAL_PERF=1 also prints them every second).
 //
 //   { PerfScope s(Perf::Stroke); ... }      // adds the scope's time to this frame's counter
 //   Perf::endFrame();                       // once per frame
@@ -17,7 +16,7 @@ double average(Counter c);   // ms per frame, smoothed
 double worst(Counter c);     // ms, worst frame of the last second
 const char* name(Counter c);
 
-} // namespace Perf
+}
 
 class PerfScope {
 public:

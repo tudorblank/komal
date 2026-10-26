@@ -1,6 +1,6 @@
 #pragma once
 // The concrete nodes: the raster root (the only place pixels are edited), single-input nodes
-// (Reference, Move) and the compositor (an ordered stack of inputs, the master output is one).
+// (Reference, Move) and the compositor (an ordered stack; the master is one).
 
 #include "node/node.hpp"
 
@@ -18,11 +18,10 @@ public:
     bool alphaLocked() const { return m_alphaLocked; }       // edits keep every pixel's alpha
     void setAlphaLocked(bool locked) { m_alphaLocked = locked; }
 
-    // THE ways to change its pixels; each tells the graph what changed, so that can't be forgotten.
+    // The only ways to change its pixels; each tells the graph what changed.
     // Straight into the committed pixels, not recorded (imports, starter content):
     EditSummary edit(const std::function<void(RasterEditor&)>& body);
-    // An edit in progress, into the raster's draft (shown live, committed later); `body`
-    // returns the tiles it changed:
+    // An edit in progress, into the draft (shown live, committed later); `body` returns the tiles it changed:
     void draft(const std::function<TileSet(RasterData&)>& body);
     RasterCommitId commitDraft();   // one commit in the raster's history (kNoRasterCommit: nothing changed)
     void discardDraft();
@@ -47,7 +46,7 @@ public:
     const NodePtr& input() const { return m_input; }
     bool setInput(NodePtr in);   // false if it would make a cycle
 
-    std::vector<NodePtr> inputs() const override { return m_input ? std::vector<NodePtr>{ m_input } : std::vector<NodePtr>{}; }
+    std::span<const NodePtr> inputs() const override { return { &m_input, m_input ? 1u : 0u }; }
     void replaceInputInstance(const NodePtr& o, const NodePtr& n) override { if (m_input == o) setInput(n); }
     void detachAllInputs() override { setInput(nullptr); }
 
@@ -71,8 +70,7 @@ public:
     const Tile* fetchWet(int tx, int ty, RenderCtx& ctx) override { return m_input ? m_input->fetch(tx, ty, ctx) : nullptr; }
 };
 
-// Shifts its input by whole pixels. An effect node: Wet is the moved input, Dry the input
-// where it was.
+// Shifts its input by whole pixels. Wet: the moved input; Dry: the input where it was.
 class MoveNode : public UnaryNode {
     struct Private { explicit Private() = default; };
 public:
@@ -102,7 +100,7 @@ public:
     static std::shared_ptr<CompositorNode> create();
 
     const std::vector<NodePtr>& layers() const { return m_layers; }
-    std::vector<NodePtr> inputs() const override { return m_layers; }
+    std::span<const NodePtr> inputs() const override { return m_layers; }
     bool has(const NodePtr& n) const { return std::find(m_layers.begin(), m_layers.end(), n) != m_layers.end(); }
 
     bool addLayerAt(NodePtr in, size_t index);

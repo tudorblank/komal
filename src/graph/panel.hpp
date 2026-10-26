@@ -1,8 +1,7 @@
 #pragma once
-// The node graph of the Project, drawn and edited entirely in this panel: nodes carry their
-// own thumbnail, properties and signal controls (see node-item/item.h), and every user action
-// becomes a Project call. Nothing is cached from the Project but view state (camera,
-// selection, collapsed sections, z order): items are rebuilt from it every frame.
+// The node graph, drawn and edited here: every user action becomes a Project call. Only view
+// state is kept (camera, selection, collapsed sections, z order); node items are rebuilt from the
+// Project every frame. Split over panel.cpp (frame, layout), panel-input.cpp, panel-paint.cpp.
 //
 //   LMB on a node            select (Ctrl toggle, Shift chain), drag to move
 //   LMB on empty space       rubber band (Ctrl toggles, Shift adds); click clears
@@ -12,15 +11,13 @@
 //   drag a linked input      lift the link off (drop on nothing disconnects)
 //   hover a link, click +    insert a node into it
 //   RMB                      click: node menu / add menu; hold or drag: zoom
-//   MMB drag, wheel          pan, zoom
+//   MMB drag, wheel          pan (sideways wheel: left / right);  Ctrl+wheel zoom
 //   Del / Backspace          delete selection, healing links around it
 //   F / Home                 frame selection / everything;  Ctrl+A select all
 //   Shift+A, Tab, dbl-click  add menu at the mouse
 //
-// The master compositor isn't placed in the graph: it is pinned to the panel's top-right
-// corner at 100%, like a window over it, and works exactly like any compositor node there
-// (layers, reordering, signals, masks, links). Links into it are dashed and fade out on the
-// way. The navigator (graph-minimap.h) sits in the bottom-right corner.
+// The master is pinned to the top-right corner at 100% (a compositor like any other); links into
+// it are dashed and fade out. The minimap sits bottom-right.
 
 #include "graph/camera.hpp"
 #include "graph/minimap.hpp"
@@ -44,18 +41,23 @@ public:
     void init(GpuDevice& gpu, Project& project, const InputFrame& input, ActionRegistry& actions);
     void shutdown();
     void setUiScale(float scale) { m_uiScale = scale; }
+    // The canvas has the pointer: its shortcuts win over the focused graph's.
+    void setPointerElsewhere(bool elsewhere) { m_pointerElsewhere = elsewhere; }
     void draw(bool* open);
-    // A file dropped at `screen` with `window` topmost there: true if it lands on the graph,
-    // with the graph point under it.
-    bool dropTarget(const ImGuiWindow* window, ImVec2 screen, ImVec2& graph) const;
+    // A file dropped at `screen` (`window` topmost): true if it lands on the graph, with the
+    // position for a new node centred under it.
+    bool dropTarget(const ImGuiWindow* window, ImVec2 screen, ImVec2& nodePos) const;
     void selectOnly(NodeId id);
+    const GraphSelection::Set& selection() const { return m_selection.ids(); }
     bool busy() const { return m_thumbs.pending(); }   // work left that needs more frames
-    // Where nodes' pixels are, for the canvas to show: a node double-clicked, or "Show in
-    // Canvas" on a selection. True once per request, with the world rectangle (empty: nothing
-    // there).
+    // A world rectangle for the canvas to show (double-click, "Show in Canvas"). True once per request.
     bool takeCanvasFrame(BoundsI& out);
 
 private:
+    static constexpr float       kPinMargin   = 12.0f;   // points between the pinned master and the panel's edges
+    static constexpr const char* kNodeContext = "##node-context";
+    static constexpr const char* kValueEdit   = "##value-edit";
+
     struct Hit {
         enum class Kind : uint8_t { None, Port, Widget, Node, Link, Insert, Minimap };
         Kind   kind  = Kind::None;
@@ -151,6 +153,7 @@ private:
     GraphMinimap m_minimap;
     std::vector<GraphMinimap::Edge> m_minimapEdges;
     float       m_uiScale = 1.0f;
+    bool        m_pointerElsewhere = false;
     int         m_frameOnStart = 3;   // frames to frame everything for (the dock layout settles first)
 
     absl::flat_hash_map<NodeId, NodeItemState> m_viewStates;

@@ -1,27 +1,19 @@
 #pragma once
-// EditPreviewItem (drawGpu): the live picture of an edit being dragged in the graph
-// (EditPreview), drawn entirely on the GPU: while a slider or an offset moves, no tile is
-// recomputed on the CPU.
+// The live picture of an edit being dragged in the graph (EditPreview), drawn on the GPU: while a
+// slider or offset moves, no tile is recomputed on the CPU.
 //
-// When the drag starts, the nodes the edit reaches are found: the edited node and everything
-// downstream of it, through inputs and masks alike, up to the master. Everything else they read
-// is frozen into tile atlases, once (rendered as it becomes visible, within the frame budget):
-//   - in every stack that is recomposed, the runs of layers the edit doesn't reach,
-//   - the raw wet of reached nodes that don't take it from an input (the edit itself, a raster
-//     reached only through its masks, ...), or for a Move/Reference the output of its input,
+// begin() finds the nodes the edit reaches (the edited node and everything downstream, through
+// inputs and masks, up to the master). Whatever else they read is frozen into tile atlases
+// ("leaves", rendered as they become visible, at the zoom's level of detail):
+//   - in each recomposed stack, the runs of layers the edit doesn't reach,
+//   - the raw wet of reached nodes that don't read an input (or a Move/Reference's input),
 //   - every mask the edit doesn't reach.
-// Frozen tiles are kept at the zoom's level of detail (TilePyramid), so a zoomed-out view of a
-// big image needs a few coarse tiles, not every full-size one.
-// Each frame the GPU then rebuilds the reached nodes from the master down, pass by pass in view
-// space: frozen leaves drawn through a shifted camera (that is how a Move moves), each node's
-// signals applied by preview-signal.wgsl (scales, masks, Wet over Dry, Main), each stack
-// recomposed. A node reached twice (used by two nodes, or as an input and a mask) is built once
-// per offset it is seen through and shared.
+// Each frame the reached nodes are rebuilt from the master down, in view space: leaves drawn
+// through a shifted camera (that's how a Move moves), signals applied by preview-signal.wgsl,
+// stacks recomposed. A node reached twice is built once per offset it's seen through.
 //
-// Only what changed is redone: a frame where neither the edit nor the view moved renders
-// nothing, and a leaf pass whose picture is the same as last time keeps its texture.
-//
-// begin() returns false when the edit doesn't reach the master (nothing on screen changes).
+// A frame where neither the edit nor the view moved renders nothing; an unchanged leaf pass
+// keeps its texture. begin() is false when the edit doesn't reach the master.
 
 #include "core/project.hpp"
 #include "canvas/item.hpp"
@@ -51,14 +43,14 @@ public:
     bool settled() const override { return !m_active || m_leavesReady; }
 
 private:
-    // A frozen input: tiles of something the edit can't change, rendered on demand and kept,
-    // per level of detail.
+    // A frozen input: tiles of something the edit can't change, kept per level of detail.
     struct Leaf {
         TilePyramid pyramid;
         struct Level {
-            TileSet   done;           // uploaded (empty results included)
+            TileSet   done;               // uploaded (empty results included)
             TileAtlas atlas;
-            uint64_t  revision = 0;   // bumps with every upload
+            uint64_t  revision = 0;       // bumps with every upload
+            uint64_t  placed   = ~0ull;   // the revision the atlas instances were built for
         } levels[TilePyramid::kLevels];
     };
     // Where a node reads something from: a frozen leaf, or a reached node rebuilt each frame.
@@ -87,7 +79,7 @@ private:
     struct LeafPass {
         int      leaf = -1, level = -1;
         uint64_t revision = 0;
-        float    offsetX = 0, offsetY = 0, panX = 0, panY = 0, zoom = 0;
+        float    offsetX = 0, offsetY = 0, panX = 0, panY = 0, zoom = 0, rotation = 0;
         bool operator==(const LeafPass&) const = default;
     };
     // Everything a frame's result depends on: the same again renders nothing.
@@ -95,17 +87,15 @@ private:
         EditPreview::Kind kind = EditPreview::Kind::None;
         NodeId   node = kNoNodeId;
         int      signal = 0, channel = 0, x = 0, y = 0;
-        float    scale = 0, panX = 0, panY = 0, zoom = 0;
+        float    scale = 0, panX = 0, panY = 0, zoom = 0, rotation = 0;
         uint32_t width = 0, height = 0;
         int      level = -1;
         uint64_t revisions = 0;   // of every leaf's current level
         bool operator==(const FrameKey&) const = default;
     };
-    struct TileRange { int minX, minY, maxX, maxY; };
-    struct Uniform { WGPUBuffer buffer = nullptr; WGPUBindGroup group = nullptr; };
-    // Uniforms of one kind; a frame takes fresh ones (every pass needs its own contents).
+    // Uniforms of one kind; each pass of a frame takes its own.
     struct UniformPool {
-        std::vector<Uniform> items;
+        std::vector<GpuUniform> items;
         size_t used = 0;
     };
 
@@ -120,12 +110,12 @@ private:
     int  signalOp(int plan, int wet, int dry, Vec2 offset);
     float scale(const Node& n, NodeSignal s, NodeChannel c) const;
 
-    TileRange leafRange(const CanvasFrame& frame, const Op& op) const;   // its tiles on screen, at m_level
+    TileRect  leafRange(const CanvasFrame& frame, const Op& op) const;   // its tiles on screen, at m_level
     FrameKey  frameKey(const CanvasFrame& frame) const;
     bool catchUp(CanvasFrame& frame);         // renders missing visible leaf tiles; true if all there
     void execute(CanvasFrame& frame);
     Target&  target(const CanvasFrame& frame, size_t i);
-    Uniform& uniform(const CanvasFrame& frame, UniformPool& pool, WGPUBindGroupLayout layout, uint64_t size);
+    GpuUniform& uniform(const CanvasFrame& frame, UniformPool& pool, WGPUBindGroupLayout layout, uint64_t size);
     void releaseTargets();
 
     Project& m_project;

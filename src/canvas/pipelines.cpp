@@ -1,19 +1,18 @@
 #include "pipelines.hpp"
 #include "canvas/tiles/atlas.hpp"   // ChunkInstance layout
+#include "gfx/math.hpp"
 
 #include <cstddef>
+#include <initializer_list>
 #include <vector>
 
-extern const unsigned char kShaderColor[];     // generated from shaders/color.wgsl
-extern const unsigned char kShaderTexture[];   // generated from shaders/texture.wgsl
-extern const unsigned char kShaderPreviewSignal[];   // shaders/preview-signal.wgsl
-extern const unsigned char kShaderPreviewBlit[];     // shaders/preview-blit.wgsl
-extern const unsigned char kShaderChecker[];         // shaders/checker.wgsl
+extern const unsigned char kShaderColor[];           // generated from shaders/*.wgsl, see CMakeLists.txt
+extern const unsigned char kShaderTexture[];
+extern const unsigned char kShaderPreviewSignal[];
+extern const unsigned char kShaderPreviewBlit[];
+extern const unsigned char kShaderChecker[];
 
 namespace {
-
-struct CameraUniform { float viewProj[16]; };
-struct ColorUniform  { float model[16]; float color[4]; };
 
 WGPUBindGroupLayout uniformLayout(const GpuHandles& ctx, const char* label, WGPUShaderStage stages, uint64_t size)
 {
@@ -28,48 +27,6 @@ WGPUBindGroupLayout uniformLayout(const GpuHandles& ctx, const char* label, WGPU
     d.entryCount = 1;
     d.entries    = &e;
     return wgpuDeviceCreateBindGroupLayout(ctx.device, &d);
-}
-
-// One render pipeline for the canvas target: group 0 = camera, group 1 = `itemLayout`.
-WGPURenderPipeline makePipeline(const GpuHandles& ctx, const char* label, WGPUShaderModule module,
-                                WGPUBindGroupLayout cameraLayout, WGPUBindGroupLayout itemLayout,
-                                const WGPUBlendState& blend, const WGPUVertexBufferLayout* vertexBuffer)
-{
-    WGPUColorTargetState target{};
-    target.format    = ctx.targetFormat;
-    target.blend     = &blend;
-    target.writeMask = WGPUColorWriteMask_All;
-
-    WGPUFragmentState fs{};
-    fs.module      = module;
-    fs.entryPoint  = sv("fs_main");
-    fs.targetCount = 1;
-    fs.targets     = &target;
-
-    WGPUBindGroupLayout groups[2] = { cameraLayout, itemLayout };
-    WGPUPipelineLayoutDescriptor pld{};
-    pld.label                = sv(label);
-    pld.bindGroupLayoutCount = 2;
-    pld.bindGroupLayouts     = groups;
-    WGPUPipelineLayout layout = wgpuDeviceCreatePipelineLayout(ctx.device, &pld);
-
-    WGPURenderPipelineDescriptor rpd{};
-    rpd.label               = sv(label);
-    rpd.layout              = layout;
-    rpd.vertex.module       = module;
-    rpd.vertex.entryPoint   = sv("vs_main");
-    rpd.vertex.bufferCount  = vertexBuffer ? 1 : 0;
-    rpd.vertex.buffers      = vertexBuffer;
-    rpd.primitive.topology  = WGPUPrimitiveTopology_TriangleStrip;   // quads from vertex_index
-    rpd.primitive.frontFace = WGPUFrontFace_CCW;
-    rpd.primitive.cullMode  = WGPUCullMode_None;
-    rpd.multisample.count   = 1;
-    rpd.multisample.mask    = 0xFFFFFFFFu;
-    rpd.fragment            = &fs;
-    WGPURenderPipeline pipeline = wgpuDeviceCreateRenderPipeline(ctx.device, &rpd);
-
-    wgpuPipelineLayoutRelease(layout);
-    return pipeline;
 }
 
 WGPUBindGroupLayout textureLayout(const GpuHandles& ctx, const char* label, int count)
@@ -88,13 +45,35 @@ WGPUBindGroupLayout textureLayout(const GpuHandles& ctx, const char* label, int 
     return wgpuDeviceCreateBindGroupLayout(ctx.device, &d);
 }
 
-// A full-screen pass (a triangle from vertex_index), no camera.
-WGPURenderPipeline makeFullscreenPipeline(const GpuHandles& ctx, const char* label, WGPUShaderModule module,
-                                          const std::vector<WGPUBindGroupLayout>& groups, const WGPUBlendState* blend)
+// Premultiplied "over".
+constexpr WGPUBlendState kPremultiplied = {
+    { WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_OneMinusSrcAlpha },
+    { WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_OneMinusSrcAlpha },
+};
+// Straight-alpha "over".
+constexpr WGPUBlendState kStraight = {
+    { WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha },
+    { WGPUBlendOperation_Add, WGPUBlendFactor_One,      WGPUBlendFactor_OneMinusSrcAlpha },
+};
+
+struct PipelineDesc {
+    const char*                       label;
+    const unsigned char*              wgsl;
+    std::vector<WGPUBindGroupLayout>  groups;
+    const WGPUBlendState*             blend        = nullptr;   // null: overwrite
+    const WGPUVertexBufferLayout*     vertexBuffer = nullptr;
+    // Quads from vertex_index (strip), or one full-screen triangle (list).
+    WGPUPrimitiveTopology             topology     = WGPUPrimitiveTopology_TriangleStrip;
+};
+
+WGPURenderPipeline makePipeline(const GpuHandles& ctx, const PipelineDesc& d)
 {
+    WGPUShaderModule module = createShaderModule(ctx, reinterpret_cast<const char*>(d.wgsl), d.label);
+    if (!module) return nullptr;
+
     WGPUColorTargetState target{};
     target.format    = ctx.targetFormat;
-    target.blend     = blend;
+    target.blend     = d.blend;
     target.writeMask = WGPUColorWriteMask_All;
 
     WGPUFragmentState fs{};
@@ -104,45 +83,44 @@ WGPURenderPipeline makeFullscreenPipeline(const GpuHandles& ctx, const char* lab
     fs.targets     = &target;
 
     WGPUPipelineLayoutDescriptor pld{};
-    pld.label                = sv(label);
-    pld.bindGroupLayoutCount = groups.size();
-    pld.bindGroupLayouts     = groups.data();
+    pld.label                = sv(d.label);
+    pld.bindGroupLayoutCount = d.groups.size();
+    pld.bindGroupLayouts     = d.groups.data();
     WGPUPipelineLayout layout = wgpuDeviceCreatePipelineLayout(ctx.device, &pld);
 
     WGPURenderPipelineDescriptor rpd{};
-    rpd.label               = sv(label);
+    rpd.label               = sv(d.label);
     rpd.layout              = layout;
     rpd.vertex.module       = module;
     rpd.vertex.entryPoint   = sv("vs_main");
-    rpd.primitive.topology  = WGPUPrimitiveTopology_TriangleList;
+    rpd.vertex.bufferCount  = d.vertexBuffer ? 1 : 0;
+    rpd.vertex.buffers      = d.vertexBuffer;
+    rpd.primitive.topology  = d.topology;
     rpd.primitive.frontFace = WGPUFrontFace_CCW;
     rpd.primitive.cullMode  = WGPUCullMode_None;
     rpd.multisample.count   = 1;
     rpd.multisample.mask    = 0xFFFFFFFFu;
     rpd.fragment            = &fs;
     WGPURenderPipeline pipeline = wgpuDeviceCreateRenderPipeline(ctx.device, &rpd);
+
     wgpuPipelineLayoutRelease(layout);
+    wgpuShaderModuleRelease(module);
     return pipeline;
 }
 
-} // namespace
+}
 
 bool CanvasPipelines::create(const GpuHandles& context)
 {
     ctx = context;
-    cameraLayout = uniformLayout(ctx, "Canvas Camera Layout", WGPUShaderStage_Vertex, sizeof(CameraUniform));
+    constexpr auto kFullscreen = WGPUPrimitiveTopology_TriangleList;
+    cameraLayout = uniformLayout(ctx, "Canvas Camera Layout", WGPUShaderStage_Vertex, sizeof(Mat4::m));
 
-    // ---- solid rectangles: straight alpha
-    colorLayout = uniformLayout(ctx, "Rect Item Layout", WGPUShaderStage_Vertex | WGPUShaderStage_Fragment, sizeof(ColorUniform));
-    if (WGPUShaderModule m = createShaderModule(ctx, (const char*)kShaderColor, "color.wgsl")) {
-        WGPUBlendState blend{};
-        blend.color = { WGPUBlendOperation_Add, WGPUBlendFactor_SrcAlpha, WGPUBlendFactor_OneMinusSrcAlpha };
-        blend.alpha = { WGPUBlendOperation_Add, WGPUBlendFactor_One,      WGPUBlendFactor_OneMinusSrcAlpha };
-        colorPipeline = makePipeline(ctx, "Rect Pipeline", m, cameraLayout, colorLayout, blend, nullptr);
-        wgpuShaderModuleRelease(m);
-    }
+    // ---- solid rectangles
+    colorLayout   = uniformLayout(ctx, "Rect Layout", WGPUShaderStage_Vertex | WGPUShaderStage_Fragment, sizeof(RectParams));
+    colorPipeline = makePipeline(ctx, { "color.wgsl", kShaderColor, { cameraLayout, colorLayout }, &kStraight });
 
-    // ---- atlas tiles: premultiplied alpha
+    // ---- atlas tiles
     WGPUSamplerDescriptor sd{};
     sd.label         = sv("Atlas Sampler");
     sd.magFilter     = WGPUFilterMode_Nearest;
@@ -168,47 +146,31 @@ bool CanvasPipelines::create(const GpuHandles& context)
     ld.entries    = entries;
     atlasLayout = wgpuDeviceCreateBindGroupLayout(ctx.device, &ld);
 
-    if (WGPUShaderModule m = createShaderModule(ctx, (const char*)kShaderTexture, "texture.wgsl")) {
-        WGPUVertexAttribute attribs[5]{};
-        attribs[0] = { WGPUVertexFormat_Float32x2, offsetof(ChunkInstance, center),   0 };
-        attribs[1] = { WGPUVertexFormat_Float32x2, offsetof(ChunkInstance, scale),    1 };
-        attribs[2] = { WGPUVertexFormat_Float32x2, offsetof(ChunkInstance, uvOffset), 2 };
-        attribs[3] = { WGPUVertexFormat_Float32x2, offsetof(ChunkInstance, uvScale),  3 };
-        attribs[4] = { WGPUVertexFormat_Float32,   offsetof(ChunkInstance, opacity),  4 };
-        WGPUVertexBufferLayout instances{};
-        instances.arrayStride    = sizeof(ChunkInstance);
-        instances.stepMode       = WGPUVertexStepMode_Instance;
-        instances.attributeCount = 5;
-        instances.attributes     = attribs;
+    const WGPUVertexAttribute attribs[5] = {
+        { WGPUVertexFormat_Float32x2, offsetof(ChunkInstance, center),   0 },
+        { WGPUVertexFormat_Float32x2, offsetof(ChunkInstance, scale),    1 },
+        { WGPUVertexFormat_Float32x2, offsetof(ChunkInstance, uvOffset), 2 },
+        { WGPUVertexFormat_Float32x2, offsetof(ChunkInstance, uvScale),  3 },
+        { WGPUVertexFormat_Float32,   offsetof(ChunkInstance, opacity),  4 },
+    };
+    WGPUVertexBufferLayout instances{};
+    instances.arrayStride    = sizeof(ChunkInstance);
+    instances.stepMode       = WGPUVertexStepMode_Instance;
+    instances.attributeCount = 5;
+    instances.attributes     = attribs;
+    atlasPipeline = makePipeline(ctx, { "texture.wgsl", kShaderTexture, { cameraLayout, atlasLayout }, &kPremultiplied, &instances });
 
-        WGPUBlendState blend{};
-        blend.color = { WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_OneMinusSrcAlpha };
-        blend.alpha = { WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_OneMinusSrcAlpha };
-        atlasPipeline = makePipeline(ctx, "Atlas Pipeline", m, cameraLayout, atlasLayout, blend, &instances);
-        wgpuShaderModuleRelease(m);
-    }
+    // ---- full-screen passes
+    checkerLayout   = uniformLayout(ctx, "Checker Layout", WGPUShaderStage_Fragment, sizeof(CheckerParams));
+    checkerPipeline = makePipeline(ctx, { "checker.wgsl", kShaderChecker, { checkerLayout }, nullptr, nullptr, kFullscreen });
 
-    // ---- edit previews
     previewParamsLayout   = uniformLayout(ctx, "Preview Params Layout", WGPUShaderStage_Fragment, sizeof(PreviewSignalParams));
     previewTexturesLayout = textureLayout(ctx, "Preview Textures Layout", 2 + kPreviewMaskTextures);
-    if (WGPUShaderModule m = createShaderModule(ctx, (const char*)kShaderPreviewSignal, "preview-signal.wgsl")) {
-        previewSignalPipeline = makeFullscreenPipeline(ctx, "Preview Signal Pipeline", m, { previewParamsLayout, previewTexturesLayout }, nullptr);
-        wgpuShaderModuleRelease(m);
-    }
-    checkerLayout = uniformLayout(ctx, "Checker Layout", WGPUShaderStage_Fragment, sizeof(CheckerParams));
-    if (WGPUShaderModule m = createShaderModule(ctx, (const char*)kShaderChecker, "checker.wgsl")) {
-        checkerPipeline = makeFullscreenPipeline(ctx, "Checker Pipeline", m, { checkerLayout }, nullptr);
-        wgpuShaderModuleRelease(m);
-    }
+    previewSignalPipeline = makePipeline(ctx, { "preview-signal.wgsl", kShaderPreviewSignal,
+                                                { previewParamsLayout, previewTexturesLayout }, nullptr, nullptr, kFullscreen });
 
-    blitLayout = textureLayout(ctx, "Blit Layout", 1);
-    if (WGPUShaderModule m = createShaderModule(ctx, (const char*)kShaderPreviewBlit, "preview-blit.wgsl")) {
-        WGPUBlendState blend{};
-        blend.color = { WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_OneMinusSrcAlpha };
-        blend.alpha = { WGPUBlendOperation_Add, WGPUBlendFactor_One, WGPUBlendFactor_OneMinusSrcAlpha };
-        blitPipeline = makeFullscreenPipeline(ctx, "Blit Pipeline", m, { blitLayout }, &blend);
-        wgpuShaderModuleRelease(m);
-    }
+    blitLayout   = textureLayout(ctx, "Blit Layout", 1);
+    blitPipeline = makePipeline(ctx, { "preview-blit.wgsl", kShaderPreviewBlit, { blitLayout }, &kPremultiplied, nullptr, kFullscreen });
 
     return cameraLayout && colorLayout && colorPipeline && atlasLayout && atlasPipeline && atlasSampler &&
            previewParamsLayout && previewTexturesLayout && previewSignalPipeline && blitLayout && blitPipeline &&
@@ -217,17 +179,10 @@ bool CanvasPipelines::create(const GpuHandles& context)
 
 void CanvasPipelines::release()
 {
-    if (checkerPipeline)       { wgpuRenderPipelineRelease(checkerPipeline);        checkerPipeline       = nullptr; }
-    if (checkerLayout)         { wgpuBindGroupLayoutRelease(checkerLayout);         checkerLayout         = nullptr; }
-    if (blitPipeline)          { wgpuRenderPipelineRelease(blitPipeline);           blitPipeline          = nullptr; }
-    if (blitLayout)            { wgpuBindGroupLayoutRelease(blitLayout);            blitLayout            = nullptr; }
-    if (previewSignalPipeline) { wgpuRenderPipelineRelease(previewSignalPipeline);  previewSignalPipeline = nullptr; }
-    if (previewTexturesLayout) { wgpuBindGroupLayoutRelease(previewTexturesLayout); previewTexturesLayout = nullptr; }
-    if (previewParamsLayout)   { wgpuBindGroupLayoutRelease(previewParamsLayout);   previewParamsLayout   = nullptr; }
-    if (atlasPipeline) { wgpuRenderPipelineRelease(atlasPipeline);  atlasPipeline = nullptr; }
-    if (atlasSampler)  { wgpuSamplerRelease(atlasSampler);          atlasSampler  = nullptr; }
-    if (atlasLayout)   { wgpuBindGroupLayoutRelease(atlasLayout);   atlasLayout   = nullptr; }
-    if (colorPipeline) { wgpuRenderPipelineRelease(colorPipeline);  colorPipeline = nullptr; }
-    if (colorLayout)   { wgpuBindGroupLayoutRelease(colorLayout);   colorLayout   = nullptr; }
-    if (cameraLayout)  { wgpuBindGroupLayoutRelease(cameraLayout);  cameraLayout  = nullptr; }
+    for (WGPURenderPipeline* p : { &checkerPipeline, &blitPipeline, &previewSignalPipeline, &atlasPipeline, &colorPipeline })
+        if (*p) { wgpuRenderPipelineRelease(*p); *p = nullptr; }
+    for (WGPUBindGroupLayout* l : { &checkerLayout, &blitLayout, &previewTexturesLayout, &previewParamsLayout, &atlasLayout,
+                                    &colorLayout, &cameraLayout })
+        if (*l) { wgpuBindGroupLayoutRelease(*l); *l = nullptr; }
+    if (atlasSampler) { wgpuSamplerRelease(atlasSampler); atlasSampler = nullptr; }
 }

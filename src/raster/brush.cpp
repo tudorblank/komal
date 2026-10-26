@@ -12,7 +12,7 @@ int clampWorld(float v)
     return (int)std::clamp(std::floor(v), (float)-TileUtils::kWorldLimit, (float)TileUtils::kWorldLimit);
 }
 
-} // namespace
+}
 
 void BrushStroke::begin(const BrushParams& params, StrokePoint at)
 {
@@ -38,9 +38,8 @@ void BrushStroke::moveTo(StrokePoint to)
     const float dist = std::sqrt(dx * dx + dy * dy);
     if (dist <= 0.0f) { m_last.pressure = to.pressure; return; }
 
-    // Dabs every `step` pixels along the path, the step following the dab size where it is;
-    // what's left over carries into the next segment, so spacing stays even however the samples
-    // arrive. Never more than half a diameter apart: no gaps whatever the spacing setting.
+    // A dab every `step` pixels (following the dab size there); the remainder carries into the
+    // next segment, so spacing stays even. Never over half a diameter apart: no gaps.
     const auto pressureAt = [&](float along) { return m_last.pressure + (to.pressure - m_last.pressure) * (along / dist); };
     const auto stepAt = [&](float pressure) { return std::max(0.5f, std::min(m_params.spacing, 0.5f) * diameterAt(pressure)); };
     const float ux = dx / dist, uy = dy / dist;

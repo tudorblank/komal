@@ -7,8 +7,10 @@
 #include <algorithm>
 #include <cassert>
 #include <climits>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <type_traits>
 
 // === RGBA === //
 // Premultiplied, canonical: rgb <= a, and a == 0 implies rgb == 0.
@@ -102,8 +104,46 @@ namespace TileUtils {
         const int x0 = tileToWorld(tx), y0 = tileToWorld(ty);
         return !b.empty() && x0 + kTileDim > b.minX && x0 <= b.maxX && y0 + kTileDim > b.minY && y0 <= b.maxY;
     }
-} // namespace TileUtils
+
+    // the tile holding world coordinate w, for any float (clamped to the world)
+    inline int worldToTileClamped(float w)
+    {
+        return worldToTile(int(std::clamp(std::floor(w), float(-kWorldLimit), float(kWorldLimit))));
+    }
+}
 constexpr TileKey kNoKey = TileUtils::packKey(INT_MIN, INT_MIN);
+
+// Inclusive rectangle of tile coordinates; empty when min > max.
+struct TileRect {
+    int minX = 1, minY = 1, maxX = 0, maxY = 0;
+
+    bool operator==(const TileRect&) const = default;
+    bool   empty() const { return minX > maxX || minY > maxY; }
+    bool   contains(int tx, int ty) const { return tx >= minX && tx <= maxX && ty >= minY && ty <= maxY; }
+    double area() const { return empty() ? 0.0 : double(maxX - minX + 1) * double(maxY - minY + 1); }
+};
+
+// f(key) for every key of `set` inside `r`, walking whichever of the two is smaller.
+// f may return bool: false stops the walk.
+template<class F>
+void forEachTileIn(const TileSet& set, const TileRect& r, F&& f)
+{
+    const auto visit = [&](TileKey key) {
+        if constexpr (std::is_same_v<std::invoke_result_t<F&, TileKey>, bool>) return f(key);
+        else { f(key); return true; }
+    };
+    if (r.empty()) return;
+    if (double(set.size()) <= r.area()) {
+        for (TileKey key : set) {
+            const auto t = TileUtils::unpackKey(key);
+            if (r.contains(t.x, t.y) && !visit(key)) return;
+        }
+    } else {
+        for (int ty = r.minY; ty <= r.maxY; ++ty)
+            for (int tx = r.minX; tx <= r.maxX; ++tx)
+                if (const TileKey key = TileUtils::packKey(tx, ty); set.contains(key) && !visit(key)) return;
+    }
+}
 
 struct TileStats {
     uint16_t count  = 0;   // pixels with a > 0
@@ -149,8 +189,8 @@ public:
         m_statsStale = false;
     }
 
-    // Bulk write without paying for a stats rescan when nothing was written: stats are only
-    // invalidated if markChanged() was called. Untrusted data is made canonical on close.
+    // Bulk write: stats go stale only if markChanged() was called. Untrusted data is made
+    // canonical on close.
     class BulkWrite {
     public:
         enum Trust { Trusted, Untrusted };
@@ -186,8 +226,7 @@ public:
     }
     bool erasePx(int lx, int ly) { return setPx(lx, ly, transparent()); }
 
-    // stats: computed lazily on first read after a write. settle() computes them now, so later
-    // const reads don't write (the tile can then be read from several threads).
+    // Stats are computed lazily; settle() computes them now, so const reads never write (thread-safe reads).
     const TileStats& stats() const { if (m_statsStale) rescan(); return m_stats; }
     void settle() const { if (m_statsStale) rescan(); }
 
@@ -201,7 +240,7 @@ public:
 private:
     RGBA m_px[kPixels] = {};
     mutable TileStats m_stats;
-    mutable bool m_statsStale = false;   // (was m_dirty: it means "stats out of date", not "needs upload")
+    mutable bool m_statsStale = false;
 
     void rescan() const
     {
@@ -248,8 +287,7 @@ inline void forEachTileSpan(const BoundsI& world, F&& f)
     }
 }
 
-// Copies the rows of span `s` of tile `src` into `dstPx` (a whole tile whose span is `d`),
-// shifted by (dx, dy) in world space. The one row-copy shared by every gather.
+// Copies span `s` of `src` into `dstPx` (a whole tile whose span is `d`), shifted by (dx, dy).
 inline void copySpanShifted(RGBA* dstPx, const Tile& src, const TileSpan& s, const TileSpan& d, int dx, int dy)
 {
     const int dstX = s.tileWX + s.lx0 + dx - d.tileWX;
@@ -370,4 +408,4 @@ namespace TileEdit {
         }
         return false;
     }
-} // namespace TileEdit
+}

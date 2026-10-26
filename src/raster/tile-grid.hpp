@@ -67,8 +67,8 @@ class TileGrid {
     { return TileUtils::tileToPageLocal(ty) * TileUtils::kPageDim + TileUtils::tileToPageLocal(tx); }
 
 public:
-    // Cached reader (stateful, single-threaded): consecutive reads in the same page skip the
-    // hash lookup. Must not outlive a write to the grid (checked in debug builds).
+    // Cached reader: reads in the same page skip the hash lookup. Single-threaded; must not
+    // outlive a write to the grid (checked in debug).
     class ReadAccessor {
     public:
         explicit ReadAccessor(const TileGrid& g) : m_g(&g), m_epoch(g.m_epoch) {}

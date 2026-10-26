@@ -1,8 +1,6 @@
 #pragma once
-// RectItem: a solid rectangle in world space, drawn on the GPU (color.wgsl) in the canvas pass,
-// under or over other items by z. The building block for anything rectangular that belongs to
-// the canvas picture itself (artboards, backgrounds); for crisp screen-space outlines see
-// OutlineItem (outline.h).
+// A solid rectangle in world space, drawn in the canvas pass by z (color.wgsl): part of the
+// picture itself (artboards, backgrounds). Screen-space outlines are OutlineItem.
 
 #include "canvas/item.hpp"
 
@@ -17,12 +15,11 @@ public:
 
     bool prepare(CanvasFrame& frame) override;
     void drawGpu(WGPURenderPassEncoder pass, CanvasFrame& frame) override;
-    void releaseGpu() override;
+    void releaseGpu() override { m_uniform.release(); }
 
 private:
     float m_x, m_y, m_w, m_h;
     float m_color[4];
-    WGPUBuffer    m_buffer    = nullptr;
-    WGPUBindGroup m_bindGroup = nullptr;
-    bool          m_upload    = true;   // uniform out of date
+    GpuUniform m_uniform;
+    bool       m_upload = true;   // uniform out of date
 };

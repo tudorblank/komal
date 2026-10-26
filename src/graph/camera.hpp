@@ -2,15 +2,13 @@
 #include <imgui.h>
 #include <algorithm>
 
-// How the graph reaches the screen:   screen = origin + (graph - position) * scale
+//   screen = origin + (graph - position) * scale
 //
-//   position   the graph point at the panel's top-left corner (the anchor, like Excalidraw:
-//              resizing, undocking or redocking the panel never moves what sits there)
-//   zoom       the user's zoom; scale = zoom * content (DPI) scale, in pixels per graph unit
-//   origin     where the panel's canvas sits on screen this frame
+//   position   the graph point at the panel's top-left (resizing the panel never moves it)
+//   zoom       the user's zoom; scale = zoom * DPI scale, pixels per graph unit
+//   origin     where the panel's canvas is on screen this frame
 //
-// Graph units are UI points at 100% zoom, so node positions and node sizes share one space
-// and a DPI change scales the whole graph uniformly instead of growing nodes into each other.
+// Graph units are UI points at 100%, so a DPI change scales the whole graph uniformly.
 class GraphCamera {
 public:
     static constexpr float kMinZoom = 0.1f;

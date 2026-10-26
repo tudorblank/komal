@@ -1,15 +1,11 @@
 #pragma once
-// The canvas as a scene of items, in the spirit of QGraphicsScene / QGraphicsItem:
+// The canvas as a scene of items, like QGraphicsScene / QGraphicsItem:
+//   CanvasScene   owns the items and their shared GPU state (CanvasPipelines)
+//   CanvasItem    one thing on the canvas, with z order and visibility (item.hpp)
+//   CanvasView    a camera + render target looking at a scene (view.hpp)
+// A view re-renders only when an item, the camera or the size changed.
 //
-//   CanvasScene   owns the items and the GPU state they share (CanvasPipelines)
-//   CanvasItem    one thing on the canvas, with a z order and visibility (item.h)
-//   CanvasView    a camera + render target looking at a scene (view.h)
-//
-// The view only re-renders its target when something changed: an item (prepare() returning
-// true, or update()), the camera, or the size.
-//
-// Creating items:  RectItem* r = scene.addItem<RectItem>(x, y, w, h, color);
-// The scene owns them; removeItem() destroys one. Pointers stay valid until then.
+//   RectItem* r = scene.addItem<RectItem>(x, y, w, h, r, g, b, a);   // owned until removeItem()
 
 #include "canvas/item.hpp"
 
@@ -36,8 +32,7 @@ public:
     void removeItem(CanvasItem* item);
     const std::vector<std::unique_ptr<CanvasItem>>& items() const { return m_items; }
 
-    // Bumps whenever something in the scene looks different. Views compare it with the
-    // revision they last rendered.
+    // Bumps whenever the scene looks different (views compare it with what they rendered).
     uint64_t revision() const { return m_revision; }
 
     // Driven by views, every frame:

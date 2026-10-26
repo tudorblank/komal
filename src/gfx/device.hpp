@@ -22,7 +22,7 @@ public:
 
     // gpuframe lifecycle
     void resize(int pixelW, int pixelH); // reconfigures the surface if changed (or suboptimal)
-    bool acquire(GpuFrame& f);           // (swapchain image + command encoder) blocks until a swapchain image is free (vsync)
+    bool acquire(GpuFrame& f);           // swapchain image + encoder; blocks until an image is free (vsync)
     void beginSurfacePass(GpuFrame& f, const float clearRGBA[4]); // 'pass' draws into the swapchain image
     void present(GpuFrame& f);           // one submit for the whole frame, then present
 

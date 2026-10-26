@@ -61,7 +61,6 @@ struct Shortcut {
 // one frame worth of input
 struct InputFrame {
     std::vector<PointerEvent> pointer;   // in the order they happened
-    float wheelX = 0.0f, wheelY = 0.0f;  // summed over the frame
 
     std::vector<KeyEvent> keys;          // in the order they happened
     uint8_t mods = ModNone;              // modifiers held now

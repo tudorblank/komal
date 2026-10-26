@@ -1,28 +1,24 @@
 #pragma once
 // The node graph core: signals, masks, the per-tile render path and change propagation.
 //
-// Every node produces tiles on demand (fetch). Its output is shaped by signals:
-//   Main  the output itself. Every node has it.
-// Effect nodes (hasDryWet(): Move, later blurs, channel splits...) process an input and add:
-//   Wet   the processed input (the moved pixels, the blur, ...)
-//   Dry   the input, unaltered (off by default: its alpha scale starts at 0)
-//   and Main is then (Wet over Dry), shaped once more.
-// Root and routing nodes (raster, reference, compositor) have nothing to mix: Main only.
+// Nodes produce tiles on demand (fetch), shaped by signals:
+//   Main  the output. Every node has it.
+//   Wet   effect nodes only (hasDryWet: Move, ...): the processed input.
+//   Dry   effect nodes only: the input untouched (off by default). Main = Wet over Dry.
 //
-// Each signal is shaped per channel (A, R, G, B) by a scale in 0..1 and, optionally, a mask:
-// another node's output, read as greyscale over white. Where the mask node is transparent
-// the channel is untouched (255); where it is opaque its luma decides, so opaque black cuts
-// the channel to 0 and opaque white leaves it whole. Effective factor = scale * mask.
-// There is no separate opacity: Main.A is the opacity.
+// Each signal is shaped per channel (A, R, G, B) by a 0..1 scale times an optional mask: another
+// node's output as greyscale over white (transparent = untouched, opaque black = 0).
+// Main.A is the opacity.
 //
-// Edits never recompute anything eagerly: a change marks the tiles it may affect dirty, and
-// that propagates to every node listening (inputs and masks alike). Rendering pulls.
+// Edits never recompute eagerly: they mark tiles dirty down to every listener (inputs and
+// masks). Rendering pulls.
 
 #include "raster/raster-data.hpp"
 
 #include <array>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -47,14 +43,14 @@ struct SignalChannels {
     }
 };
 
-// ---- per-tile channel gain: factor(i) = perPixel ? mul255(k, perPixel[i]) : k ----
+// Per-tile channel gain: factor(i) = perPixel ? mul255(k, perPixel[i]) : k.
 struct Gain {
     uint8_t        k = 255;
     const uint8_t* perPixel = nullptr;
     bool isUnit() const { return k == 255 && !perPixel; }
 };
 
-// ---- render context: scratch memory for one top-level tile render. One per thread. ----
+// Scratch memory for one top-level tile render. One per thread.
 struct MaskTile { uint8_t v[Tile::kPixels]; };
 
 class RenderCtx {
@@ -66,9 +62,8 @@ public:
     void rewind(size_t m) { assert(m <= m_used); m_used = m; }   // frees scratch taken after mark()
 
     MaskTile& newMask();
-    // Masks computed during this render, per (mask node, tile): a sub-tile Move reads up to
-    // four input tiles in one render. nullptr = mask is 0 there; kFullMask = mask is 255
-    // everywhere there (acts as no mask, costs nothing per pixel).
+    // Masks computed during this render, per (mask node, tile). nullptr: 0 there;
+    // kFullMask: 255 everywhere there (free, acts as no mask).
     bool findMask(const Node* n, int tx, int ty, const MaskTile*& out) const;
     void storeMask(const Node* n, int tx, int ty, const MaskTile* m) { m_masks[MaskKey{ n, TileUtils::packKey(tx, ty) }] = m; }
     static const MaskTile* const kFullMask;
@@ -106,9 +101,9 @@ public:
     };
     Meta m_meta;
 
-    // ---------- what a subclass implements (RAW signals; the base applies gains/masks) ----------
-    virtual bool hasDryWet() const { return false; }   // effect nodes: Wet/Dry exist (see the top)
-    virtual std::vector<NodePtr> inputs() const { return {}; }
+    // ---------- what a subclass implements (raw signals; the base applies gains and masks)
+    virtual bool hasDryWet() const { return false; }   // effect nodes
+    virtual std::span<const NodePtr> inputs() const { return {}; }
     virtual BoundsI wetBounds() = 0;
     virtual const Tile* fetchWet(int tx, int ty, RenderCtx& ctx) = 0;
     virtual void wetFootprint(TileSet& out) = 0;
@@ -118,21 +113,20 @@ public:
     virtual const Tile* fetchDry(int, int, RenderCtx&) { return nullptr; }
     virtual void dryFootprint(TileSet&) {}
 
-    // ---------- the one read path ----------
-    // The pointer is valid until ctx.beginTile()/rewind past it, or the next edit of any
-    // raster. Never write through it.
+    // ---------- the one read path
+    // Valid until ctx.beginTile() / rewind past it, or the next raster edit. Read-only.
     const Tile* fetch(int tx, int ty, RenderCtx& ctx);
 
-    // ---------- bounds / footprint ----------
+    // ---------- bounds / footprint
     BoundsI bounds();
     void addFootprint(TileSet& out) { if (wetOn()) wetFootprint(out); if (dryOn()) dryFootprint(out); }
     TileSet footprint() { TileSet t; addFootprint(t); return t; }
 
-    // ---------- caches (subclasses that keep any) ----------
+    // ---------- caches (subclasses that keep any)
     virtual void evictRawTile(int, int) {}      // caches derived from inputs
     virtual void evictOutputTile(int, int) {}   // caches of post-signal output
 
-    // ---------- signals / masks ----------
+    // ---------- signals / masks
     const SignalChannels& signal(NodeSignal s) const { return m_signals[int(s)]; }
     bool hasSignal(NodeSignal s) const { return s == NodeSignal::Main || hasDryWet(); }
     bool wetOn() const { return !hasDryWet() || gainByte(m_signals[int(NodeSignal::Wet)].scale[0]) != 0; }
@@ -141,13 +135,12 @@ public:
     { return signal(NodeSignal::Main).isIdentity() && signal(NodeSignal::Wet).isIdentity() && !dryOn(); }
 
     void setScale(NodeSignal sig, NodeChannel ch, float v);         // ignored for a signal the node lacks
-    bool linkMask(NodePtr mask, NodeSignal sig, NodeChannel ch);   // nullptr unlinks; false if it'd make a cycle
-                                                                   // or the node lacks that signal
+    bool linkMask(NodePtr mask, NodeSignal sig, NodeChannel ch);   // nullptr unlinks; false: cycle, or no such signal
     bool hasMasks() const;
     bool clearMasksTo(const NodePtr& n);   // drops every mask slot that points at n
     void unlinkAllMasks();
 
-    // ---------- graph ----------
+    // ---------- graph
     virtual void replaceInputInstance(const NodePtr&, const NodePtr&) {}
     virtual void detachAllInputs() {}
     std::vector<NodePtr> allDeps() const;   // inputs and masks
@@ -155,9 +148,9 @@ public:
     bool usesAsMask(const Node* n) const;
     bool dependsOn(const Node* t) const;
     bool canDependOn(const NodePtr& n) const { return !n || (n.get() != this && !n->dependsOn(this)); }
-    uint64_t revision() const { return m_revision; }   // bumps whenever this node's output MAY have changed
+    uint64_t revision() const { return m_revision; }   // bumps whenever the output may have changed
 
-    void removeFromGraph();   // call when deleting: users drop it, it drops its inputs and masks
+    void removeFromGraph();   // when deleting: users drop it, it drops its inputs and masks
 
     // Dirty tiles from a dependency (raster edits enter the graph here).
     void dependencyDirty(const Node* from, const TileSet& tiles);
@@ -165,9 +158,9 @@ public:
     static uint8_t gainByte(float v) { return uint8_t(std::clamp(int(v * 255.0f + 0.5f), 0, 255)); }
 
 protected:
-    // "I don't know what changed": dirty = footprint before + after
+    // Unknown change: dirty = footprint before + after.
     TileSet change(const std::function<void()>& mutate, Evict e = Evict::All);
-    // "I know exactly what's dirty"
+    // Known change: exactly `dirty`.
     TileSet changeKnown(TileSet dirty, Bounds b, Evict e, const std::function<void()>& mutate);
 
     void emitDirty(const TileSet& tiles, Evict e);
@@ -193,10 +186,10 @@ private:
     const Tile* blendOver(const Tile* top, const Tile* bottom, RenderCtx& ctx);
 };
 
-// The only top-level fetch: resets the context, then renders tile (tx, ty) of `n`.
+// The top-level fetch: resets the context, then renders tile (tx, ty) of `n`.
 inline const Tile* renderTile(Node& n, int tx, int ty, RenderCtx& ctx) { ctx.beginTile(); return n.fetch(tx, ty, ctx); }
 
-// Eyedropper / hit test. Use a separate context from the one rendering tiles.
+// Eyedropper / hit test. Use a context other than the one rendering tiles.
 inline RGBA pixelAt(Node& n, int wx, int wy, RenderCtx& ctx)
 {
     const Tile* t = renderTile(n, TileUtils::worldToTile(wx), TileUtils::worldToTile(wy), ctx);

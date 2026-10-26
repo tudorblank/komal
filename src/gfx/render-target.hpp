@@ -2,9 +2,8 @@
 #include <webgpu/webgpu.h>
 #include <cstdint>
 
-// A texture you can render into with wgpu and then show in ImGui via ImGui::Image.
-// Sized exactly to what is shown: ImGui's wgpu backend builds image bind groups per frame,
-// so swapping the view on resize is free of leaks and stale bindings.
+// A texture to render into and show with ImGui::Image, sized to what's shown. Re-creating it on
+// resize is safe: ImGui's wgpu backend rebuilds image bind groups every frame.
 class RenderTarget {
 public:
     static constexpr uint32_t kMax = 8192;   // default wgpu maxTextureDimension2D

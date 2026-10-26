@@ -1,10 +1,7 @@
 #pragma once
-// Brush-outline cursors made at runtime and handed to the system (SystemCursors::setCustom), so
-// the outline follows the mouse with no frame of latency, like the system arrow does. A ring
-// the size of the brush on screen, with a small crosshair on the hot spot.
-//
-// The system can only show cursors up to a point (kMaxRadius); past it, get() makes a plain
-// crosshair and the ring is left to the tool's overlay.
+// Brush-outline cursors made at runtime for the system (SystemCursors::setCustom): no frame of
+// lag. A ring the brush's size with a crosshair; past kMaxRadius just the crosshair (the tool's
+// overlay draws the ring).
 
 #include <cstdint>
 #include <vector>
@@ -17,8 +14,7 @@ public:
     static bool fits(float radius) { return radius <= kMaxRadius; }
 
     ~RingCursors() { clear(); }
-    // A ring of `radius` screen points (0 or too big: just the crosshair). Kept until clear(), or
-    // until enough other sizes pushed it out.
+    // A ring of `radius` screen points (0 or too big: just the crosshair). Cached, least recently used out.
     SDL_Cursor* get(float radius, bool erase);
     void clear();
 

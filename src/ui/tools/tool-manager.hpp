@@ -7,8 +7,7 @@
 
 class BrushTool;
 
-// Owns the tools and which one is picked. The canvas asks for active(): the picked tool, or
-// the hand while Space is held over the canvas (Photoshop's spring-loaded hand).
+// Owns the tools. active(): the picked tool, or the hand while Space is held over the canvas.
 class ToolManager {
 public:
     ToolManager();
@@ -19,8 +18,7 @@ public:
     Tool& active() const { return m_springHand ? *m_hand : *m_selected; }
     void  select(Tool& tool, Project& project);
 
-    // "tool.<name>" for every tool (its shortcut() as the key), "tool.eraser" (the brush in
-    // erase mode), "color.swap" (X: primary <-> secondary), and whatever each tool registers.
+    // "tool.<name>" per tool, "tool.eraser", "color.swap", and each tool's own.
     void registerActions(ActionRegistry& actions, Project& project);
     // Space held over the canvas; released only once the hand's drag is done.
     void setSpringHand(bool held);

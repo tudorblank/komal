@@ -53,11 +53,9 @@ void TileAtlas::upload(const CanvasPipelines& p, TileKey key, const RGBA* pixels
         const auto [tx, ty] = TileUtils::unpackKey(key);
         c = { tx, ty, int(page - m_pages.begin()), page->freeSlots.back() };
         page->freeSlots.pop_back();
-        m_layoutDirty = true;
     }
-    // An existing tile only gets new pixels: its instance stays exactly the same.
 
-    // Tile plus gutter (its edge pixels repeated), assembled once, uploaded in one write.
+    // Tile plus gutter, uploaded in one write.
     constexpr int N = Tile::kSize, S = kSlotStride;
     static_assert(kGutter == 1, "staging below assumes a 1 px gutter");
     m_staging.resize(size_t(S) * S);
@@ -85,7 +83,6 @@ void TileAtlas::free(TileKey key)
     if (it == m_chunks.end()) return;
     m_pages[it->second.page].freeSlots.push_back(uint16_t(it->second.slot));
     m_chunks.erase(it);
-    m_layoutDirty = true;
 }
 
 void TileAtlas::clear()
@@ -95,7 +92,6 @@ void TileAtlas::clear()
         for (int i = 0; i < kSlotsTotal; ++i) page.freeSlots[i] = uint16_t(kSlotsTotal - 1 - i);
     }
     m_chunks.clear();
-    m_layoutDirty = true;
 }
 
 void TileAtlas::release()
@@ -108,49 +104,6 @@ void TileAtlas::release()
     }
     m_pages.clear();
     m_chunks.clear();
-    m_layoutDirty = true;
-}
-
-ChunkInstance TileAtlas::makeInstance(const Chunk& c) const
-{
-    constexpr float N = (float)Tile::kSize;
-    const float originX = float((c.slot % kSlotsPerRow) * kSlotStride + kGutter);
-    const float originY = float((c.slot / kSlotsPerRow) * kSlotStride + kGutter);
-    ChunkInstance inst{};
-    inst.center[0]   = (float)TileUtils::tileToWorld(c.tx) + N * 0.5f;
-    inst.center[1]   = (float)TileUtils::tileToWorld(c.ty) + N * 0.5f;
-    inst.scale[0]    = N;
-    inst.scale[1]    = N;
-    inst.uvOffset[0] = originX / kPageSize;
-    inst.uvOffset[1] = originY / kPageSize;
-    inst.uvScale[0]  = N / kPageSize;
-    inst.uvScale[1]  = N / kPageSize;
-    inst.opacity     = m_opacity;
-    return inst;
-}
-
-bool TileAtlas::updateInstances(const CanvasPipelines& p, int minTX, int minTY, int maxTX, int maxTY, float opacity)
-{
-    const bool rangeChanged = minTX != m_minTX || maxTX != m_maxTX || minTY != m_minTY || maxTY != m_maxTY;
-    if (!m_layoutDirty && !rangeChanged && opacity == m_opacity) return false;
-    m_minTX = minTX; m_maxTX = maxTX; m_minTY = minTY; m_maxTY = maxTY;
-    m_opacity = opacity;
-    m_layoutDirty = false;
-
-    std::vector<std::vector<ChunkInstance>> next(m_pages.size());
-    const auto add = [&](const Chunk& c) {
-        if (c.tx >= minTX && c.tx <= maxTX && c.ty >= minTY && c.ty <= maxTY) next[c.page].push_back(makeInstance(c));
-    };
-    const double rangeTiles = double(maxTX - minTX + 1) * double(maxTY - minTY + 1);
-    if (double(m_chunks.size()) <= rangeTiles) {   // walk whichever is smaller
-        for (const auto& [key, c] : m_chunks) add(c);
-    } else {
-        for (int ty = minTY; ty <= maxTY; ++ty)
-            for (int tx = minTX; tx <= maxTX; ++tx)
-                if (auto it = m_chunks.find(TileUtils::packKey(tx, ty)); it != m_chunks.end()) add(it->second);
-    }
-
-    return uploadInstances(p, next);
 }
 
 void TileAtlas::beginInstances()
@@ -184,7 +137,6 @@ bool TileAtlas::endInstances(const CanvasPipelines& p, float opacity)
     m_building.resize(m_pages.size());
     const bool changed = uploadInstances(p, m_building);
     m_building.clear();
-    m_layoutDirty = true;   // updateInstances() must rebuild after a hand-made list
     return changed;
 }
 

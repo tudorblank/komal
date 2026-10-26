@@ -1,4 +1,5 @@
 #pragma once
+#include <cmath>
 
 // Column-major 4x4 matrix, laid out like WGSL's mat4x4f: m[column * 4 + row].
 // Only what a 2D canvas needs.
@@ -21,6 +22,18 @@ struct Mat4 {
         Mat4 r;
         r.m[0]  = sx;
         r.m[5]  = sy;
+        r.m[12] = tx;
+        r.m[13] = ty;
+        return r;
+    }
+
+    // Scale by `s`, rotate by `angle` radians (clockwise on a y-down screen), then translate by (tx, ty).
+    static Mat4 similarity(float tx, float ty, float s, float angle)
+    {
+        const float c = std::cos(angle) * s, n = std::sin(angle) * s;
+        Mat4 r;
+        r.m[0]  = c;   r.m[1] = n;
+        r.m[4]  = -n;  r.m[5] = c;
         r.m[12] = tx;
         r.m[13] = ty;
         return r;

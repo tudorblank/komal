@@ -3,6 +3,7 @@
 #include "core/project.hpp"
 #include "canvas/scene.hpp"
 #include "ui/theme.hpp"
+#include "ui/widgets.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -20,46 +21,39 @@ void BrushTool::drawIcon(ImDrawList* dl, ImVec2 c, float size, ImU32 color) cons
 
 void BrushTool::drawProperties(ToolContext&)
 {
-    const float labelW = ImGui::GetFontSize() * 5.0f;
-    const auto label = [&](const char* text) {
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(text);
-        ImGui::SameLine(labelW);
-        ImGui::SetNextItemWidth(-FLT_MIN);
-    };
+    using namespace Widgets;
+    const Metrics m = metrics();
 
-    label("Mode");
-    if (ImGui::RadioButton("Paint", !m_erase)) m_erase = false;
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Erase", m_erase)) m_erase = true;
+    rowLabel("Mode");
+    if (radio("Paint", !m_erase)) m_erase = false;
+    nextGroup();
+    if (radio("Erase", m_erase)) m_erase = true;
 
-    label("Size");
-    {
-        NumberFont font;
-        ImGui::DragFloat("##size", &m_params.diameter, 0.25f, 1.0f, kMaxDiameter, "%.0f px", ImGuiSliderFlags_Logarithmic);
-    }
-    label("Hardness");
-    { NumberFont font; ImGui::SliderFloat("##hardness", &m_params.hardness, 0.0f, 1.0f, "%.2f"); }
-    label("Opacity");
+    sliderRow("Size", m_params.diameter, 1.0f, kMaxDiameter, "%.0f px", true);
+    sliderRow("Hardness", m_params.hardness, 0.0f, 1.0f, "%.2f");
     float opacity = m_params.opacity / 255.0f;
-    {
-        NumberFont font;
-        if (ImGui::SliderFloat("##opacity", &opacity, 0.0f, 1.0f, "%.2f")) m_params.opacity = uint8_t(opacity * 255.0f + 0.5f);
-    }
-    label("Flow");
-    { NumberFont font; ImGui::SliderFloat("##flow", &m_params.flow, 0.01f, 1.0f, "%.2f"); }
-    label("Spacing");
-    { NumberFont font; ImGui::SliderFloat("##spacing", &m_params.spacing, 0.02f, 1.0f, "%.2f"); }
-    label("Color");
-    { NumberFont font; ImGui::ColorEdit4("##color", m_colors.foreground, ImGuiColorEditFlags_AlphaBar); }
-    label("Edges");
-    ImGui::Checkbox("Antialiased", &m_params.antialias);
+    if (sliderRow("Opacity", opacity, 0.0f, 1.0f, "%.2f")) m_params.opacity = uint8_t(opacity * 255.0f + 0.5f);
+    sliderRow("Flow", m_params.flow, 0.01f, 1.0f, "%.2f");
+    sliderRow("Spacing", m_params.spacing, 0.02f, 1.0f, "%.2f");
+
+    // The primary colour: swatch (opens the Color panel), hex, alpha.
+    float* fg = m_colors.foreground;
+    rowLabel("Color");
+    if (swatch("##swatch", fg)) ImGui::SetWindowFocus("Color");
+    sameRow();
+    hexField("##hex", fg, stretchWidth(m.fieldWidth));
+    alignRight(m.fieldWidth);
+    float alpha = fg[3] * 100.0f;
+    if (numberField("##alpha", alpha, 0.0f, 100.0f, "%.0f%%", 0.0f, "A")) fg[3] = alpha / 100.0f;
+
+    rowLabel("Edges");
+    checkbox("Antialiased", m_params.antialias);
     ImGui::SetItemTooltip("Off: hard pixels (diameter 1 = single pixels).");
-    label("Pressure");
-    ImGui::Checkbox("Size", &m_params.pressureSize);
+    rowLabel("Pressure");
+    checkbox("Size", m_params.pressureSize);
     ImGui::SetItemTooltip("Pen pressure scales the brush size.");
-    ImGui::SameLine();
-    ImGui::Checkbox("Flow", &m_params.pressureFlow);
+    nextGroup();
+    checkbox("Flow", m_params.pressureFlow);
     ImGui::SetItemTooltip("Pen pressure scales how much each dab adds.");
 
     ImGui::Spacing();
@@ -78,8 +72,7 @@ void BrushTool::registerActions(ActionRegistry& actions, std::function<bool()> i
 
 void BrushTool::canvasInput(const CanvasInput& in)
 {
-    // A stroke (and an undo step) runs from a press to the release of that same button, through
-    // every sample in between, in the order they happened.
+    // A stroke (one undo step) runs from a press to the release of the same button, through every sample.
     const auto flush = [&] {
         if (m_stroking && !m_points.empty()) in.project.strokeTo(m_points);
         m_points.clear();
@@ -146,13 +139,12 @@ bool BrushTool::cursorRing(float zoom, float& radius, bool& erase) const
 
 void BrushTool::drawOverlay(ImDrawList* dl, const OverlayContext& ctx, Vec2 world) const
 {
-    // The ring and the crosshair are the system cursor (RingCursors): drawn here they would trail
-    // the mouse by a frame. Only what it can't show is drawn: the pixel under the mouse when zoomed
-    // in (it belongs to the canvas, not the mouse), and a ring too big for a system cursor.
+    // The ring is the system cursor (no lag). Drawn here: the pixel under the mouse when zoomed
+    // in, and a ring too big for a system cursor.
     if (ctx.camera.zoom >= 6.0f) {
         const float px = std::floor(world.x), py = std::floor(world.y);
-        const Vec2 a = ctx.toScreen(px, py), b = ctx.toScreen(px + 1.0f, py + 1.0f);
-        dl->AddRect(ImVec2(a.x, a.y), ImVec2(b.x, b.y), IM_COL32(255, 255, 255, 120));
+        const Vec2 a = ctx.toScreen(px, py), b = ctx.toScreen(px + 1.0f, py), c = ctx.toScreen(px + 1.0f, py + 1.0f), d = ctx.toScreen(px, py + 1.0f);
+        dl->AddQuad(ImVec2(a.x, a.y), ImVec2(b.x, b.y), ImVec2(c.x, c.y), ImVec2(d.x, d.y), IM_COL32(255, 255, 255, 120));
     }
     const float r = cursorDiameter() * 0.5f * ctx.camera.zoom;
     if (!RingCursors::fits(r)) {

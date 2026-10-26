@@ -2,18 +2,11 @@
 #include "core/perf.hpp"
 #include "core/project.hpp"
 #include "gfx/handles.hpp"
+#include "node/node-picture.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-
-namespace {
-
-constexpr int kSub     = 2;    // samples per thumbnail pixel, per axis
-constexpr int kChecker = 8;    // checkerboard square, thumbnail pixels
-constexpr uint8_t kCheckerLight = 72, kCheckerDark = 52;
-
-} // namespace
 
 void NodeItemThumbnails::init(WGPUDevice device, WGPUQueue queue)
 {
@@ -114,58 +107,11 @@ void NodeItemThumbnails::render(Node& n, Thumb& t)
     m_pixels.assign(size_t(kWidth) * kHeight, RGBA{ 0, 0, 0, 0 });
     const BoundsI b = n.bounds();
     t.empty = b.empty();
-
-    if (!t.empty) {
-        // Fit the output's bounds, keeping its aspect.
-        const float bw = float(b.maxX - b.minX + 1), bh = float(b.maxY - b.minY + 1);
-        const float s  = std::max(bw / kWidth, bh / kHeight);   // world pixels per thumbnail pixel
-        const int fw = std::clamp(int(std::lround(bw / s)), 1, kWidth);
-        const int fh = std::clamp(int(std::lround(bh / s)), 1, kHeight);
-        const int ox = (kWidth - fw) / 2, oy = (kHeight - fh) / 2;
-
-        // Sample positions along each axis (monotonic, so every tile owns a contiguous range).
-        std::vector<int> xs(size_t(fw) * kSub), ys(size_t(fh) * kSub);
-        for (size_t i = 0; i < xs.size(); ++i) xs[i] = b.minX + int(std::floor((float(i) + 0.5f) * s / kSub));
-        for (size_t i = 0; i < ys.size(); ++i) ys[i] = b.minY + int(std::floor((float(i) + 0.5f) * s / kSub));
-
-        m_accum.assign(size_t(fw) * fh * 4, 0);
-        const auto range = [](const std::vector<int>& v, int lo, int hi) {
-            return std::make_pair(std::lower_bound(v.begin(), v.end(), lo) - v.begin(),
-                                  std::upper_bound(v.begin(), v.end(), hi) - v.begin());
-        };
-        // Only tiles that exist and hold a sample are rendered: work follows the content and
-        // the thumbnail size, not the size of the bounds.
-        for (TileKey key : n.footprint()) {
-            const auto [tx, ty] = TileUtils::unpackKey(key);
-            const int wx = TileUtils::tileToWorld(tx), wy = TileUtils::tileToWorld(ty);
-            const auto [x0, x1] = range(xs, wx, wx + Tile::kSize - 1);
-            const auto [y0, y1] = range(ys, wy, wy + Tile::kSize - 1);
-            if (x0 >= x1 || y0 >= y1) continue;
-            const Tile* tile = renderTile(n, tx, ty, m_render);
-            if (!tile) continue;
-            for (auto sy = y0; sy < y1; ++sy) {
-                uint32_t* row = m_accum.data() + size_t(sy / kSub) * fw * 4;
-                for (auto sx = x0; sx < x1; ++sx) {
-                    const RGBA p = tile->getReadPx(xs[sx] - wx, ys[sy] - wy);
-                    uint32_t* a = row + size_t(sx / kSub) * 4;
-                    a[0] += p.r; a[1] += p.g; a[2] += p.b; a[3] += p.a;
-                }
-            }
-        }
-
-        // Premultiplied average over a checkerboard: opaque, straight = premultiplied.
-        constexpr uint32_t kDiv = kSub * kSub;
-        for (int y = 0; y < fh; ++y)
-            for (int x = 0; x < fw; ++x) {
-                const uint32_t* a = m_accum.data() + (size_t(y) * fw + x) * 4;
-                const uint32_t alpha = a[3] / kDiv;
-                const uint32_t bg = ((x / kChecker + y / kChecker) & 1) ? kCheckerLight : kCheckerDark;
-                const uint32_t under = bg * (255 - alpha) / 255;
-                m_pixels[size_t(oy + y) * kWidth + ox + x] = {
-                    uint8_t(std::min<uint32_t>(255, a[0] / kDiv + under)),
-                    uint8_t(std::min<uint32_t>(255, a[1] / kDiv + under)),
-                    uint8_t(std::min<uint32_t>(255, a[2] / kDiv + under)), 255 };
-            }
+    if (!t.empty) {   // fitted, aspect kept, centred
+        const float s = std::max(float(b.width()) / kWidth, float(b.height()) / kHeight);
+        const int fw = std::clamp(int(std::lround(b.width() / s)), 1, kWidth);
+        const int fh = std::clamp(int(std::lround(b.height() / s)), 1, kHeight);
+        renderNodePicture(n, b, fw, fh, &m_pixels[size_t((kHeight - fh) / 2) * kWidth + (kWidth - fw) / 2], kWidth, m_render);
     }
 
     WGPUTexelCopyTextureInfo dst{};

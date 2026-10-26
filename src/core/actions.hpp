@@ -1,20 +1,16 @@
 #pragma once
-// User actions: everything the user can ask the app to do (Undo, Import, Delete selection,
-// Brush tool, ...), each registered once by whoever owns it, with a stable id, a title, its
-// shortcuts, where it applies and when it is enabled. Shortcuts, menus and tooltips all read this
-// one list, so they can't drift apart (a command palette or rebinding would read it too).
-//
-// Not to be confused with ProjectEvents: those tell views what *changed* in the document;
-// actions are what the user *asks for*.
+// User actions (Undo, Import, Brush tool, ...), each registered once by its owner with a stable
+// id, title, shortcuts, scope and enabled state. Menus, shortcuts and tooltips all read this one
+// list. (ProjectEvents say what changed; actions are what the user asks for.)
 //
 //   actions.add({ .id = "edit.undo", .title = "Undo", .shortcuts = { { SDLK_Z, ModPrimary } },
 //                 .repeats = true,
 //                 .enabled = [&] { return project.canUndo(); },
 //                 .run     = [&] { project.undo(); } });
 //
-// Shortcuts fire through dispatch(), called by each scope's owner where that scope is live
-// (ImGui's routing: the graph while it has focus, the canvas while it has the pointer, the
-// global scope unless a text field is typing), inside its own window.
+// Shortcuts fire through dispatch(), called by each scope's owner while it's live: the canvas
+// while it has the pointer, the graph while hovered or focused (unless the canvas has the
+// pointer), the global scope unless a text field is typing. Never two panels at once.
 
 #include "core/input.hpp"
 
@@ -48,8 +44,7 @@ public:
     const Action* find(std::string_view id) const;
     bool run(std::string_view id);   // false if unknown or disabled
 
-    // Runs the enabled actions of `scope` whose shortcut went down this frame. The caller has
-    // decided the scope is live.
+    // Runs the enabled actions of `scope` whose shortcut went down this frame.
     void dispatch(const InputFrame& input, ActionScope scope);
 
     std::string shortcutLabel(std::string_view id) const;   // "Ctrl+Shift+Z" ("" if none)

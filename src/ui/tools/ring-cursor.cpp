@@ -57,7 +57,7 @@ SDL_Cursor* makeRing(int diameter, bool erase)
     return cursor;
 }
 
-} // namespace
+}
 
 SDL_Cursor* RingCursors::get(float radius, bool erase)
 {
@@ -68,7 +68,7 @@ SDL_Cursor* RingCursors::get(float radius, bool erase)
 
     SDL_Cursor* cursor = makeRing(diameter, erase);
     if (!cursor) return nullptr;
-    if (m_entries.size() >= kKeep) {   // the least recently used goes (never the one in use: it was just used)
+    if (m_entries.size() >= kKeep) {   // the least recently used goes
         auto old = std::min_element(m_entries.begin(), m_entries.end(), [](const Entry& a, const Entry& b) { return a.used < b.used; });
         SDL_DestroyCursor(old->cursor);
         m_entries.erase(old);

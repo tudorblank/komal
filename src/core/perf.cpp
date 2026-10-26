@@ -20,7 +20,7 @@ State g;
 
 constexpr const char* kNames[Count] = { "frame", "stroke", "canvas", "canvas sync", "thumbnails", "graph" };
 
-} // namespace
+}
 
 void add(Counter c, double ms) { g.frame[c] += ms; }
 
@@ -49,4 +49,4 @@ double average(Counter c) { return g.smooth[c]; }
 double worst(Counter c)   { return g.worstShown[c]; }
 const char* name(Counter c) { return kNames[c]; }
 
-} // namespace Perf
+}

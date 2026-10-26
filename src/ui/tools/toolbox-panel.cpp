@@ -2,6 +2,7 @@
 #include "core/actions.hpp"
 #include "core/project.hpp"
 #include "ui/tools/tool-manager.hpp"
+#include "ui/widgets.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>   // BeginViewportSideBar
@@ -9,8 +10,7 @@
 
 void ToolboxPanel::draw(ToolManager& tools, Project& project, const ActionRegistry& actions)
 {
-    // A band of the main window right under the menu bar (a viewport side bar, like the menu bar
-    // itself): the dockspace lays out below it, and it can't be docked, moved or resized.
+    // A viewport side bar under the menu bar: the dockspace lays out below it.
     const float size = std::round(ImGui::GetFontSize() * 1.75f);   // a tool button
     const float pad  = std::round(ImGui::GetFontSize() * 0.25f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad * 2.0f, pad));
@@ -47,12 +47,12 @@ void ToolboxPanel::draw(ToolManager& tools, Project& project, const ActionRegist
 
 void ToolPropertiesPanel::draw(bool* open, ToolManager& tools, Project& project)
 {
-    if (!ImGui::Begin("Tool Properties", open)) { ImGui::End(); return; }
+    if (!Widgets::beginPanel("Tool Properties", open)) { Widgets::endPanel(); return; }
     Tool& tool = tools.selected();
     ImGui::SeparatorText(tool.name());
     ToolContext ctx{ project, tools, tools.canvas() };
     ImGui::PushID(&tool);
     tool.drawProperties(ctx);
     ImGui::PopID();
-    ImGui::End();
+    Widgets::endPanel();
 }

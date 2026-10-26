@@ -21,7 +21,7 @@ constexpr ImU32 kMapEdge     = IM_COL32( 96,  96,  96, 255);
 constexpr ImU32 kMapMaskEdge = IM_COL32( 70,  70,  70, 255);
 constexpr ImU32 kMapViewport = IM_COL32(140, 180, 245, 255);
 
-} // namespace
+}
 
 void GraphMinimap::layout(const Items& items, NodeId skip, ImVec2 canvasMin, ImVec2 canvasMax, const ImRect& avoid, float uiScale)
 {

@@ -3,19 +3,12 @@
 struct SDL_Window;
 struct SDL_Cursor;
 
-// Mouse cursors for ImGui, taken from the desktop's cursor theme.
+// Mouse cursors for ImGui from the desktop's theme, and the one owner of the system cursor
+// (ImGui's backend is told not to touch it), so runtime cursors (setCustom) don't fight it.
 //
-// ImGui's SDL3 backend asks SDL for system cursors. On X11, SDL looks each one up by a
-// single CSS name ("ew-resize"). Many themes only ship the older names ("size_hor",
-// "sb_h_double_arrow", ...), and libXcursor then quietly takes the cursor from whatever
-// theme it falls back to (usually Adwaita), so resize cursors come out in a foreign style;
-// with no match at all SDL uses the X core font cursors. On X11 this looks each shape up
-// under the names Qt and GTK use, preferring ones the user's own theme ships. Elsewhere
-// (Wayland, Windows, macOS) SDL's cursors are already the native ones.
-//
-// It drives the cursor itself on every platform (ImGui's backend is told not to), so a cursor
-// made at runtime (a brush outline the size of the brush, see setCustom) has a single owner.
-// The system draws its cursor with no frame of latency, unlike anything drawn into the UI.
+// On X11, SDL looks cursors up by one CSS name, which many themes lack, falling back to a foreign
+// theme. This tries the names Qt and GTK use, preferring ones the user's theme ships. Elsewhere
+// SDL's cursors are already native.
 class SystemCursors {
 public:
     void init(SDL_Window* window);   // after ImGui_ImplSDL3_Init*()

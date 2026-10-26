@@ -1,12 +1,9 @@
 #pragma once
-// Which nodes are selected in the graph, and the rules that change it:
-//
-//   click                    select only this node (switch the selection to it)
-//   Ctrl+click               add or remove this node
-//   Shift+click              chain: the nodes on the shortest link path from the anchor
-//                            (the last node clicked) to this one; Ctrl+Shift adds the chain
-//   rubber band              select what it touches; Ctrl+band toggles what it touches
-//                            (adds unselected, removes selected); Shift+band adds
+// The graph's selection and its rules:
+//   click         select only this node
+//   Ctrl+click    add or remove it
+//   Shift+click   the shortest link path from the anchor (last clicked); Ctrl+Shift adds it
+//   rubber band   select what it touches; Ctrl toggles, Shift adds
 
 #include "node/node.hpp"
 

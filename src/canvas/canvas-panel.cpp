@@ -24,7 +24,7 @@ constexpr float kZOrigin   = -5.0f;   // the "+" on 0, 0: on the checkerboard, u
 constexpr float kZBounds   = 10.0f;
 constexpr float kZTool     = 20.0f;
 
-} // namespace
+}
 
 bool CanvasPanel::init(GpuDevice& gpu, Project& project, ToolManager& tools, const InputFrame& input, ActionRegistry& actions)
 {
@@ -41,16 +41,13 @@ bool CanvasPanel::init(GpuDevice& gpu, Project& project, ToolManager& tools, con
     cam.zoom = 2.0f;
     cam.pan  = { 300.0f, 160.0f };
 
-    // The scene: the project's output (the raster is unbounded: no document rectangle), and
-    // overlays on top.
+    // The scene: the project's output (unbounded), overlays on top.
     m_scene.addItem<CheckerItem>()->setZ(kZBackground);   // transparency, wherever nothing covers it
     m_output = m_scene.addItem<RasterItem>(&project.master());
     m_output->setZ(kZOutput);
     m_preview = m_scene.addItem<EditPreviewItem>(project);
     m_preview->setZ(kZOutput);
     m_scene.addItem<OriginItem>()->setZ(kZOrigin);
-    m_activeBounds = m_scene.addItem<OutlineItem>();
-    m_activeBounds->setZ(kZBounds);
     m_previewFrom = m_scene.addItem<OutlineItem>(IM_COL32(255, 255, 255, 90));
     m_previewFrom->setZ(kZBounds);
     m_previewTo = m_scene.addItem<OutlineItem>(IM_COL32(140, 180, 245, 255), 1.5f);
@@ -65,7 +62,7 @@ void CanvasPanel::shutdown()
     m_view.shutdown();
     m_scene.shutdown();
     m_output = nullptr;
-    m_activeBounds = nullptr;
+    m_selectionBounds.clear();
     m_preview      = nullptr;
     m_previewFrom  = nullptr;
     m_previewTo    = nullptr;
@@ -81,6 +78,7 @@ void CanvasPanel::draw(bool* open)
     m_visible = false;
     m_window  = nullptr;
     m_cursorOverride = nullptr;
+    m_hasPointer = false;
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     const bool shown = ImGui::Begin("Canvas", open, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
@@ -98,8 +96,7 @@ void CanvasPanel::draw(bool* open)
             m_canvasMax = ImVec2(origin.x + avail.x, origin.y + avail.y);
             m_tools->canvas() = { &m_view.camera(), avail.x, avail.y };
 
-            // One item covers the canvas: it owns the mouse while a button is held, so drags
-            // never move the window or reach widgets behind it.
+            // One item covers the canvas and owns the mouse while a button is held.
             ImGui::InvisibleButton("##canvas", avail, ImGuiButtonFlags_MouseButtonLeft |
                                                       ImGuiButtonFlags_MouseButtonRight |
                                                       ImGuiButtonFlags_MouseButtonMiddle);
@@ -145,11 +142,11 @@ void CanvasPanel::handleInput(const ImVec2& origin)
         cam.pan.x += io.MouseDelta.x;
         cam.pan.y += io.MouseDelta.y;
     }
-    m_tools->setSpringHand((hovered || active) && !io.WantTextInput && m_input->isDown(SDLK_SPACE));
-    if ((hovered || active) && !io.WantTextInput) m_actions->dispatch(*m_input, ActionScope::Canvas);   // [ ] brush size, ...
+    m_hasPointer = hovered || active;
+    m_tools->setSpringHand(m_hasPointer && !io.WantTextInput && m_input->isDown(SDLK_SPACE));
+    if (m_hasPointer && !io.WantTextInput) m_actions->dispatch(*m_input, ActionScope::Canvas);   // [ ] brush size, ...
 
-    // The rest is the tool's. ImGui decides whether the pointer is the canvas's this frame; the
-    // events themselves come straight from SDL (every sample, pen pressure and tilt).
+    // The rest is the tool's: ImGui decides whether the pointer is ours, SDL gives every sample.
     Tool& tool = m_tools->active();
     m_pointer.clear();
     if (hovered || active || tool.busy())   // busy: a stroke still gets its release outside the canvas
@@ -175,8 +172,7 @@ void CanvasPanel::updatePreview()
             m_previewOutlined = !m_preview->begin();
     } else {
         m_previewOutlined = false;
-        // The drag ended and the graph now has the value: keep showing the preview until the
-        // output has caught up on screen, then hand back to it (no flash of the old picture).
+        // The drag ended: keep the preview until the output has caught up (no flash of the old picture).
         if (m_preview->active() && m_output->settled()) m_preview->end();
     }
     m_output->setSuppressed(m_preview->active() && m_preview->hasResult());
@@ -184,13 +180,20 @@ void CanvasPanel::updatePreview()
 
 void CanvasPanel::updateOverlayItems(const ImVec2& origin)
 {
-    // Bounds of the raster being edited.
-    const RasterRootNode* active = m_project->activeRaster();
-    const bool hasBounds = active && !active->raster().getBounds().empty();
-    m_activeBounds->setVisible(hasBounds);
-    if (hasBounds) {
-        const BoundsI& b = active->raster().getBounds();
-        m_activeBounds->setPixelBounds(b.minX, b.minY, b.maxX, b.maxY);
+    // Bounds of the nodes selected in the graph; with none selected, of the raster being edited.
+    std::vector<BoundsI> outlined;
+    for (NodeId id : m_selection)
+        if (Node* n = m_project->find(id)) outlined.push_back(n->bounds());
+    if (m_selection.empty())
+        if (const RasterRootNode* active = m_project->activeRaster()) outlined.push_back(active->raster().getBounds());
+    std::erase_if(outlined, [](const BoundsI& b) { return b.empty(); });
+    while (m_selectionBounds.size() < outlined.size()) {
+        m_selectionBounds.push_back(m_scene.addItem<OutlineItem>());
+        m_selectionBounds.back()->setZ(kZBounds);
+    }
+    for (size_t i = 0; i < m_selectionBounds.size(); ++i) {
+        m_selectionBounds[i]->setVisible(i < outlined.size());
+        if (i < outlined.size()) m_selectionBounds[i]->setPixelBounds(outlined[i].minX, outlined[i].minY, outlined[i].maxX, outlined[i].maxY);
     }
 
     // A drag the GPU can't preview: outline the area it affects, and for a move where it goes.
@@ -249,8 +252,7 @@ void CanvasPanel::frameWorld(const BoundsI& b)
 void CanvasPanel::renderGpu(WGPUCommandEncoder enc)
 {
     if (!m_visible) return;
-    // A stroke shows up as it is painted, tile by tile: holding the picture back until it had
-    // caught up would make it appear in jumps.
+    // A stroke shows tile by tile as it's painted: holding the picture would make it jump.
     m_view.setHoldAllowed(!m_project->strokeActive());
     m_view.render(enc, kSyncBudgetMs);   // re-renders only when something changed
 }

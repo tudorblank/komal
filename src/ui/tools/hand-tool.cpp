@@ -1,6 +1,6 @@
 #include "hand-tool.hpp"
 #include "core/project.hpp"
-#include "ui/theme.hpp"
+#include "ui/widgets.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -29,21 +29,13 @@ void HandTool::drawProperties(ToolContext& ctx)
     }
     const Vec2 center = { ctx.canvas.viewW * 0.5f, ctx.canvas.viewH * 0.5f };
 
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted("Zoom");
-    ImGui::SameLine(ImGui::GetFontSize() * 5.0f);
-    ImGui::SetNextItemWidth(-FLT_MIN);
     float percent = cam->zoom * 100.0f;
-    {
-        NumberFont font;
-        if (ImGui::DragFloat("##zoom", &percent, 1.0f, CanvasCamera::kMinZoom * 100.0f, CanvasCamera::kMaxZoom * 100.0f, "%.0f%%",
-                             ImGuiSliderFlags_Logarithmic))
-            cam->zoomAt(center, percent / 100.0f / cam->zoom);
-    }
+    if (Widgets::sliderRow("Zoom", percent, CanvasCamera::kMinZoom * 100.0f, CanvasCamera::kMaxZoom * 100.0f, "%.0f%%", true, 100.0f))
+        cam->zoomAt(center, percent / 100.0f / cam->zoom);
 
-    if (ImGui::Button("100%")) cam->zoomAt(center, 1.0f / cam->zoom);
-    ImGui::SameLine();
-    if (ImGui::Button("Fit on screen")) {
+    if (Widgets::button("100%")) cam->zoomAt(center, 1.0f / cam->zoom);
+    Widgets::sameRow();
+    if (Widgets::button("Fit on screen")) {
         const BoundsI b = ctx.project.master().bounds();
         if (!b.empty()) cam->frame(float(b.minX), float(b.minY), float(b.maxX + 1), float(b.maxY + 1), ctx.canvas.viewW, ctx.canvas.viewH);
     }

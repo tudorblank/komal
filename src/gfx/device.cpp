@@ -87,8 +87,7 @@ void logSv(const char* tag, WGPUStringView m)
 struct AdapterRequest { WGPUAdapter adapter = nullptr; };
 struct DeviceRequest  { WGPUDevice  device  = nullptr; };
 
-void onAdapter(WGPURequestAdapterStatus status, WGPUAdapter adapter,
-               WGPUStringView msg, void* u1, void*)
+void onAdapter(WGPURequestAdapterStatus status, WGPUAdapter adapter, WGPUStringView msg, void* u1, void*)
 {
     if (status == WGPURequestAdapterStatus_Success)
         static_cast<AdapterRequest*>(u1)->adapter = adapter;
@@ -96,8 +95,7 @@ void onAdapter(WGPURequestAdapterStatus status, WGPUAdapter adapter,
         logSv("RequestAdapter failed", msg);
 }
 
-void onDevice(WGPURequestDeviceStatus status, WGPUDevice device,
-              WGPUStringView msg, void* u1, void*)
+void onDevice(WGPURequestDeviceStatus status, WGPUDevice device, WGPUStringView msg, void* u1, void*)
 {
     if (status == WGPURequestDeviceStatus_Success)
         static_cast<DeviceRequest*>(u1)->device = device;
@@ -106,19 +104,11 @@ void onDevice(WGPURequestDeviceStatus status, WGPUDevice device,
 }
 
 void onUncapturedError(const WGPUDevice*, WGPUErrorType, WGPUStringView msg, void*, void*)
-{
-    logSv("error", msg);
-}
-
+{ logSv("error", msg); }
 void onDeviceLost(const WGPUDevice*, WGPUDeviceLostReason, WGPUStringView msg, void*, void*)
-{
-    logSv("device lost", msg);
-}
-
+{ logSv("device lost", msg); }
 bool isSrgb(WGPUTextureFormat f)
-{
-    return f == WGPUTextureFormat_BGRA8UnormSrgb || f == WGPUTextureFormat_RGBA8UnormSrgb;
-}
+{ return f == WGPUTextureFormat_BGRA8UnormSrgb || f == WGPUTextureFormat_RGBA8UnormSrgb; }
 
 }
 
@@ -167,7 +157,6 @@ bool GpuDevice::init(SDL_Window* window)
                         info.device.data ? (info.device.length == WGPU_STRLEN
                                             ? std::strlen(info.device.data) : info.device.length) : 0);
         m_adapterInfo = dev + " | " + backend + " | " + type;
-        std::fprintf(stderr, "[gpu] %s\n", m_adapterInfo.c_str());
         wgpuAdapterInfoFreeMembers(info);
     }
 
@@ -206,9 +195,6 @@ bool GpuDevice::init(SDL_Window* window)
             if (m == want) m_presentMode = want;
     }
 
-    // Frames the swapchain may queue ahead of the display. wgpu defaults to 2, which with Fifo
-    // means the picture trails the mouse by ~3 refreshes: panning/dragging feels like rubber.
-    // 1 is plenty for a UI that renders in a few ms. Override with KOMAL_FRAME_LATENCY=1..3
     if (const char* fl = std::getenv("KOMAL_FRAME_LATENCY")) {
         const int v = std::atoi(fl);
         if (v >= 1 && v <= 3) m_frameLatency = (uint32_t)v;

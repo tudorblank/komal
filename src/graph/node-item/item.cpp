@@ -27,19 +27,26 @@ namespace {
 class Builder {
 public:
     Builder(const Project& p, const Node& n, const NodeItemState& v, StackLayout stack, NodeItem& s)
-        : m_project(p), m_node(n), m_view(v), m_stack(stack), m_s(s), m_x0(n.m_meta.x), m_x1(n.m_meta.x + kNodeWidth), m_y(n.m_meta.y) {}
+        : m_project(p), m_node(n), m_view(v), m_stack(stack), m_item(s), m_x0(n.m_meta.x), m_x1(n.m_meta.x + kNodeWidth), m_y(n.m_meta.y) {}
 
     void build()
     {
-        m_s.id = m_node.m_meta.id;
-        const bool master = m_project.isMaster(m_s.id);
+        m_item.id = m_node.m_meta.id;
+        m_item.boxes.clear();
+        m_item.ports.clear();
+        m_item.widgets.clear();
+        m_item.sections.clear();
+        m_item.channels.clear();
+        m_item.layers.clear();
+        m_item.ioRow = m_item.thumb = m_item.offsetRow[0] = m_item.offsetRow[1] = ImRect();
+        const bool master = m_project.isMaster(m_item.id);
         auto* stack = dynamic_cast<const CompositorNode*>(&m_node);
 
         // ---- header (+ body, or the master's stack)
         const float top = m_y;
-        m_s.header = ImRect(m_x0, top, m_x1, top + kHeaderH);
-        widget(NodeItemControl::Title, m_s.header);
-        m_y = m_s.header.Max.y;
+        m_item.header = ImRect(m_x0, top, m_x1, top + kHeaderH);
+        widget(NodeItemControl::Title, m_item.header);
+        m_y = m_item.header.Max.y;
         if (master) {
             layerList(*stack);
         } else {
@@ -52,7 +59,7 @@ public:
             const float boxTop = openBox();
             m_y += 4.0f;
             for (int axis = 0; axis < 2; ++axis) {
-                m_s.offsetRow[axis] = ImRect(m_x0, m_y, m_x1, m_y + kRowH);
+                m_item.offsetRow[axis] = ImRect(m_x0, m_y, m_x1, m_y + kRowH);
                 widget(axis == 0 ? NodeItemControl::OffsetX : NodeItemControl::OffsetY,
                        ImRect(m_x0 + kPad + 56.0f, m_y + 2.0f, m_x1 - kPad, m_y + kRowH - 2.0f));
                 m_y += kRowH;
@@ -76,28 +83,28 @@ public:
         m_y += 3.0f;
         closeBox(boxTop);
 
-        m_s.bounds = m_s.boxes.front().rect;
-        for (const NodeItemBox& b : m_s.boxes) m_s.bounds.Add(b.rect);
+        m_item.bounds = m_item.boxes.front().rect;
+        for (const NodeItemBox& b : m_item.boxes) m_item.bounds.Add(b.rect);
     }
 
 private:
     void widget(NodeItemControl c, ImRect r, NodeSignal sig = NodeSignal::Main, NodeChannel ch = NodeChannel::A, uint32_t layer = 0)
     {
-        m_s.widgets.push_back({ c, r, sig, ch, layer });
+        m_item.widgets.push_back({ c, r, sig, ch, layer });
     }
     void inputPort(float y, InputSlot slot, bool mask = false, bool placeholder = false)
     {
-        m_s.ports.push_back({ ImVec2(m_x0, y), false, slot, mask, placeholder });
+        m_item.ports.push_back({ ImVec2(m_x0, y), false, slot, mask, placeholder });
     }
 
     float openBox() { m_y += kBoxGap; return m_y; }
-    void  closeBox(float top, float header = 0.0f) { m_s.boxes.push_back({ ImRect(m_x0, top, m_x1, m_y), header }); }
+    void  closeBox(float top, float header = 0.0f) { m_item.boxes.push_back({ ImRect(m_x0, top, m_x1, m_y), header }); }
 
     void body()
     {
-        m_s.ioRow = ImRect(m_x0, m_y, m_x1, m_y + kIoRowH);
-        const float cy = m_s.ioRow.GetCenter().y;
-        m_s.ports.push_back({ ImVec2(m_x1, cy), true, {}, false, false });
+        m_item.ioRow = ImRect(m_x0, m_y, m_x1, m_y + kIoRowH);
+        const float cy = m_item.ioRow.GetCenter().y;
+        m_item.ports.push_back({ ImVec2(m_x1, cy), true, {}, false, false });
         if (dynamic_cast<const UnaryNode*>(&m_node)) inputPort(cy, InputSlot::input());
         if (m_node.m_meta.type == NodeType::Raster) {
             const float h = kIconSize * 0.5f;
@@ -106,8 +113,8 @@ private:
             widget(NodeItemControl::LockAlpha, ImRect(x + kIconSize + 6.0f, cy - h, x + 2.0f * kIconSize + 6.0f, cy + h));
         }
         const float tx = m_x0 + (kNodeWidth - kThumbW) * 0.5f;
-        m_s.thumb = ImRect(tx, m_s.ioRow.Max.y + 1.0f, tx + kThumbW, m_s.ioRow.Max.y + 1.0f + kThumbH);
-        m_y = m_s.thumb.Max.y + kThumbBelow;
+        m_item.thumb = ImRect(tx, m_item.ioRow.Max.y + 1.0f, tx + kThumbW, m_item.ioRow.Max.y + 1.0f + kThumbH);
+        m_y = m_item.thumb.Max.y + kThumbBelow;
     }
 
     void layerList(const CompositorNode& c)
@@ -121,7 +128,7 @@ private:
         const float x0 = m_x0 + 6.0f, x1 = m_x1 - 6.0f;
         const auto row = [&](NodeItemLayerRow::Kind kind, uint32_t layer) {
             const ImRect r(x0, m_y, x1, m_y + kLayerRowH);
-            m_s.layers.push_back({ r, layer, kind });
+            m_item.layers.push_back({ r, layer, kind });
             m_y = r.Max.y + kLayerGap;
             return r;
         };
@@ -148,7 +155,7 @@ private:
     {
         const bool expanded = m_view.expanded[int(sig)];
         const ImRect head(m_x0, m_y, m_x1, m_y + kRowH);
-        m_s.sections.push_back({ head, sig, expanded });
+        m_item.sections.push_back({ head, sig, expanded });
         widget(NodeItemControl::SectionToggle, ImRect(m_x0 + 4.0f, head.Min.y, m_x1 - 4.0f, head.Max.y), sig);
         m_y = head.Max.y;
 
@@ -158,7 +165,7 @@ private:
             if (!expanded && ch != int(NodeChannel::A) && !sc.mask[ch]) continue;
             const ImRect row(m_x0, m_y, m_x1, m_y + kRowH);
             const ImRect track(m_x0 + 16.0f, row.Min.y + 3.0f, m_x1 - 50.0f, row.Max.y - 3.0f);
-            m_s.channels.push_back({ row, track, sig, NodeChannel(ch) });
+            m_item.channels.push_back({ row, track, sig, NodeChannel(ch) });
             // The whole row past the port: the track drags, the value double-clicks to type.
             widget(NodeItemControl::Scale, ImRect(track.Min.x - 5.0f, row.Min.y, row.Max.x - 2.0f, row.Max.y), sig, NodeChannel(ch));
             inputPort(row.GetCenter().y, InputSlot::mask(sig, NodeChannel(ch)), true);
@@ -170,12 +177,12 @@ private:
     const Node&          m_node;
     const NodeItemState& m_view;
     const StackLayout    m_stack;
-    NodeItem&           m_s;
+    NodeItem&            m_item;
     const float m_x0, m_x1;
     float m_y;
 };
 
-} // namespace
+}
 
 ImRect layerThumbRect(const ImRect& r)
 {
@@ -183,9 +190,7 @@ ImRect layerThumbRect(const ImRect& r)
     return ImRect(r.Min.x + 3.0f, r.Min.y + 3.0f, r.Min.x + 3.0f + th * 4.0f / 3.0f, r.Max.y - 3.0f);
 }
 
-NodeItem buildNodeItem(const Project& project, const Node& n, const NodeItemState& view, StackLayout stack)
+void buildNodeItem(const Project& project, const Node& n, const NodeItemState& view, StackLayout stack, NodeItem& out)
 {
-    NodeItem s;
-    Builder(project, n, view, dynamic_cast<const CompositorNode*>(&n) ? stack : StackLayout{}, s).build();
-    return s;
+    Builder(project, n, view, dynamic_cast<const CompositorNode*>(&n) ? stack : StackLayout{}, out).build();
 }

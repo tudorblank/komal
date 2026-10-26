@@ -20,8 +20,7 @@ void OriginItem::setArm(float points)
 bool OriginItem::prepare(CanvasFrame& frame)
 {
     // One target pixel and the arm length, in world units at this zoom.
-    const float pixelsPerPoint = frame.target.viewW > 0.0f ? float(frame.target.pixelW) / frame.target.viewW : 1.0f;
-    const float pixel = 1.0f / (frame.camera.zoom * pixelsPerPoint);
+    const float pixel = 1.0f / (frame.camera.zoom * frame.pixelsPerPoint());
     const float arm   = m_arm / frame.camera.zoom;
     m_horizontal.setRect(-arm, -pixel * 0.5f, arm * 2.0f + pixel, pixel);
     m_vertical.setRect(-pixel * 0.5f, -arm, pixel, arm * 2.0f + pixel);

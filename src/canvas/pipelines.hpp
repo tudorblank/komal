@@ -4,7 +4,7 @@
 #include <cstdint>
 
 // Uniform of the preview signal pass (preview-signal.wgsl). Channels in NodeChannel order
-// (A, R, G, B); a mask is the index of its texture (0..11), or -1.
+// (A, R, G, B); a mask is its texture index (0..11), or -1.
 struct PreviewSignalParams {
     float   mainK[4], wetK[4], dryK[4];
     int32_t mainM[4], wetM[4], dryM[4];
@@ -12,6 +12,13 @@ struct PreviewSignalParams {
 };
 static_assert(sizeof(PreviewSignalParams) == 112);
 constexpr int kPreviewMaskTextures = 12;
+
+// Uniform of a solid rectangle (color.wgsl).
+struct RectParams {
+    float model[16];   // unit quad centred on the origin -> world rectangle
+    float color[4];    // straight RGBA
+};
+static_assert(sizeof(RectParams) == 80);
 
 // Uniform of the checkerboard background (checker.wgsl).
 struct CheckerParams {
@@ -22,35 +29,30 @@ struct CheckerParams {
 };
 static_assert(sizeof(CheckerParams) == 48);
 
-// GPU state shared by every item of a canvas scene: the bind group layouts and pipelines each
-// item kind draws with. Items own only their data (buffers, textures, bind groups).
-//
-// Bind group 0 of every pipeline is the camera (a view-projection matrix, one per view).
+// The layouts and pipelines every item kind of a canvas scene draws with, shared. Items own
+// only their data (buffers, textures, bind groups).
 struct CanvasPipelines {
     GpuHandles ctx;
 
-    WGPUBindGroupLayout cameraLayout = nullptr;   // group 0: mat4 viewProj
+    WGPUBindGroupLayout cameraLayout = nullptr;   // group 0 of world-space pipelines: mat4 viewProj
 
-    // The checkerboard background (checker.wgsl): a full-screen pass, no camera.
-    // Group 0: CheckerParams. Writes every pixel (no blending).
+    // Checkerboard background: full-screen, no camera. Group 0: CheckerParams. No blending.
     WGPUBindGroupLayout checkerLayout   = nullptr;
     WGPURenderPipeline  checkerPipeline = nullptr;
 
-    // Solid rectangles (color.wgsl). Group 1: model matrix + colour per item.
+    // Solid rectangles. Group 1: RectParams.
     WGPUBindGroupLayout colorLayout   = nullptr;
     WGPURenderPipeline  colorPipeline = nullptr;
 
-    // Atlas-backed raster tiles (texture.wgsl), premultiplied. Group 1: page texture + sampler.
-    // Vertex buffer 0: one ChunkInstance per tile (see tiles/atlas.h).
+    // Raster tiles, premultiplied. Group 1: page texture + sampler; vertex buffer 0: ChunkInstance.
     WGPUBindGroupLayout atlasLayout   = nullptr;
     WGPURenderPipeline  atlasPipeline = nullptr;
-    WGPUSampler         atlasSampler  = nullptr;   // nearest: pixels stay crisp squares at any zoom
+    WGPUSampler         atlasSampler  = nullptr;   // nearest: pixels stay crisp squares
 
-    // Edit previews (preview-signal.wgsl, preview-blit.wgsl): full-screen passes over textures
-    // the size of the view, read with textureLoad (pixel for pixel, no sampler).
-    //   signal: one node's signals on the GPU. Group 0: PreviewSignalParams. Group 1: Wet, Dry
-    //           and 12 mask textures (signal * 4 + channel). Writes (no blending).
-    //   blit:   one texture drawn over the target, premultiplied. Group 0: the texture.
+    // Edit previews: full-screen passes over view-sized textures, read 1:1 (textureLoad).
+    //   signal: one node's signals. Group 0: PreviewSignalParams; group 1: Wet, Dry, 12 masks
+    //           (signal * 4 + channel). No blending.
+    //   blit:   one texture over the target, premultiplied. Group 0: the texture.
     WGPUBindGroupLayout previewParamsLayout   = nullptr;
     WGPUBindGroupLayout previewTexturesLayout = nullptr;
     WGPURenderPipeline  previewSignalPipeline = nullptr;

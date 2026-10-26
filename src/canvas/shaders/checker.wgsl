@@ -1,6 +1,4 @@
-// The canvas background: a checkerboard where nothing covers it (transparency). Drawn first,
-// over the whole view, in screen pixels: the squares keep their size at any zoom, and the
-// pattern is anchored to the canvas origin so it travels with the canvas when it pans.
+// The canvas background checkerboard, in screen pixels, anchored to the canvas origin.
 
 struct Checker {
     colorA : vec4f,   // the square at the origin

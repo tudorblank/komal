@@ -25,7 +25,7 @@ bool mouseButton(Uint8 sdlButton, PointerButton& out)
     }
 }
 
-} // namespace
+}
 
 bool InputFrame::pressed(Shortcut s, bool repeats) const
 {
@@ -43,7 +43,6 @@ void InputCollector::beginFrame()
 {
     m_frame.pointer.clear();
     m_frame.keys.clear();
-    m_frame.wheelX = m_frame.wheelY = 0.0f;
 }
 
 void InputCollector::releaseAllKeys()
@@ -96,8 +95,7 @@ void InputCollector::handle(const SDL_Event& e)
         k.repeat   = e.key.repeat;
         k.timeNs   = e.key.timestamp;
         m_frame.keys.push_back(k);
-        // What is held now, from SDL's own keyboard state: an event's `mod` can predate the key
-        // it reports (pressing Ctrl alone), so it isn't the state after it.
+        // From SDL's keyboard state: an event's `mod` can predate its own key (Ctrl alone).
         m_frame.mods = keyMods(SDL_GetModState());
         if (k.down && !m_frame.isDown(k.key)) m_frame.held.push_back(k.key);
         if (!k.down) std::erase(m_frame.held, k.key);
@@ -128,11 +126,6 @@ void InputCollector::handle(const SDL_Event& e)
         push(ev);
         break;
     }
-    case SDL_EVENT_MOUSE_WHEEL:
-        m_frame.wheelX += e.wheel.x;
-        m_frame.wheelY += e.wheel.y;
-        break;
-
     // ---- pen ---- //
     case SDL_EVENT_PEN_PROXIMITY_IN:
         pen.present = true;

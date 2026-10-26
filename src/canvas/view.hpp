@@ -22,7 +22,7 @@ public:
 
     void render(WGPUCommandEncoder enc, double budgetMs);
     void setHoldAllowed(bool allowed) { m_holdAllowed = allowed; }   // off: show updates in progress
-    // The picture isn't complete yet (visible tiles still coming in): render() wants more frames.
+    // Visible tiles still coming in: render() wants more frames.
     bool busy() const { return m_holding || (m_scene && !m_scene->settled()); }
     void drawOverlays(ImDrawList* dl, float originX, float originY);   // screen position of the view
 
@@ -40,6 +40,7 @@ private:
     uint64_t m_renderedRevision = 0;   // never a valid scene revision
     Vec2     m_renderedPan{};
     float    m_renderedZoom = 0.0f;
+    float    m_renderedRotation = 0.0f;
     float    m_renderedW = 0, m_renderedH = 0;
     bool     m_targetNew = true;
     bool     m_holdAllowed = true;

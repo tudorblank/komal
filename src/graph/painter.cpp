@@ -84,7 +84,7 @@ void drawThumb(const GraphPaint& g, const ImRect& r, NodeId id, NodeItemThumbnai
     else         g.dl->AddImage(v.texture, a, b, v.uv0, v.uv1);
 }
 
-} // namespace
+}
 
 // ---------------------------------------------------------------- text
 
@@ -96,8 +96,7 @@ void drawText(const GraphPaint& g, ImVec2 graphPos, float size, ImU32 color, con
     const ImVec2 p = g.at(graphPos);
     const int first = g.dl->VtxBuffer.Size;
     g.dl->AddText(font ? font : graphFont(), q, p, color, text, end);
-    // The glyphs were laid out from the truncated position at the baked size: scale them
-    // to the exact size around the exact position (channels share one vertex buffer).
+    // Laid out at the baked size from a truncated position: scale to the exact size and position.
     const float k = px / q;
     const ImVec2 o(std::trunc(p.x), std::trunc(p.y));
     for (int i = first; i < g.dl->VtxBuffer.Size; ++i) {
@@ -309,8 +308,7 @@ void paintNodePorts(const GraphPaint& g, const Project& project, const NodeItem&
 
 void paintNodeOutline(const GraphPaint& g, const NodeItem& item, const NodeItemVisual& visual)
 {
-    // Rings around the whole node (all its boxes), one item for every state. Gaps and widths
-    // are screen pixels, so the rings hug the node the same way at any zoom.
+    // One ring per state around all the node's boxes; gaps and widths in screen pixels.
     struct Ring { ImU32 color; float width; };
     Ring rings[2];
     int count = 0;
@@ -366,7 +364,7 @@ Nearest nearestOnLink(const LinkCurve& c, ImVec2 p)
     return best;
 }
 
-} // namespace
+}
 
 float linkDistance(const LinkCurve& c, ImVec2 p) { return std::sqrt(nearestOnLink(c, p).distance2); }
 float linkNearest(const LinkCurve& c, ImVec2 p)  { return nearestOnLink(c, p).t; }
