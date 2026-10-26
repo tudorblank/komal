@@ -1,5 +1,5 @@
-#include "project.h"
-#include "core/perf.h"
+#include "project.hpp"
+#include "core/perf.hpp"
 
 #include <algorithm>
 #include <cmath>

@@ -1,5 +1,6 @@
-#include "input.h"
+#include "input.hpp"
 
+#include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_mouse.h>
 #include <SDL3/SDL_pen.h>
 #include <algorithm>
@@ -95,7 +96,9 @@ void InputCollector::handle(const SDL_Event& e)
         k.repeat   = e.key.repeat;
         k.timeNs   = e.key.timestamp;
         m_frame.keys.push_back(k);
-        m_frame.mods = k.mods;
+        // What is held now, from SDL's own keyboard state: an event's `mod` can predate the key
+        // it reports (pressing Ctrl alone), so it isn't the state after it.
+        m_frame.mods = keyMods(SDL_GetModState());
         if (k.down && !m_frame.isDown(k.key)) m_frame.held.push_back(k.key);
         if (!k.down) std::erase(m_frame.held, k.key);
         break;

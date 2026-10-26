@@ -1,70 +1,48 @@
-#include "toolbox-panel.h"
-#include "core/project.h"
-#include "ui/tools/tool-manager.h"
+#include "toolbox-panel.hpp"
+#include "core/actions.hpp"
+#include "core/project.hpp"
+#include "ui/tools/tool-manager.hpp"
 
-#include <SDL3/SDL_keyboard.h>
 #include <imgui.h>
-#include <algorithm>
+#include <imgui_internal.h>   // BeginViewportSideBar
+#include <cmath>
 
-namespace {
-
-// The docked toolbox shows no tab bar of its own (it can still be undocked by dragging the
-// bar that appears on hover).
-void noTabBar()
+void ToolboxPanel::draw(ToolManager& tools, Project& project, const ActionRegistry& actions)
 {
-    ImGuiWindowClass wc;
-    wc.DockNodeFlagsOverrideSet = ImGuiDockNodeFlags_AutoHideTabBar;
-    ImGui::SetNextWindowClass(&wc);
-}
-
-const char* keyName(SDL_Keycode key) { return SDL_GetKeyName(key); }
-
-} // namespace
-
-void ToolboxPanel::draw(bool* open, ToolManager& tools, Project& project)
-{
-    noTabBar();
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4.0f, 6.0f));
-    const bool shown = ImGui::Begin("Tools", open, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-    ImGui::PopStyleVar();
-    if (!shown) { ImGui::End(); return; }
-
-    const ImGuiStyle& st = ImGui::GetStyle();
-    const float size = ImGui::GetFontSize() * 2.1f;
-    const float x = std::max(0.0f, (ImGui::GetContentRegionAvail().x - size) * 0.5f);
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-
-    for (const auto& t : tools.tools()) {
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + x);
-        ImGui::PushID(t.get());
-        const ImVec2 p = ImGui::GetCursorScreenPos();
-        if (ImGui::InvisibleButton("##tool", ImVec2(size, size))) tools.select(*t, project);
-        const bool selected = &tools.selected() == t.get();
-        const bool hovered  = ImGui::IsItemHovered();
-        const ImVec2 q(p.x + size, p.y + size);
-        if (selected || hovered)
-            dl->AddRectFilled(p, q, ImGui::GetColorU32(selected ? ImGuiCol_ButtonActive : ImGuiCol_ButtonHovered), st.FrameRounding);
-        if (selected) dl->AddRect(p, q, ImGui::GetColorU32(ImGuiCol_CheckMark), st.FrameRounding);
-        t->drawIcon(dl, ImVec2(p.x + size * 0.5f, p.y + size * 0.5f), size * 0.62f,
-                    ImGui::GetColorU32(selected ? ImGuiCol_Text : ImGuiCol_TextDisabled));
-        ImGui::SetItemTooltip("%s (%s)", t->name(), keyName(t->shortcut()));
-        ImGui::PopID();
+    // A band of the main window right under the menu bar (a viewport side bar, like the menu bar
+    // itself): the dockspace lays out below it, and it can't be docked, moved or resized.
+    const float size = std::round(ImGui::GetFontSize() * 1.75f);   // a tool button
+    const float pad  = std::round(ImGui::GetFontSize() * 0.25f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad * 2.0f, pad));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(pad, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGui::GetStyleColorVec4(ImGuiCol_MenuBarBg));   // one header with the menu bar
+    const bool shown = ImGui::BeginViewportSideBar("##toolbar", ImGui::GetMainViewport(), ImGuiDir_Up, size + 2.0f * pad,
+                                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+                                                   ImGuiWindowFlags_NoSavedSettings);
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(3);
+    if (shown) {
+        const ImGuiStyle& st = ImGui::GetStyle();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        for (const auto& t : tools.tools()) {
+            ImGui::PushID(t.get());
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            if (ImGui::InvisibleButton("##tool", ImVec2(size, size))) tools.select(*t, project);
+            const bool selected = &tools.selected() == t.get();
+            const bool hovered  = ImGui::IsItemHovered();
+            const ImVec2 q(p.x + size, p.y + size);
+            if (selected || hovered)
+                dl->AddRectFilled(p, q, ImGui::GetColorU32(selected ? ImGuiCol_ButtonActive : ImGuiCol_ButtonHovered), st.FrameRounding);
+            if (selected) dl->AddRect(p, q, ImGui::GetColorU32(ImGuiCol_CheckMark), st.FrameRounding);
+            t->drawIcon(dl, ImVec2(p.x + size * 0.5f, p.y + size * 0.5f), size * 0.62f,
+                        ImGui::GetColorU32(selected ? ImGuiCol_Text : ImGuiCol_TextDisabled));
+            ImGui::SetItemTooltip("%s (%s)", t->name(), actions.shortcutLabel(toolActionId(*t)).c_str());   // as bound
+            ImGui::PopID();
+            ImGui::SameLine();
+        }
     }
-
-    // Foreground colour, under the tools.
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + x);
-    float* fg = tools.colors().foreground;
-    if (ImGui::ColorButton("##fg", ImVec4(fg[0], fg[1], fg[2], fg[3]), ImGuiColorEditFlags_AlphaPreviewHalf, ImVec2(size, size)))
-        ImGui::OpenPopup("##fg-picker");
-    ImGui::SetItemTooltip("Foreground colour");
-    if (ImGui::BeginPopup("##fg-picker")) {
-        ImGui::ColorPicker4("##picker", fg, ImGuiColorEditFlags_AlphaBar);
-        ImGui::EndPopup();
-    }
-    ImGui::End();
+    ImGui::End();   // a side bar is a window: always ended
 }
 
 void ToolPropertiesPanel::draw(bool* open, ToolManager& tools, Project& project)

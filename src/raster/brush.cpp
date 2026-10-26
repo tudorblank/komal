@@ -1,4 +1,4 @@
-#include "brush.h"
+#include "brush.hpp"
 
 #include <algorithm>
 #include <cmath>

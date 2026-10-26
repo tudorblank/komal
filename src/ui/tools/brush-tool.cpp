@@ -1,7 +1,8 @@
-#include "brush-tool.h"
-#include "ui/tools/ring-cursor.h"
-#include "core/project.h"
-#include "gfx/canvas-scene.h"
+#include "brush-tool.hpp"
+#include "ui/tools/ring-cursor.hpp"
+#include "core/project.hpp"
+#include "canvas/scene.hpp"
+#include "ui/theme.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -33,18 +34,24 @@ void BrushTool::drawProperties(ToolContext&)
     if (ImGui::RadioButton("Erase", m_erase)) m_erase = true;
 
     label("Size");
-    ImGui::DragFloat("##size", &m_params.diameter, 0.25f, 1.0f, kMaxDiameter, "%.0f px", ImGuiSliderFlags_Logarithmic);
+    {
+        NumberFont font;
+        ImGui::DragFloat("##size", &m_params.diameter, 0.25f, 1.0f, kMaxDiameter, "%.0f px", ImGuiSliderFlags_Logarithmic);
+    }
     label("Hardness");
-    ImGui::SliderFloat("##hardness", &m_params.hardness, 0.0f, 1.0f, "%.2f");
+    { NumberFont font; ImGui::SliderFloat("##hardness", &m_params.hardness, 0.0f, 1.0f, "%.2f"); }
     label("Opacity");
     float opacity = m_params.opacity / 255.0f;
-    if (ImGui::SliderFloat("##opacity", &opacity, 0.0f, 1.0f, "%.2f")) m_params.opacity = uint8_t(opacity * 255.0f + 0.5f);
+    {
+        NumberFont font;
+        if (ImGui::SliderFloat("##opacity", &opacity, 0.0f, 1.0f, "%.2f")) m_params.opacity = uint8_t(opacity * 255.0f + 0.5f);
+    }
     label("Flow");
-    ImGui::SliderFloat("##flow", &m_params.flow, 0.01f, 1.0f, "%.2f");
+    { NumberFont font; ImGui::SliderFloat("##flow", &m_params.flow, 0.01f, 1.0f, "%.2f"); }
     label("Spacing");
-    ImGui::SliderFloat("##spacing", &m_params.spacing, 0.02f, 1.0f, "%.2f");
+    { NumberFont font; ImGui::SliderFloat("##spacing", &m_params.spacing, 0.02f, 1.0f, "%.2f"); }
     label("Color");
-    ImGui::ColorEdit4("##color", m_colors.foreground, ImGuiColorEditFlags_AlphaBar);
+    { NumberFont font; ImGui::ColorEdit4("##color", m_colors.foreground, ImGuiColorEditFlags_AlphaBar); }
     label("Edges");
     ImGui::Checkbox("Antialiased", &m_params.antialias);
     ImGui::SetItemTooltip("Off: hard pixels (diameter 1 = single pixels).");
@@ -59,13 +66,18 @@ void BrushTool::drawProperties(ToolContext&)
     ImGui::TextDisabled("LMB / pen paint   RMB / pen eraser erase   [ ] size");
 }
 
+void BrushTool::registerActions(ActionRegistry& actions, std::function<bool()> isActive)
+{
+    actions.add({ .id = "brush.bigger", .title = "Bigger Brush", .shortcuts = { { SDLK_RIGHTBRACKET } },
+                  .scope = ActionScope::Canvas, .repeats = true, .enabled = isActive,
+                  .run = [this] { m_params.diameter = std::min(kMaxDiameter, std::round(m_params.diameter * 1.25f + 0.5f)); } });
+    actions.add({ .id = "brush.smaller", .title = "Smaller Brush", .shortcuts = { { SDLK_LEFTBRACKET } },
+                  .scope = ActionScope::Canvas, .repeats = true, .enabled = isActive,
+                  .run = [this] { m_params.diameter = std::max(1.0f, std::round(m_params.diameter / 1.25f)); } });
+}
+
 void BrushTool::canvasInput(const CanvasInput& in)
 {
-    if (in.hovered && !ImGui::GetIO().WantTextInput) {
-        if (in.input.pressed({ SDLK_RIGHTBRACKET }, true)) m_params.diameter = std::min(kMaxDiameter, std::round(m_params.diameter * 1.25f + 0.5f));
-        if (in.input.pressed({ SDLK_LEFTBRACKET }, true))  m_params.diameter = std::max(1.0f, std::round(m_params.diameter / 1.25f));
-    }
-
     // A stroke (and an undo step) runs from a press to the release of that same button, through
     // every sample in between, in the order they happened.
     const auto flush = [&] {
@@ -132,7 +144,7 @@ bool BrushTool::cursorRing(float zoom, float& radius, bool& erase) const
     return true;
 }
 
-void BrushTool::paintOverlay(ImDrawList* dl, const OverlayContext& ctx, Vec2 world) const
+void BrushTool::drawOverlay(ImDrawList* dl, const OverlayContext& ctx, Vec2 world) const
 {
     // The ring and the crosshair are the system cursor (RingCursors): drawn here they would trail
     // the mouse by a frame. Only what it can't show is drawn: the pixel under the mouse when zoomed

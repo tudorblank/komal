@@ -1,17 +1,36 @@
-#include "application.h"
-#include "core/perf.h"
-#include "ui/theme.h"
+#include "application.hpp"
+#include "core/perf.hpp"
+#include "ui/theme.hpp"
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
+#include <imgui_internal.h>   // GImGui: hover timer (tooltips)
 #include <algorithm>
 #include <utility>
 #include <vector>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_wgpu.h>
 #include <cstdio>
+#include <stb_image.h>
+
+extern const unsigned char kAppIcon[];   // assets/komal-icon-256.png, see embed_file() in CMakeLists.txt
+extern const unsigned int  kAppIconSize;
 
 namespace {
+
+// The window's icon (title bar, taskbar, Alt+Tab, the Dock while running), the same on every
+// platform. Windows and macOS builds also carry it in the .exe / the app bundle (CMakeLists.txt).
+void setWindowIcon(SDL_Window* window)
+{
+    int w = 0, h = 0, channels = 0;
+    stbi_uc* px = stbi_load_from_memory(kAppIcon, int(kAppIconSize), &w, &h, &channels, 4);
+    if (!px) return;
+    if (SDL_Surface* icon = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, px, w * 4)) {
+        SDL_SetWindowIcon(window, icon);   // copies the pixels
+        SDL_DestroySurface(icon);
+    }
+    stbi_image_free(px);
+}
 
 float contentScale(SDL_Window* window)
 {
@@ -26,12 +45,16 @@ Application::~Application() { shutdown(); }
 
 bool Application::init(const char* title, int width, int height)
 {
+    // ---- SDL
 #if defined(__linux__)
     // prefer X11 (XWayland on KDE Wayland) [swapchains pace much better there]
     // fallback: Wayland if X11 is unavailable.
     if (!SDL_getenv("SDL_VIDEO_DRIVER"))
         SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11,wayland");
 #endif
+
+    // The app id: Wayland compositors and X11 docks match the window to komal.desktop by it.
+    SDL_SetAppMetadata("Komal", nullptr, "komal");
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
@@ -49,22 +72,25 @@ bool Application::init(const char* title, int width, int height)
         std::fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         return false;
     }
+    setWindowIcon(m_window);
 
+    // ---- project (CPU)
+    m_project.init();
+
+    // ---- GPU init (wgpu)
     if (!m_gpu.init(m_window))
         return false;
 
-    // ---- ImGui ---- //
+    // ---- UI init (ImGui)
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
-    // ---- config ---- //
-
-    // Linux ~/.local/share/Komal/
-    // Windows %APPDATA%\Komal\ 
-    // macOS ~/Library/Application Support/Komal/
+    // Linux ~/.local/share/Komal
+    // Windows %APPDATA%\Komal
+    // macOS ~/Library/Application Support/Komal
     
     if (char* dir = SDL_GetPrefPath(nullptr, "Komal")) {
         m_iniPath = std::string(dir) + "imgui.ini";
@@ -77,6 +103,7 @@ bool Application::init(const char* title, int width, int height)
 
     loadUiFonts();
 
+    // ---- GPU setup
     ImGui_ImplSDL3_InitForOther(m_window);
     m_cursors.init(m_window);
 
@@ -99,11 +126,13 @@ bool Application::init(const char* title, int width, int height)
         std::fprintf(stderr, "[gpu] %s\n", buf);
     }
     m_imguiReady = true;
-    m_project.init();
+
+    // ---- UI class pass
     m_userInterface.setWindow(m_window);
     if (!m_userInterface.init(m_gpu, m_project, m_input.frame()))
         std::fprintf(stderr, "UserInterface init failed (canvas viewport disabled)\n");
     applyContentScale();
+    
     m_running = true;
     return true;
 }
@@ -116,9 +145,24 @@ int Application::exec()
             processEvents();
             continue;
         }
+        // Idle: sleep until input arrives, rather than redrawing an unchanged UI at the refresh rate.
+        if (m_quietFrames >= kIdleFrames && !needsFrame()) {
+            const int timeoutMs = ImGui::GetIO().WantTextInput ? 500 : 1000;   // a text caret blinks; otherwise a safety net
+            SDL_WaitEventTimeout(nullptr, timeoutMs);   // leaves the event queued for processEvents()
+        }
         renderFrame();
     }
     return 0;
+}
+
+bool Application::needsFrame() const
+{
+    if (!m_imguiDeferredReleases.empty() || m_userInterface.busy()) return true;
+    const ImGuiIO& io = ImGui::GetIO();
+    for (bool down : io.MouseDown)
+        if (down) return true;   // holds are timed (the graph's right-button zoom)
+    const ImGuiContext& g = *GImGui;
+    return g.HoveredId != 0 && g.HoveredIdTimer < 1.0f;   // tooltips appear after a hover delay
 }
 
 void Application::processEvents()
@@ -131,6 +175,7 @@ void Application::processEvents()
         m_input.handle(e);
         events.push_back(e);
     }
+    m_quietFrames = events.size() > carried ? 0 : m_quietFrames + 1;
 
     uint32_t pressedButtons = 0;
     std::vector<SDL_Keycode> pressedKeys;
@@ -187,7 +232,7 @@ void Application::renderFrame()
     const Uint64 t0 = SDL_GetPerformanceCounter();
 
     // wait for the swapchain BEFORE reading input
-    Frame frame;
+    GpuFrame frame;
     const bool acquired = m_gpu.acquire(frame);
     const Uint64 t1 = SDL_GetPerformanceCounter();
 
@@ -214,7 +259,7 @@ void Application::renderFrame()
     // offscreen passes first, in the same encoder
     m_userInterface.renderGpu(frame.encoder);
 
-    const float clear[4] = { 0.10f, 0.10f, 0.12f, 1.0f };
+    const float clear[4] = { 0.055f, 0.055f, 0.055f, 1.0f };
     m_gpu.beginSurfacePass(frame, clear);
     ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), frame.pass);
     m_gpu.present(frame);

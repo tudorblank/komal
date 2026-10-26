@@ -1,5 +1,6 @@
-#include "hand-tool.h"
-#include "core/project.h"
+#include "hand-tool.hpp"
+#include "core/project.hpp"
+#include "ui/theme.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -33,20 +34,18 @@ void HandTool::drawProperties(ToolContext& ctx)
     ImGui::SameLine(ImGui::GetFontSize() * 5.0f);
     ImGui::SetNextItemWidth(-FLT_MIN);
     float percent = cam->zoom * 100.0f;
-    if (ImGui::DragFloat("##zoom", &percent, 1.0f, CanvasCamera::kMinZoom * 100.0f, CanvasCamera::kMaxZoom * 100.0f, "%.0f%%",
-                         ImGuiSliderFlags_Logarithmic))
-        cam->zoomAt(center, percent / 100.0f / cam->zoom);
+    {
+        NumberFont font;
+        if (ImGui::DragFloat("##zoom", &percent, 1.0f, CanvasCamera::kMinZoom * 100.0f, CanvasCamera::kMaxZoom * 100.0f, "%.0f%%",
+                             ImGuiSliderFlags_Logarithmic))
+            cam->zoomAt(center, percent / 100.0f / cam->zoom);
+    }
 
     if (ImGui::Button("100%")) cam->zoomAt(center, 1.0f / cam->zoom);
     ImGui::SameLine();
     if (ImGui::Button("Fit on screen")) {
         const BoundsI b = ctx.project.master().bounds();
-        if (!b.empty() && ctx.canvas.viewW > 0.0f && ctx.canvas.viewH > 0.0f) {
-            const float margin = 0.9f;
-            cam->zoom = std::clamp(std::min(ctx.canvas.viewW / b.width(), ctx.canvas.viewH / b.height()) * margin,
-                                   CanvasCamera::kMinZoom, CanvasCamera::kMaxZoom);
-            cam->pan = { center.x - (b.minX + b.width() * 0.5f) * cam->zoom, center.y - (b.minY + b.height() * 0.5f) * cam->zoom };
-        }
+        if (!b.empty()) cam->frame(float(b.minX), float(b.minY), float(b.maxX + 1), float(b.maxY + 1), ctx.canvas.viewW, ctx.canvas.viewH);
     }
 
     ImGui::Spacing();

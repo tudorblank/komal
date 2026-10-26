@@ -1,6 +1,6 @@
-#include "image-importer.h"
-#include "raster/raster-data.h"
-#include "ui/graph-view/graph-style.h"
+#include "image-importer.hpp"
+#include "raster/raster-data.hpp"
+#include "graph/style.hpp"
 
 #include <SDL3/SDL.h>
 #include <algorithm>
@@ -15,8 +15,13 @@ void ImageImporter::open(std::string path)
 
 void ImageImporter::open(std::string path, Placement placement)
 {
-    std::lock_guard lock(m_mutex);
-    m_queued.push_back({ std::move(path), placement });
+    {
+        std::lock_guard lock(m_mutex);
+        m_queued.push_back({ std::move(path), placement });
+    }
+    SDL_Event wake{};   // the main loop may be asleep waiting for input (any thread may push)
+    wake.type = SDL_EVENT_USER;
+    SDL_PushEvent(&wake);
 }
 
 void ImageImporter::showOpenDialog(SDL_Window* window)

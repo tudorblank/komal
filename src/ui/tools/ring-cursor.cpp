@@ -1,4 +1,4 @@
-#include "ring-cursor.h"
+#include "ring-cursor.hpp"
 
 #include <SDL3/SDL.h>
 #include <algorithm>

@@ -1,0 +1,43 @@
+#include "origin.hpp"
+
+OriginItem::OriginItem(float r, float g, float b, float a)
+    : m_horizontal(0.0f, 0.0f, 0.0f, 0.0f, r, g, b, a), m_vertical(0.0f, 0.0f, 0.0f, 0.0f, r, g, b, a) {}
+
+void OriginItem::setColor(float r, float g, float b, float a)
+{
+    m_horizontal.setColor(r, g, b, a);
+    m_vertical.setColor(r, g, b, a);
+    update();
+}
+
+void OriginItem::setArm(float points)
+{
+    if (points == m_arm || points <= 0.0f) return;
+    m_arm = points;
+    update();
+}
+
+bool OriginItem::prepare(CanvasFrame& frame)
+{
+    // One target pixel and the arm length, in world units at this zoom.
+    const float pixelsPerPoint = frame.target.viewW > 0.0f ? float(frame.target.pixelW) / frame.target.viewW : 1.0f;
+    const float pixel = 1.0f / (frame.camera.zoom * pixelsPerPoint);
+    const float arm   = m_arm / frame.camera.zoom;
+    m_horizontal.setRect(-arm, -pixel * 0.5f, arm * 2.0f + pixel, pixel);
+    m_vertical.setRect(-pixel * 0.5f, -arm, pixel, arm * 2.0f + pixel);
+    const bool h = m_horizontal.prepare(frame);
+    const bool v = m_vertical.prepare(frame);
+    return h || v;
+}
+
+void OriginItem::drawGpu(WGPURenderPassEncoder pass, CanvasFrame& frame)
+{
+    m_horizontal.drawGpu(pass, frame);
+    m_vertical.drawGpu(pass, frame);
+}
+
+void OriginItem::releaseGpu()
+{
+    m_horizontal.releaseGpu();
+    m_vertical.releaseGpu();
+}

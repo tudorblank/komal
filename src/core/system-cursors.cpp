@@ -1,4 +1,4 @@
-#include "system-cursors.h"
+#include "system-cursors.hpp"
 
 #include <SDL3/SDL.h>
 #include <imgui.h>

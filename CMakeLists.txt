@@ -57,20 +57,28 @@ include(cmake/wgpu-native.cmake)   # defines target: wgpu_native
 include(cmake/embed-file.cmake)    # defines: embed_file()
 
 # ---------------------------------------------------------------- embedded assets
-# UI font baked into the binary, so there is nothing to ship or locate at runtime.
+# Fonts and the window icon baked into the binary, so there is nothing to ship or locate at
+# runtime: Manrope for the UI, JetBrains Mono for numbers you can type in (see theme.h).
 set(GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
-embed_file(${GENERATED_DIR}/font-ui.cpp ${imgui_SOURCE_DIR}/misc/fonts/Roboto-Medium.ttf kFontUi)
+set(ASSETS_DIR ${CMAKE_SOURCE_DIR}/assets)
+embed_file(${GENERATED_DIR}/font-ui.cpp      ${ASSETS_DIR}/Manrope-Regular.ttf     kFontUi)
+embed_file(${GENERATED_DIR}/font-numbers.cpp ${ASSETS_DIR}/JetBrainsMono-Light.ttf kFontNumbers)
+embed_file(${GENERATED_DIR}/app-icon.cpp     ${ASSETS_DIR}/komal-icon-256.png      kAppIcon)
 # WGSL compiled into the binary: no shader files to ship or find relative to the working dir.
-embed_file(${GENERATED_DIR}/shader-texture.cpp ${CMAKE_SOURCE_DIR}/src/gfx/shaders/texture.wgsl kShaderTexture)
-embed_file(${GENERATED_DIR}/shader-color.cpp   ${CMAKE_SOURCE_DIR}/src/gfx/shaders/color.wgsl   kShaderColor)
-embed_file(${GENERATED_DIR}/shader-preview-signal.cpp ${CMAKE_SOURCE_DIR}/src/gfx/shaders/preview-signal.wgsl kShaderPreviewSignal)
-embed_file(${GENERATED_DIR}/shader-preview-blit.cpp   ${CMAKE_SOURCE_DIR}/src/gfx/shaders/preview-blit.wgsl   kShaderPreviewBlit)
+embed_file(${GENERATED_DIR}/shader-texture.cpp ${CMAKE_SOURCE_DIR}/src/canvas/shaders/texture.wgsl kShaderTexture)
+embed_file(${GENERATED_DIR}/shader-color.cpp   ${CMAKE_SOURCE_DIR}/src/canvas/shaders/color.wgsl   kShaderColor)
+embed_file(${GENERATED_DIR}/shader-preview-signal.cpp ${CMAKE_SOURCE_DIR}/src/canvas/shaders/preview-signal.wgsl kShaderPreviewSignal)
+embed_file(${GENERATED_DIR}/shader-preview-blit.cpp   ${CMAKE_SOURCE_DIR}/src/canvas/shaders/preview-blit.wgsl   kShaderPreviewBlit)
+embed_file(${GENERATED_DIR}/shader-checker.cpp        ${CMAKE_SOURCE_DIR}/src/canvas/shaders/checker.wgsl        kShaderChecker)
 set(GENERATED_SOURCES
     ${GENERATED_DIR}/font-ui.cpp
+    ${GENERATED_DIR}/font-numbers.cpp
+    ${GENERATED_DIR}/app-icon.cpp
     ${GENERATED_DIR}/shader-texture.cpp
     ${GENERATED_DIR}/shader-color.cpp
     ${GENERATED_DIR}/shader-preview-signal.cpp
-    ${GENERATED_DIR}/shader-preview-blit.cpp)
+    ${GENERATED_DIR}/shader-preview-blit.cpp
+    ${GENERATED_DIR}/shader-checker.cpp)
 
 # ---------------------------------------------------------------- imgui target
 add_library(imgui STATIC
@@ -86,12 +94,50 @@ target_compile_definitions(imgui PUBLIC IMGUI_IMPL_WEBGPU_BACKEND_WGPU)  # wgpu-
 target_link_libraries(imgui PUBLIC SDL3::SDL3 wgpu_native)
 
 # ---------------------------------------------------------------- the app
-file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS src/*.cpp src/*.h)
+file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS src/*.cpp src/*.hpp)
 add_executable(${PROJECT_NAME} ${APP_SOURCES} ${GENERATED_SOURCES})
 target_include_directories(${PROJECT_NAME} PRIVATE src)
 target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${stb_SOURCE_DIR})
 target_link_libraries(${PROJECT_NAME} PRIVATE imgui SDL3::SDL3 wgpu_native
                                               absl::flat_hash_map absl::flat_hash_set absl::hash)
+
+# ---------------------------------------------------------------- app icon
+# The source is assets/komal-icon.png; cmake/make-icons.py derives the files used here from it.
+# At runtime the window gets assets/komal-icon-256.png (embedded above) on every platform.
+if(WIN32)
+    # The .exe's own icon (Explorer, taskbar pins, Alt+Tab before the window exists).
+    file(WRITE ${GENERATED_DIR}/komal.rc "IDI_APP_ICON ICON \"${ASSETS_DIR}/komal-icon.ico\"\n")
+    target_sources(${PROJECT_NAME} PRIVATE ${GENERATED_DIR}/komal.rc)
+elseif(APPLE)
+    # An app bundle (Komal.app), so Finder and the Dock show the icon.
+    set(APP_ICNS ${ASSETS_DIR}/komal-icon.icns)
+    set_source_files_properties(${APP_ICNS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    target_sources(${PROJECT_NAME} PRIVATE ${APP_ICNS})
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_BUNDLE_NAME "Komal"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "komal"
+        MACOSX_BUNDLE_ICON_FILE komal-icon.icns)
+elseif(UNIX)
+    # Desktop entry + icon, for launchers and docks (Wayland compositors match the running
+    # window to komal.desktop through its app id, set in Application::init).
+    file(WRITE ${GENERATED_DIR}/komal.desktop
+"[Desktop Entry]
+Type=Application
+Name=Komal
+Exec=Komal %F
+Icon=komal
+Terminal=false
+Categories=Graphics;2DGraphics;RasterGraphics;
+MimeType=image/png;image/jpeg;image/bmp;image/gif;image/x-tga;image/vnd.adobe.photoshop;
+")
+    include(GNUInstallDirs)
+    install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(FILES $<TARGET_FILE:wgpu_native> DESTINATION ${CMAKE_INSTALL_BINDIR})   # found through $ORIGIN
+    install(FILES ${GENERATED_DIR}/komal.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+    install(FILES ${ASSETS_DIR}/komal-icon-256.png DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps
+            RENAME komal.png)
+endif()
 
 # The wgpu-native library is copied next to the executable (below) and found there.
 if(APPLE)
