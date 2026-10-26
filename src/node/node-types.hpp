@@ -78,17 +78,27 @@ public:
     static std::shared_ptr<MoveNode> create();
     bool hasDryWet() const override { return true; }
 
-    int offsetX() const { return m_x; }
+    int offsetX() const { return m_x; }   // applied: what the CPU pixels use
     int offsetY() const { return m_y; }
     TileSet setOffset(int x, int y);
 
-    BoundsI wetBounds() override { return m_input ? m_input->bounds().offsetBy(m_x, m_y) : BoundsI{}; }
+    // While a drag previews an offset, it is what the node shows: its bounds (and everything
+    // downstream's), the GPU preview and the graph all read shownX/Y. The CPU pixels stay at the
+    // applied offset until it's applied.
+    void previewOffset(int x, int y);
+    void endPreview();   // back to the applied offset; tiles read meanwhile are re-read
+    int  shownX() const { return m_previewing ? m_px : m_x; }
+    int  shownY() const { return m_previewing ? m_py : m_y; }
+
+    BoundsI wetBounds() override { return m_input ? m_input->bounds().offsetBy(shownX(), shownY()) : BoundsI{}; }
     void wetFootprint(TileSet& out) override;
     void mapInputTiles(const TileSet& in, TileSet& out) const override;
     const Tile* fetchWet(int tx, int ty, RenderCtx& ctx) override;
 
 private:
-    int m_x = 0, m_y = 0;
+    int  m_x = 0, m_y = 0;
+    int  m_px = 0, m_py = 0;   // the previewed offset
+    bool m_previewing = false;
 };
 
 // ============================ COMPOSITOR ============================

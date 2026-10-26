@@ -57,12 +57,14 @@ void UserInterface::draw()
 
     if (m_showColor)          m_colorPanel.draw(&m_showColor, m_tools.colors());
     if (m_showToolProperties) m_toolProperties.draw(&m_showToolProperties, m_tools, *m_project);
-    if (m_showNavigator)      m_navigator.draw(&m_showNavigator, m_tools.canvas());   // before the canvas: it shows the change this frame
-    m_canvasPanel.setSelection({ m_graphPanel.selection().begin(), m_graphPanel.selection().end() });   // last frame's: outlined
-    if (m_showCanvas)         m_canvasPanel.draw(&m_showCanvas);
-    m_graphPanel.setPointerElsewhere(m_showCanvas && m_canvasPanel.hasPointer());
+    // What edits the project (graph, navigator) runs before the canvas, so the canvas draws this
+    // frame's state: its outlines and its GPU picture always agree.
+    m_graphPanel.setPointerElsewhere(m_showCanvas && m_canvasPanel.hasPointer());   // last frame's
     if (m_showGraph) { PerfScope perf(Perf::Graph); m_graphPanel.draw(&m_showGraph); }
     if (BoundsI b; m_graphPanel.takeCanvasFrame(b)) m_canvasPanel.frameWorld(b);   // a node double-clicked: go to its pixels
+    if (m_showNavigator)      m_navigator.draw(&m_showNavigator, m_tools.canvas());
+    m_canvasPanel.setSelection({ m_graphPanel.selection().begin(), m_graphPanel.selection().end() });
+    if (m_showCanvas)         m_canvasPanel.draw(&m_showCanvas);
     if (m_showInfo)           drawInfoPanel();
     if (m_showDemo)           ImGui::ShowDemoWindow(&m_showDemo);
     dispatchDrops();   // after the panels: their windows and rects are this frame's

@@ -193,7 +193,8 @@ void Navigator::updatePicture(const BoundsI& bounds, float areaW, float areaH)
 {
     Node& master = m_project->master();
     const bool stale = master.revision() != m_picRevision;
-    if (m_project->strokeActive() || !m_texture) return;   // caught up once the stroke ends (it wakes the app)
+    // Caught up once a stroke or a previewed drag ends (their pixels aren't final yet).
+    if (m_project->strokeActive() || m_project->preview().active() || !m_texture) return;
     if (bounds.empty()) {   // nothing left to show
         m_picW = m_picH = 0;
         m_picBounds   = {};

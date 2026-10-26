@@ -108,6 +108,23 @@ TileSet MoveNode::setOffset(int x, int y)
     return change([&] { m_x = x; m_y = y; });
 }
 
+void MoveNode::previewOffset(int x, int y)
+{
+    if (m_previewing && x == m_px && y == m_py) return;
+    m_previewing = true;
+    m_px = x;
+    m_py = y;
+    invalidateBounds();
+}
+
+void MoveNode::endPreview()
+{
+    if (!m_previewing) return;
+    m_previewing = false;
+    invalidateBounds();
+    emitDirty(footprint(), Evict::All);   // reads during the drag were culled by the previewed bounds
+}
+
 void MoveNode::wetFootprint(TileSet& out)
 {
     if (!m_input) return;

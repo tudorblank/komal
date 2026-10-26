@@ -181,10 +181,7 @@ int EditPreviewItem::build(int plan, Vec2 offset)
     int wet = -1, dry = -1;
     if (!n.hasDryWet() || on(NodeSignal::Wet)) {
         if (auto* m = dynamic_cast<MoveNode*>(&n)) {
-            const EditPreview& pv = m_project.preview();
-            const bool moving = pv.kind == EditPreview::Kind::MoveOffset && pv.node == n.m_meta.id;
-            const Vec2 shift = { float(moving ? pv.x : m->offsetX()), float(moving ? pv.y : m->offsetY()) };
-            wet = opFor(s.input, { offset.x + shift.x, offset.y + shift.y });   // a move moves its input
+            wet = opFor(s.input, { offset.x + float(m->shownX()), offset.y + float(m->shownY()) });   // a move moves its input
         } else if (dynamic_cast<UnaryNode*>(&n)) {
             wet = opFor(s.input, offset);
         } else if (!s.layers.empty()) {   // a stack the edit reaches: recomposed

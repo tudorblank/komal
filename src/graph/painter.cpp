@@ -204,9 +204,7 @@ void paintNode(const GraphPaint& g, const Project& project, const Node& n, const
     // ---- Move offset
     if (auto* m = dynamic_cast<const MoveNode*>(&n)) {
         static const char* kAxis[2] = { "Offset X", "Offset Y" };
-        const EditPreview& pv = project.preview();
-        const bool previewed = pv.kind == EditPreview::Kind::MoveOffset && pv.node == id;
-        const int value[2] = { previewed ? pv.x : m->offsetX(), previewed ? pv.y : m->offsetY() };
+        const int value[2] = { m->shownX(), m->shownY() };
         for (int axis = 0; axis < 2; ++axis) {
             const ImRect& row = item.offsetRow[axis];
             textInRow(g, row.Min.x + kPad, row, kText, kTextColor, kAxis[axis]);

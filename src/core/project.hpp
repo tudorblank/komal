@@ -146,6 +146,7 @@ private:
     bool activeRasterEditable() const;
     RasterRootNode* rasterNode(RasterId id) const;
     void emit(ProjectEventType t, NodeId n = kNoNodeId);
+    void endPreviewBounds();   // the previewed node's bounds back to its applied state
     void applyStrokeChanges();
     RasterRootNode* strokeRaster() const;
     void flipRasterCommit(const RasterCommitRef& c);

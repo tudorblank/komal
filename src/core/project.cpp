@@ -401,13 +401,22 @@ void Project::setMoveOffset(NodeId id, int x, int y)
 void Project::previewEdit(const EditPreview& e)
 {
     if (!find(e.node) || e.kind == EditPreview::Kind::None) return;
+    if (m_preview.node != e.node) endPreviewBounds();
     m_preview = e;
+    if (e.kind == EditPreview::Kind::MoveOffset)   // the bounds follow live; pixels wait for applyPreview()
+        if (auto* m = dynamic_cast<MoveNode*>(find(e.node))) m->previewOffset(e.x, e.y);
     emit(ProjectEventType::PreviewChanged, e.node);
+}
+
+void Project::endPreviewBounds()
+{
+    if (auto* m = dynamic_cast<MoveNode*>(find(m_preview.node))) m->endPreview();
 }
 
 void Project::applyPreview()
 {
     if (!m_preview.active()) return;
+    endPreviewBounds();
     const EditPreview e = std::exchange(m_preview, EditPreview{});
     switch (e.kind) {
     case EditPreview::Kind::SignalScale: setSignalScale(e.node, e.signal, e.channel, e.scale); break;
@@ -420,6 +429,7 @@ void Project::applyPreview()
 void Project::cancelPreview()
 {
     if (!m_preview.active()) return;
+    endPreviewBounds();
     const NodeId n = m_preview.node;
     m_preview = {};
     emit(ProjectEventType::PreviewChanged, n);

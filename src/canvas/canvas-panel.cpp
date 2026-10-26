@@ -204,7 +204,7 @@ void CanvasPanel::updateOverlayItems(const ImVec2& origin)
         if (move->input()) {
             const BoundsI in = move->input()->bounds();
             from = in.offsetBy(move->offsetX(), move->offsetY());
-            to   = in.offsetBy(pv.x, pv.y);
+            to   = in.offsetBy(move->shownX(), move->shownY());
         }
     } else if (edited) {
         to = edited->bounds();
