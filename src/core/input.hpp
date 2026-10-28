@@ -4,8 +4,8 @@
 //   ImGui (Application)      widgets, windows, docking, text; and who has the pointer: a panel
 //                            owns it while ImGui says its item is hovered or held
 //   InputFrame (here)        every pointer sample with its pen data, for the tools of the panel
-//                            that owns the pointer; key presses for shortcuts (ActionRegistry,
-//                            dispatched once a frame); held keys (Space for the hand)
+//                            that owns the pointer; buttons held; key presses for shortcuts
+//                            (ActionRegistry, dispatched once a frame); held keys (Space for the hand)
 //
 // Widgets read ImGui only; tools read the InputFrame only, and only while their panel owns the
 // pointer.
@@ -76,6 +76,15 @@ struct InputFrame {
     uint8_t mods = ModNone;              // modifiers held now
     std::vector<SDL_Keycode> held;       // keys held now
 
+    // Pointer buttons held now, a bit per PointerButton (1 << button). The pen's tip is its Primary.
+    uint8_t mouseButtons = 0;
+    uint8_t penButtons   = 0;
+    bool anyButtonHeld() const { return mouseButtons != 0 || penButtons != 0; }
+    bool buttonHeld(PointerDevice device, PointerButton b) const
+    {
+        return ((device == PointerDevice::Mouse ? mouseButtons : penButtons) >> uint8_t(b)) & 1u;
+    }
+
     // Went down this frame with exactly these modifiers (repeats count only if asked).
     bool pressed(Shortcut s, bool repeats = false) const;
     bool isDown(SDL_Keycode key) const;
@@ -100,7 +109,7 @@ public:
 
 private:
     void push(PointerEvent ev);
-    void releaseAllKeys();
+    void releaseAll();   // focus lost: what was held is released elsewhere, never here
     PointerEvent penEvent(PointerEvent::Type type, float x, float y, uint64_t timeNs) const;
 
     InputFrame m_frame;

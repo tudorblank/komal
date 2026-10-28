@@ -4,7 +4,15 @@
 
 bool CanvasScene::init(const GpuHandles& ctx)
 {
-    m_ready = m_pipelines.create(ctx);
+    m_pipelines = &m_ownPipelines;
+    m_ready = m_ownPipelines.create(ctx);
+    return m_ready;
+}
+
+bool CanvasScene::init(const CanvasPipelines& shared)
+{
+    m_pipelines = &shared;
+    m_ready = shared.atlasPipeline != nullptr;
     return m_ready;
 }
 
@@ -12,7 +20,8 @@ void CanvasScene::shutdown()
 {
     for (auto& item : m_items) item->releaseGpu();
     m_items.clear();
-    m_pipelines.release();
+    m_ownPipelines.release();
+    m_pipelines = &m_ownPipelines;
     m_ready = false;
 }
 

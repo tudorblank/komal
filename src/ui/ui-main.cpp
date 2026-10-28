@@ -1,28 +1,34 @@
 #include "ui-main.hpp"
 #include "core/application.hpp"
+#include "core/document-actions.hpp"
 #include "core/input.hpp"
-#include "ui/action-ui.hpp"
 #include "ui/widgets.hpp"
+#include "ui/panel-titles.hpp"
 #include "core/perf.hpp"
 #include "core/project.hpp"
 #include "gfx/device.hpp"
 
 #include <imgui.h>
-#include <imgui_internal.h>   // DockBuilder*, FindHoveredWindowEx
+#include <imgui_internal.h>   // FindHoveredWindowEx
 #include <algorithm>
-#include <cmath>
 #include <cstdio>
-#include <cstring>
 
 bool UserInterface::init(GpuDevice& gpu, Project& project, const InputFrame& input)
 {
     m_input = &input;
     m_project = &project;
-    registerActions();
-    m_tools.registerActions(m_actions, project);
-    m_graphPanel.init(gpu, project, input, m_actions);
+    // The two lists of what a user can do: to the document, and to the app. Panels add their own
+    // interface actions (framing, selecting, opening menus) as they init.
+    registerDocumentActions(m_actions, project);
+    registerAppActions();
     const bool ok = m_canvasPanel.init(gpu, project, m_tools, input, m_actions);
-    m_navigator.init(gpu, project);
+    // The canvas's pipelines draw the navigator's picture and the graph's thumbnails too.
+    m_graphPanel.init(ok ? &m_canvasPanel.pipelines() : nullptr, project, input, m_actions);
+    if (ok) m_navigator.init(project, m_canvasPanel.outputTiles(), m_canvasPanel.pipelines());
+
+    // The canvas follows the graph: it outlines what's selected there, and goes where asked.
+    m_graphPanel.onSelectionChanged([this](const GraphSelection::Set& ids) { m_canvasPanel.setSelection({ ids.begin(), ids.end() }); });
+    m_graphPanel.onShowInCanvas([this](const BoundsI& b) { m_canvasPanel.frameWorld(b); });
     m_initialized = true;
     return ok;
 }
@@ -39,69 +45,46 @@ void UserInterface::shutdown()
 double UserInterface::nextFrameIn() const
 {
     // Imports wake the loop when they finish; a stroke changes nothing while the pen rests.
-    if (m_showCanvas && m_canvasPanel.busy()) return 0.0;
-    double next = Application::kNoFrame;
-    if (m_showGraph)     next = std::min(next, m_graphPanel.nextFrameIn());
-    if (m_showNavigator) next = std::min(next, m_navigator.nextFrameIn());
-    return next;
+    // A closed panel needs no frames (each knows it's closed).
+    if (m_canvasPanel.busy()) return 0.0;
+    return std::min(m_graphPanel.nextFrameIn(), m_navigator.nextFrameIn());
 }
 
 void UserInterface::renderGpu(WGPUCommandEncoder enc)
 {
-    m_canvasPanel.renderGpu(enc);
+    m_canvasPanel.renderGpu(enc);   // first: syncs the output's tiles
+    m_navigator.renderGpu(enc);
+    m_graphPanel.renderGpu(enc);
 }
 
 void UserInterface::draw()
 {
-    for (const ImageImporter::Imported& i : m_importer.poll(*m_project))
+    for (const ImageImporter::Imported& i : m_importer.poll(m_actions))
         if (i.placement.target == ImageImporter::Placement::Target::Graph) m_graphPanel.selectOnly(i.node);
     m_actions.dispatch(*m_input, ImGui::GetIO().WantTextInput);   // the frame's shortcuts, all of them, before the panels
     drawMenuBar();
-    if (m_showTools) m_toolbox.draw(m_tools, *m_project, m_actions);   // under the menu bar, before the dockspace takes the rest
-    drawDockspace();   // must come before the panels that dock into it
+    m_toolbox.draw(m_tools, m_actions);   // under the menu bar, before the dockspace takes the rest
+    m_dockspace.draw();   // before the panels that dock into it
 
-    if (m_showColor)          m_colorPanel.draw(&m_showColor, m_tools.colors());
-    if (m_showToolProperties) m_toolProperties.draw(&m_showToolProperties, m_tools, *m_project);
-    // What edits the project (graph, navigator) runs before the canvas, so the canvas draws this
-    // frame's state: its outlines and its GPU picture always agree.
-    if (m_showGraph) { PerfScope perf(Perf::Graph); m_graphPanel.draw(&m_showGraph); }
-    if (BoundsI b; m_graphPanel.takeCanvasFrame(b)) m_canvasPanel.frameWorld(b);   // a node double-clicked: go to its pixels
-    if (m_showNavigator)      m_navigator.draw(&m_showNavigator, m_tools.canvas());
-    m_canvasPanel.setSelection({ m_graphPanel.selection().begin(), m_graphPanel.selection().end() });
-    if (m_showCanvas)         m_canvasPanel.draw(&m_showCanvas);
-    if (m_showInfo)           drawInfoPanel();
-    if (m_showDemo)           ImGui::ShowDemoWindow(&m_showDemo);
+    // The canvas view as it was last drawn, for what navigates it from outside.
+    const CanvasNavigation canvas = m_canvasPanel.navigation();
+    m_colorPanel.draw(m_tools.colors(), m_actions);
+    m_toolProperties.draw(m_tools, *m_project, m_actions, canvas);
+    m_historyPanel.draw(m_project->history(), m_actions);
+    // What edits the project or the view (graph, navigator) runs before the canvas, so the canvas
+    // draws this frame's state: its outlines and its GPU picture always agree.
+    { PerfScope perf(Perf::Graph); m_graphPanel.draw(); }
+    m_navigator.draw(canvas, m_actions);
+    m_canvasPanel.draw();
+    m_info.draw(*m_input, m_actions);
+    if (m_showDemo) {
+        bool keep = true;
+        ImGui::ShowDemoWindow(&keep);
+        if (!keep) m_actions.run("view.imguiDemo");
+    }
     dispatchDrops();   // after the panels: their windows and rects are this frame's
-}
-
-void UserInterface::registerActions()
-{
-    // Primary is Cmd on macOS, Ctrl elsewhere.
-    m_actions.add({ .id = "file.import", .title = "Import Image...", .shortcuts = { { SDLK_O, ModPrimary } },
-                    .run = [this] { m_importer.showOpenDialog(m_window); } });
-    m_actions.add({ .id = "app.quit", .title = "Quit", .run = [this] { m_quit = true; } });
-
-    m_actions.add({ .id = "edit.undo", .title = "Undo", .shortcuts = { { SDLK_Z, ModPrimary } }, .repeats = true,
-                    .enabled = [this] { return m_project->canUndo(); }, .run = [this] { m_project->undo(); } });
-    m_actions.add({ .id = "edit.redo", .title = "Redo", .shortcuts = { { SDLK_Z, ModPrimary | ModShift }, { SDLK_Y, ModPrimary } },
-                    .repeats = true, .enabled = [this] { return m_project->canRedo(); }, .run = [this] { m_project->redo(); } });
-
-    const auto panel = [this](const char* id, const char* title, bool& shown) {
-        m_actions.add({ .id = id, .title = title, .checked = [&shown] { return shown; }, .run = [&shown] { shown = !shown; } });
-    };
-    panel("view.canvas",          "Canvas",          m_showCanvas);
-    panel("view.graph",           "Graph",           m_showGraph);
-    panel("view.tools",           "Toolbar",         m_showTools);
-    panel("view.navigator",       "Navigator",       m_showNavigator);
-    panel("view.color",           "Color",           m_showColor);
-    panel("view.toolProperties",  "Tool Properties", m_showToolProperties);
-    panel("view.info",            "Info",            m_showInfo);
-    panel("view.imguiDemo",       "ImGui demo",      m_showDemo);
-    m_actions.add({ .id = "view.resetLayout", .title = "Reset layout", .run = [this] {
-        m_resetLayout = true;
-        m_showCanvas = m_showGraph = m_showTools = m_showToolProperties = m_showColor = m_showNavigator = true;
-        m_showInfo = false;   // on demand (View > Info)
-    } });
+    // A control held or a key down: a coalescing setting (a slider drag, a held [ ) is still going.
+    m_actions.endFrame(ImGui::IsAnyItemActive() || m_input->anyButtonHeld() || !m_input->held.empty());
 }
 
 void UserInterface::drawMenuBar()
@@ -109,144 +92,27 @@ void UserInterface::drawMenuBar()
     if (!ImGui::BeginMainMenuBar())
         return;
     if (ImGui::BeginMenu("File")) {
-        actionMenuItem(m_actions, "file.import");
+        Widgets::actionMenuItem(m_actions, "file.import");
         ImGui::Separator();
-        actionMenuItem(m_actions, "app.quit");
+        Widgets::actionMenuItem(m_actions, "app.quit");
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Edit")) {
-        actionMenuItem(m_actions, "edit.undo");
-        actionMenuItem(m_actions, "edit.redo");
+        Widgets::actionMenuItem(m_actions, "edit.undo");
+        Widgets::actionMenuItem(m_actions, "edit.redo");
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("View")) {
-        for (const char* id : { "view.canvas", "view.graph", "view.tools", "view.navigator", "view.color", "view.toolProperties", "view.info" })
-            actionMenuItem(m_actions, id);
+        for (const char* id : { "view.canvas", "view.graph", "view.tools", "view.navigator", "view.color", "view.toolProperties",
+                                "view.historyTree", "view.info" })
+            Widgets::actionMenuItem(m_actions, id);
         ImGui::Separator();
-        actionMenuItem(m_actions, "view.imguiDemo");
+        Widgets::actionMenuItem(m_actions, "view.imguiDemo");
         ImGui::Separator();
-        actionMenuItem(m_actions, "view.resetLayout");
+        Widgets::actionMenuItem(m_actions, "view.resetLayout");
         ImGui::EndMenu();
     }
     ImGui::EndMainMenuBar();
-}
-
-namespace {
-
-using DockShares = absl::flat_hash_map<unsigned int, float>;
-
-// A node's size along `axis`: measured, or before the first layout (just loaded from the .ini)
-// the size it was saved with.
-float sizeOf(const ImGuiDockNode* n, int axis) { return n->Size[axis] > 0.0f ? n->Size[axis] : n->SizeRef[axis]; }
-
-// Each split's first-child share, remembered (scaling from last frame's sizes would creep from
-// rounding). Only a splitter the user moved (off by over a pixel) updates it.
-float childShare(const ImGuiDockNode* c0, const ImGuiDockNode* c1, int axis)
-{
-    return sizeOf(c0, axis) / (sizeOf(c0, axis) + sizeOf(c1, axis));
-}
-
-void rememberShares(const ImGuiDockNode* node, DockShares& shares)
-{
-    if (node->IsLeafNode()) return;
-    const ImGuiDockNode* c0 = node->ChildNodes[0];
-    const ImGuiDockNode* c1 = node->ChildNodes[1];
-    const int axis = node->SplitAxis;
-    if (c0->IsVisible && c1->IsVisible && c0->Size[axis] > 0.0f && c1->Size[axis] > 0.0f) {
-        const float total = c0->Size[axis] + c1->Size[axis];
-        auto [it, inserted] = shares.try_emplace(node->ID, childShare(c0, c1, axis));
-        if (!inserted && std::fabs(it->second * total - c0->Size[axis]) > 1.0f) it->second = childShare(c0, c1, axis);
-    }
-    rememberShares(c0, shares);
-    rememberShares(c1, shares);
-}
-
-// Whether a dock area grows with the window: it holds the canvas or the graph. Others keep their size.
-bool flexible(const ImGuiDockNode* node)
-{
-    if (!node) return false;
-    if (!node->IsLeafNode()) return flexible(node->ChildNodes[0]) || flexible(node->ChildNodes[1]);
-    for (const ImGuiWindow* w : node->Windows)
-        if (std::strcmp(w->Name, "Canvas") == 0 || std::strcmp(w->Name, "Graph") == 0) return true;
-    return false;
-}
-
-// Re-lays the dock tree under `node` for `size` (ImGui alone gives the whole difference to one
-// side). At each split:
-//   flexible | fixed     the fixed side keeps its size (the side column keeps its width)
-//   otherwise            each keeps its share (stacked panels grow together)
-// Writes the children's SizeRef, which the dockspace uses this frame.
-void scaleDockTree(ImGuiDockNode* node, ImVec2 size, const DockShares& shares)
-{
-    if (node->IsLeafNode()) return;
-    ImGuiDockNode* c0 = node->ChildNodes[0];
-    ImGuiDockNode* c1 = node->ChildNodes[1];
-    const int axis = node->SplitAxis, across = axis ^ 1;
-    ImVec2 s0 = size, s1 = size;
-    if (c0->IsVisible && c1->IsVisible && sizeOf(c0, axis) > 0.0f && sizeOf(c1, axis) > 0.0f) {
-        const float avail = std::max(size[axis] - ImGui::GetStyle().DockingSeparatorSize, 2.0f);
-        const bool flex0 = flexible(c0), flex1 = flexible(c1);
-        if (flex0 == flex1) {
-            const auto it = shares.find(node->ID);
-            const float share = it != shares.end() ? it->second : childShare(c0, c1, axis);
-            s0[axis] = std::max(1.0f, std::round(share * avail));
-            s1[axis] = std::max(1.0f, avail - s0[axis]);
-        } else {
-            ImGuiDockNode* kept = flex0 ? c1 : c0;   // the fixed side keeps its size
-            const float k = std::clamp(sizeOf(kept, axis), 1.0f, avail - 1.0f);
-            (kept == c0 ? s0 : s1)[axis] = k;
-            (kept == c0 ? s1 : s0)[axis] = avail - k;
-        }
-        c0->SizeRef[axis] = s0[axis];
-        c1->SizeRef[axis] = s1[axis];
-    }
-    s0[across] = s1[across] = size[across];
-    scaleDockTree(c0, s0, shares);
-    scaleDockTree(c1, s1, shares);
-}
-
-}
-
-void UserInterface::drawDockspace()
-{
-    static const ImGuiID kDockId = ImHashStr("KomalMainDockspace.v6");   // bumped when the default layout changes
-    const ImGuiViewport* vp = ImGui::GetMainViewport();
-
-    if (m_resetLayout || ImGui::DockBuilderGetNode(kDockId) == nullptr) {
-        buildDefaultLayout(kDockId, vp->WorkSize.x, vp->WorkSize.y);
-        m_resetLayout = false;
-        m_dockShares.clear();
-    }
-    // The window resized: the layout scales with it. Otherwise the shares follow the splitters.
-    if (ImGuiDockNode* root = ImGui::DockBuilderGetNode(kDockId); root && root->Size.x > 0.0f && root->Size.y > 0.0f) {
-        if (root->Size.x != vp->WorkSize.x || root->Size.y != vp->WorkSize.y) scaleDockTree(root, vp->WorkSize, m_dockShares);
-        else                                                                   rememberShares(root, m_dockShares);
-    }
-    ImGui::DockSpaceOverViewport(kDockId, vp);
-}
-
-void UserInterface::buildDefaultLayout(unsigned int id, float w, float h)
-{
-    ImGui::DockBuilderRemoveNode(id);
-    ImGui::DockBuilderAddNode(id, ImGuiDockNodeFlags_DockSpace);
-    ImGui::DockBuilderSetNodeSize(id, ImVec2(w, h));
-
-    // Canvas over graph | navigator over colour over tool properties over info (the toolbar is
-    // above, not docked).
-    ImGuiID center = id;
-    ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.22f, nullptr, &center);
-    const ImGuiID navigator = ImGui::DockBuilderSplitNode(right, ImGuiDir_Up, 0.32f, nullptr, &right);
-    const ImGuiID color = ImGui::DockBuilderSplitNode(right, ImGuiDir_Up, 0.48f, nullptr, &right);
-    const ImGuiID info  = ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.30f, nullptr, &right);
-    const ImGuiID graph = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.48f, nullptr, &center);
-
-    ImGui::DockBuilderDockWindow("Navigator",       navigator);
-    ImGui::DockBuilderDockWindow("Color",           color);
-    ImGui::DockBuilderDockWindow("Tool Properties", right);
-    ImGui::DockBuilderDockWindow("Info",            info);
-    ImGui::DockBuilderDockWindow("Canvas",          center);
-    ImGui::DockBuilderDockWindow("Graph",           graph);
-    ImGui::DockBuilderFinish(id);
 }
 
 void UserInterface::dispatchDrops()
@@ -266,26 +132,4 @@ void UserInterface::dispatchDrops()
             std::fprintf(stderr, "drop ignored (not on the canvas or the graph): %s\n", d.path.c_str());
     }
     m_drops.clear();
-}
-
-
-void UserInterface::drawInfoPanel()
-{
-    if (Widgets::beginPanel("Info", &m_showInfo)) {
-        ImGui::TextWrapped("%s", m_gpuInfo.c_str());
-        ImGui::Separator();
-        ImGui::Text("acquire (vsync/WSI): %.2f ms", m_acquireMs);
-        ImGui::Text("CPU work:            %.2f ms", m_cpuMs);
-        ImGui::Text("%.1f FPS (%.3f ms)", ImGui::GetIO().Framerate,
-                    1000.0f / ImGui::GetIO().Framerate);
-        if (m_input && m_input->pen.present) {
-            const InputFrame::Pen& pen = m_input->pen;
-            ImGui::Text("pen: %s %s  pressure %.2f  tilt %.0f %.0f", pen.eraser ? "eraser" : "tip",
-                        pen.touching ? "down" : "up", pen.pressure, pen.tiltX, pen.tiltY);
-        }
-        ImGui::Separator();
-        for (int c = 0; c < Perf::Count; ++c)   // ms per frame: smoothed, worst of the last second
-            ImGui::Text("%-12s %6.2f  max %6.2f", Perf::name(Perf::Counter(c)), Perf::average(Perf::Counter(c)), Perf::worst(Perf::Counter(c)));
-    }
-    Widgets::endPanel();
 }

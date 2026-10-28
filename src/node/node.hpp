@@ -11,7 +11,8 @@
 // Main.A is the opacity.
 //
 // Edits never recompute eagerly: they mark tiles dirty down to every listener (inputs and
-// masks). Rendering pulls.
+// masks). Rendering pulls. Readers outside the graph (GPU copies of an output: the canvas, a
+// thumbnail) follow a node's output tile by tile through a TileWatch.
 
 #include "raster/raster-data.hpp"
 
@@ -20,6 +21,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 class Node;
@@ -80,6 +82,33 @@ private:
     std::vector<std::unique_ptr<MaskTile>> m_maskPool;
     size_t                                 m_maskUsed = 0;
     absl::flat_hash_map<MaskKey, const MaskTile*> m_masks;
+};
+
+// A node's output changes, for one reader outside the graph: filled by the node, drained by the
+// reader. Starts full: a new reader reads everything once.
+class TileWatch {
+public:
+    // Drains it: true when everything must be read again (and `changed` is empty), else the tiles
+    // whose output changed since the last take.
+    bool take(TileSet& changed)
+    {
+        changed = std::exchange(m_changed, TileSet{});
+        return std::exchange(m_full, false);
+    }
+
+private:
+    friend class Node;
+    static constexpr size_t kMaxTiles = 4096;   // past this, one full re-read is cheaper to track
+
+    void add(const TileSet& tiles)
+    {
+        if (m_full) return;
+        m_changed.insert(tiles.begin(), tiles.end());
+        if (m_changed.size() > kMaxTiles) { m_changed.clear(); m_full = true; }
+    }
+
+    bool    m_full = true;
+    TileSet m_changed;
 };
 
 enum class Bounds { Keep, Recompute };
@@ -150,6 +179,10 @@ public:
     bool canDependOn(const NodePtr& n) const { return !n || (n.get() != this && !n->dependsOn(this)); }
     uint64_t revision() const { return m_revision; }   // bumps whenever the output may have changed
 
+    // A reader outside the graph: the node reports every output tile that changes into it, for as
+    // long as the reader keeps it.
+    std::shared_ptr<TileWatch> watchOutput();
+
     void removeFromGraph();   // when deleting: users drop it, it drops its inputs and masks
 
     // Dirty tiles from a dependency (raster edits enter the graph here).
@@ -172,6 +205,7 @@ private:
     BoundsI  m_bounds;
     uint64_t m_revision = 0;
     std::vector<std::weak_ptr<Node>> m_listeners;   // nodes that use this one (input or mask)
+    std::vector<std::weak_ptr<TileWatch>> m_watches;   // readers outside the graph
     std::vector<NodePtr> m_wired;                   // deps this node is registered with
 
     void finishChange(const TileSet& d, Bounds b, Evict e);

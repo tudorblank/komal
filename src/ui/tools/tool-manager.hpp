@@ -8,6 +8,7 @@
 class BrushTool;
 
 // Owns the tools. active(): the picked tool, or the hand while Space is held over the canvas.
+// Their actions (picking one, the brush's settings, colours) are in ui/app-actions.
 class ToolManager {
 public:
     ToolManager();
@@ -16,15 +17,12 @@ public:
     const std::vector<std::unique_ptr<Tool>>& tools() const { return m_tools; }
     Tool& selected() const { return *m_selected; }
     Tool& active() const { return m_springHand ? *m_hand : *m_selected; }
-    void  select(Tool& tool, Project& project);
-
-    // "tool.<name>" per tool, "tool.eraser", "color.swap", and each tool's own.
-    void registerActions(ActionRegistry& actions, Project& project);
+    void  select(Tool& tool, ActionRegistry& actions);   // the one picked finishes what it was doing
+    BrushTool& brush() { return *m_brush; }
     // Space held over the canvas; released only once the hand's drag is done.
     void setSpringHand(bool held);
 
-    ToolColors&       colors() { return m_colors; }
-    CanvasNavigation& canvas() { return m_canvas; }
+    ToolColors& colors() { return m_colors; }
 
 private:
     std::vector<std::unique_ptr<Tool>> m_tools;
@@ -32,6 +30,5 @@ private:
     Tool*      m_hand     = nullptr;
     BrushTool* m_brush    = nullptr;
     bool       m_springHand = false;
-    ToolColors       m_colors;
-    CanvasNavigation m_canvas;
+    ToolColors m_colors;
 };

@@ -11,6 +11,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // Where a link lands on a node.
@@ -34,7 +35,14 @@ struct InputSlot {
         if (kind == Kind::Mask)  return signal == o.signal && channel == o.channel;
         return true;
     }
+
+    // As actions write it: "input", "layer:2", "new:3", "mask:main.a" (and read it back).
+    std::string text() const;
+    static InputSlot parse(std::string_view text);
 };
+
+// The slot a link dropped on the node's body connects to (none: false).
+bool preferredInput(const Node& n, InputSlot& out);
 
 // What changed, told to every listener right after the change is made (the project's state is
 // final by then). Views keep their own items and update them from these; nothing re-reads the
@@ -73,6 +81,25 @@ struct EditPreview {
     bool active() const { return kind != Kind::None; }
     bool isScale(NodeId n, NodeSignal s, NodeChannel c) const
     { return kind == Kind::SignalScale && node == n && signal == s && channel == c; }
+};
+
+// The graph as a history step leaves it: every node, its settings and its links. Undo and redo
+// restore it; pixels travel separately, as raster commits. Each node type adds its own settings.
+struct NodeState {
+    NodePtr     node;   // the node itself: history keeps a deleted node alive, so it comes back as itself
+    std::string label;
+    float       x = 0.0f, y = 0.0f;
+    float       scale[kSignalCount][kChannelCount] = {};
+    NodeId      mask[kSignalCount][kChannelCount] = {};
+    NodeId      input = kNoNodeId;                     // Reference, Move
+    std::vector<NodeId> layers;                        // Compositor, bottom first
+    int         offsetX = 0, offsetY = 0;              // Move (applied)
+    bool        locked = false, alphaLocked = false;   // Raster
+    bool operator==(const NodeState&) const = default;
+};
+struct GraphState {
+    std::vector<NodeState> nodes;   // creation order
+    bool operator==(const GraphState&) const = default;
 };
 
 class Project {
@@ -135,12 +162,19 @@ public:
     void strokeTo(std::span<const StrokePoint> path);   // through every point, applied once
     void endStroke();
     bool strokeActive() const { return m_stroke.active(); }
+    bool activeRasterEditable() const;   // there's an active raster and it takes strokes
 
-    // ---- history: one step per user action, referring to the raster commits it made
-    bool canUndo() const { return !m_stroke.active() && m_history.canUndo(); }
-    bool canRedo() const { return !m_stroke.active() && m_history.canRedo(); }
+    // ---- history: a tree of steps (core/history). Every document action is one step: the action
+    // layer opens it before the action runs and closes it after it ends; steps opened inside one
+    // merge into it, and a step that changed nothing isn't kept. The active raster isn't history.
+    void beginStep(std::string label);
+    void endStep();
+    bool canUndo() const { return !m_stroke.active() && m_stepDepth == 0 && m_history.canUndo(); }
+    bool canRedo() const { return !m_stroke.active() && m_stepDepth == 0 && m_history.canRedo(); }
     bool undo();
     bool redo();
+    bool goToHistory(uint32_t node);   // any step of the tree, across branches
+    const History& history() const { return m_history; }
     size_t historyBytes() const;   // what the rasters keep for undo
 
     // ---- events (synchronous, in subscription order; listeners may (un)subscribe while called)
@@ -151,7 +185,6 @@ public:
 private:
     NodeId adopt(NodePtr n, float x, float y);   // registers a new node, emits NodeAdded
     NodePtr bridgeSource(const Node& n, const absl::flat_hash_set<NodeId>& deleted) const;
-    bool activeRasterEditable() const;
     RasterRootNode* rasterNode(RasterId id) const;
     void emit(ProjectEventType t, NodeId n = kNoNodeId) { emit(ProjectEvent{ t, n, kNoNodeId, {} }); }
     void emit(const ProjectEvent& e);
@@ -161,6 +194,7 @@ private:
         NodePtr input;
         std::vector<NodePtr> layers;
         std::array<std::array<NodePtr, kChannelCount>, kSignalCount> masks;
+        bool operator==(const Inputs&) const = default;
     };
     static Inputs inputsOf(const Node& n);
     void emitInputChanges(NodeId to, const Inputs& before, const Inputs& now);
@@ -169,6 +203,9 @@ private:
     void applyStrokeChanges();
     RasterRootNode* strokeRaster() const;
     void flipRasterCommit(const RasterCommitRef& c);
+    GraphState captureGraph() const;
+    void restoreGraph(const GraphState& target);
+    void fallBackActiveRaster();   // the active raster went: the most recently made one, if any
 
     // Declared first, destroyed last: raster root nodes point into it.
     std::deque<RasterData> m_rasters;   // RasterId == index; kept for history after node deletion
@@ -182,6 +219,10 @@ private:
     uint32_t m_rasterLabel = 0;   // "Raster N", never reused
 
     History m_history;
+    int m_stepDepth = 0;                          // open steps (nested ones merge)
+    std::string m_stepLabel;
+    std::vector<RasterCommitRef> m_stepCommits;   // made while it's open
+    GraphState m_stepBefore;
     BrushStroke m_stroke;          // the scratch strokes are painted into
     NodeId m_strokeNode = kNoNodeId;   // the raster it paints into
 

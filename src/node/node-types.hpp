@@ -124,26 +124,19 @@ public:
     void wetFootprint(TileSet& out) override { for (auto& l : m_layers) l->addFootprint(out); }
     const Tile* fetchWet(int tx, int ty, RenderCtx& ctx) override;
 
-    // Cache of the raw composite, plus the set of output tiles a GPU copy must re-read.
+    // Cache of the raw composite (the master keeps one: the canvas reads it tile by tile).
     void enableCache(bool on);
     bool cacheEnabled() const { return m_cacheOn; }
-    bool    takeFullSync()    { return std::exchange(m_fullSync, false); }   // "re-read everything"
-    TileSet drainDirtyTiles() { return std::exchange(m_dirtySync, TileSet{}); }
 
-    void evictOutputTile(int tx, int ty) override;
     void evictRawTile(int tx, int ty) override;
 
 private:
-    static constexpr size_t kMaxDirtyTiles = 4096;   // past this, one full re-read is cheaper to track
-
     const Tile* composeTile(int tx, int ty, RenderCtx& ctx);
 
     std::vector<NodePtr> m_layers;
     bool     m_cacheOn  = false;
-    bool     m_fullSync = false;
     TileGrid m_cache;       // raw composite
     TileSet  m_empty;       // tiles known to composite to nothing
-    TileSet  m_dirtySync;   // output tiles the GPU needs to re-read
 };
 
 // Layers [bottom, top) composited (Over), as a compositor does: the bottom first. The result

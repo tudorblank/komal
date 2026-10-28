@@ -403,13 +403,13 @@ void EditPreviewItem::execute(CanvasFrame& frame)
             // offset this frame: buffer writes land before the passes run, so per-pass lists clash.
             if (lv.placed != lv.revision) {
                 const float size = float(Tile::kSize << m_level);
-                lv.atlas.beginInstances();
+                lv.draw.begin(lv.atlas);
                 for (TileKey key : lv.done) {
                     const auto t = TileUtils::unpackKey(key);
-                    lv.atlas.add(key, float(TileUtils::tileToWorld(t.x)) * float(1 << m_level),
-                                 float(TileUtils::tileToWorld(t.y)) * float(1 << m_level), size);
+                    lv.draw.add(key, float(TileUtils::tileToWorld(t.x)) * float(1 << m_level),
+                                float(TileUtils::tileToWorld(t.y)) * float(1 << m_level), size);
                 }
-                lv.atlas.endInstances(p, 1.0f);
+                lv.draw.end(p, 1.0f);
                 lv.placed = lv.revision;
             }
             // The view's camera, with the content shifted by the op's offset.
@@ -418,7 +418,7 @@ void EditPreviewItem::execute(CanvasFrame& frame)
             u.write(queue, viewProj.m, sizeof(viewProj.m));
             wgpuRenderPassEncoderSetPipeline(pass, p.atlasPipeline);
             wgpuRenderPassEncoderSetBindGroup(pass, 0, u.group, 0, nullptr);
-            lv.atlas.draw(pass);
+            lv.draw.draw(pass);
             break;
         }
         case Op::Kind::Signal: {

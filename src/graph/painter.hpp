@@ -13,6 +13,8 @@ struct GraphPaint {
     ImDrawList*        dl;
     const GraphCamera& camera;
     float              contentScale;   // UI pixels (line widths follow the DPI, not the zoom)
+    ImFont*            font;           // labels
+    ImFont*            numberFont;     // values
 
     float  scale() const { return camera.scale(); }
     ImVec2 at(ImVec2 g) const { return camera.toScreen(g); }
@@ -30,11 +32,11 @@ struct NodeItemVisual {
 };
 
 // Text at `size` graph units, baked at quantized sizes and scaled to fit (a smooth zoom would
-// bake a new size every frame). `font`: graphFont() when null.
+// bake a new size every frame). `font`: g.font when null.
 void  drawText(const GraphPaint& g, ImVec2 graphPos, float size, ImU32 color, const char* text, const char* end = nullptr,
                ImFont* font = nullptr);
-float textWidth(float size, const char* text, const char* end = nullptr, ImFont* font = nullptr);   // graph units
-std::string elide(const std::string& text, float size, float maxWidth);
+float textWidth(const GraphPaint& g, float size, const char* text, const char* end = nullptr, ImFont* font = nullptr);   // graph units
+std::string elide(const GraphPaint& g, const std::string& text, float size, float maxWidth);
 
 // A node paints in three layers: boxes and controls, state rings (active, selected, hovered),
 // then ports, so they sit on top of every edge.

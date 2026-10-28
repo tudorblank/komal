@@ -1,20 +1,19 @@
 #pragma once
 
+#include "core/actions.hpp"
 #include "graph/camera.hpp"
 #include "graph/minimap.hpp"
 #include "graph/selection.hpp"
-#include "graph/node-menu.hpp"
+#include "ui/graph-panel/node-menu.hpp"
 #include "graph/painter.hpp"
 #include "graph/node-item/item.hpp"
 #include "graph/node-item/thumbnails.hpp"
 
 #include <absl/container/flat_hash_map.h>
 #include <array>
-#include <optional>
+#include <functional>
 #include <vector>
 
-class ActionRegistry;
-class GpuDevice;
 struct InputFrame;
 class Project;
 struct ProjectEvent;
@@ -36,18 +35,25 @@ struct ProjectEvent;
 // again when a link or a camera moved. A frame paints and hit-tests the items as they are.
 class GraphPanel {
 public:
-    void init(GpuDevice& gpu, Project& project, const InputFrame& input, ActionRegistry& actions);
+    // `pipelines`: the canvas's, which thumbnails draw with (null: none).
+    void init(const CanvasPipelines* pipelines, Project& project, const InputFrame& input, ActionRegistry& actions);
     void shutdown();
+    void renderGpu(WGPUCommandEncoder enc) { m_thumbs.renderGpu(enc); }   // the thumbnails that changed
     void setUiScale(float scale) { m_uiScale = scale; }
-    void draw(bool* open);
+    void draw();
+    bool& open() { return m_open; }   // shown (View > Graph, the window's close button)
     // A file dropped at `screen` (`window` topmost): true if it lands on the graph, with the
     // position for a new node centred under it.
     bool dropTarget(const ImGuiWindow* window, ImVec2 screen, ImVec2& nodePos) const;
     void selectOnly(NodeId id);
     const GraphSelection::Set& selection() const { return m_selection.ids(); }
     double nextFrameIn() const;   // see Application::nextFrameIn
-    // A world rectangle for the canvas to show (double-click, "Show in Canvas"). True once per request.
-    bool takeCanvasFrame(BoundsI& out);
+
+    // Signals, connected once by the owner:
+    //   selection changed      the nodes selected now
+    //   show in canvas         a world rectangle for the canvas to show (double-click, "Show in Canvas")
+    void onSelectionChanged(std::function<void(const GraphSelection::Set&)> f) { m_selection.setListener(std::move(f)); }
+    void onShowInCanvas(std::function<void(const BoundsI&)> f) { m_showInCanvas = std::move(f); }
 
 private:
     static constexpr float       kPinMargin   = 12.0f;   // points between the pinned master and the panel's edges
@@ -102,7 +108,7 @@ private:
         bool        justOpened = false;
     };
 
-    GraphPaint paintContext(ImDrawList* dl) const { return { dl, m_camera, m_uiScale }; }
+    GraphPaint paintContext(ImDrawList* dl, const GraphCamera& camera) const;   // the graph's fonts, at the UI scale
     bool isMaster(NodeId id) const;
     const GraphCamera& cameraFor(NodeId id) const { return isMaster(id) ? m_pinned : m_camera; }   // whose space its node item is in
     // ---- items, kept in step with the project
@@ -151,6 +157,7 @@ private:
     const InputFrame* m_input = nullptr;   // keys and modifiers, straight from SDL
     ActionRegistry*   m_actions = nullptr; // graph.* shortcuts: claimed for the graph while it has the pointer or focus
     int         m_subscription = 0;
+    bool        m_open = true;
     const ImGuiWindow* m_window = nullptr;   // this frame's, while the graph is shown
     ImVec2      m_canvasMin{};
     GraphCamera m_camera;
@@ -187,6 +194,8 @@ private:
     NodeItemWidget m_pressWidget{};
     bool   m_canvasActive = false;
     std::vector<std::pair<NodeId, ImVec2>> m_moveStart;
+    ImVec2     m_dragDelta{};    // node.drag: how far the nodes moved, graph units
+    ActionArgs m_scrubArgs;      // signal.scrub / move.scrub: the value as last dragged
     GraphSelection::Set m_bandBase;
     int    m_dragValue = 0;       // Offset: value at press; Layer: the row's current stack index
     LinkDrag m_link;
@@ -199,7 +208,7 @@ private:
         int      at     = -1;          // that gap: a position among the other layers
     } m_layerDrag;
     int    m_hoveredLink = -1;    // last frame's, for the insert button
-    std::optional<BoundsI> m_canvasFrame;   // see takeCanvasFrame()
+    std::function<void(const BoundsI&)> m_showInCanvas;   // see onShowInCanvas()
     bool   m_rightDown = false;       // a right press on the panel is in progress
     bool   m_rightZooming = false;    // ... held or dragged: it zooms, no menu on release
     ImVec2 m_rightPress;              // where (screen): the zoom's anchor

@@ -1,16 +1,19 @@
 #pragma once
 #include "core/actions.hpp"
-#include "canvas/canvas-panel.hpp"
-#include "graph/panel.hpp"
+#include "ui/canvas-panel.hpp"
+#include "ui/graph-panel/panel.hpp"
+#include "ui/dockspace.hpp"
+#include "ui/history-panel.hpp"
 #include "ui/image-importer.hpp"
+#include "ui/info-panel.hpp"
 #include "ui/navigator.hpp"
 #include "ui/tools/color-panel.hpp"
 #include "ui/tools/tool-manager.hpp"
 #include "ui/tools/toolbox-panel.hpp"
-#include <absl/container/flat_hash_map.h>
 #include <webgpu/webgpu.h>
 #include <string>
 #include <utility>
+#include <vector>
 
 class GpuDevice;
 class Project;
@@ -30,8 +33,8 @@ public:
     // When the UI next needs a frame without new input (see Application::nextFrameIn): tiles still
     // syncing, a throttled picture or thumbnail, a hold turning into a gesture.
     double nextFrameIn() const;
-    void setGpuInfo(std::string s) { m_gpuInfo = std::move(s); }
-    void setTimings(float acquireMs, float cpuMs) { m_acquireMs = acquireMs; m_cpuMs = cpuMs; }
+    void setGpuInfo(std::string s) { m_info.setGpuInfo(std::move(s)); }
+    void setTimings(float acquireMs, float cpuMs) { m_info.setTimings(acquireMs, cpuMs); }
     void setWindow(SDL_Window* window) { m_window = window; }
     void openFile(std::string path) { m_importer.open(std::move(path)); }   // any thread: File > Import, command line
     // A file dropped at window (x, y): imported if it lands on the canvas or the graph.
@@ -39,11 +42,8 @@ public:
 
 private:
     void drawMenuBar();
-    void drawDockspace();
-    void drawInfoPanel();
-    void registerActions();
+    void registerAppActions();   // ui/app-actions.cpp: every app-state action
     void dispatchDrops();
-    void buildDefaultLayout(unsigned int dockspaceId, float w, float h);
 
     ActionRegistry      m_actions;   // first: the panels and tools register into it
     ToolManager         m_tools;     // before the panels that use it
@@ -54,7 +54,9 @@ private:
     ToolPropertiesPanel m_toolProperties;
     ColorPanel          m_colorPanel;
     Navigator           m_navigator;
-    absl::flat_hash_map<unsigned int, float> m_dockShares;   // dock split -> its first child's share (see drawDockspace)
+    InfoPanel           m_info;
+    HistoryPanel        m_historyPanel;
+    Dockspace           m_dockspace;
 
     ImageImporter       m_importer;
     struct Drop { std::string path; ImVec2 pos; };
@@ -66,11 +68,5 @@ private:
 
     bool m_initialized = false;
     bool m_quit = false;
-    bool m_resetLayout = false;
-    bool m_showCanvas = true, m_showGraph = true, m_showTools = true, m_showToolProperties = true, m_showInfo = false;
-    bool m_showColor = true, m_showNavigator = true;
     bool m_showDemo = false;
-
-    std::string m_gpuInfo;
-    float m_acquireMs = 0, m_cpuMs = 0;
 };

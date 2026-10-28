@@ -1,4 +1,5 @@
 #include "image-importer.hpp"
+#include "core/actions.hpp"
 #include "core/application.hpp"
 #include "raster/raster-data.hpp"
 
@@ -47,7 +48,7 @@ bool ImageImporter::importOnWorker(Job& j)
     return true;
 }
 
-std::vector<ImageImporter::Imported> ImageImporter::poll(Project& project)
+std::vector<ImageImporter::Imported> ImageImporter::poll(ActionRegistry& actions)
 {
     {
         std::lock_guard lock(m_mutex);
@@ -72,15 +73,11 @@ std::vector<ImageImporter::Imported> ImageImporter::poll(Project& project)
         Job& j = *m_jobs.front();
         if (j.done.get()) {   // returns at once: the worker is past its last line
             const Placement& p = j.request.placement;
-            Project::ImportOptions options;
-            if (p.target == Placement::Target::Graph) {   // a node where it was dropped, linked to nothing
-                options.addToMaster = false;
-                options.makeActive  = false;
-                options.placeNode   = true;
-                options.nodeX = p.x;
-                options.nodeY = p.y;
-            }
-            imported.push_back({ project.importTiles(j.tiles, j.image.name, options), p });
+            static constexpr const char* kTargets[] = { "default", "canvas", "graph" };
+            ActionArgs args{ { "path", j.request.path }, { "name", j.image.name }, { "target", kTargets[int(p.target)] },
+                             { "x", p.x }, { "y", p.y } };
+            args.payload = static_cast<const TileGrid*>(&j.tiles);
+            if (const ActionResult r = actions.run("image.import", std::move(args))) imported.push_back({ NodeId(r.made), p });
             m_lastError.clear();
         } else {
             m_lastError = j.request.path + ": " + j.error;

@@ -5,24 +5,42 @@
 #include <algorithm>
 #include <deque>
 
+void GraphSelection::select(NodeId id)
+{
+    m_anchor = id;
+    if (m_ids.size() == 1 && m_ids.contains(id)) return;
+    m_ids.clear();
+    m_ids.insert(id);
+    changed();
+}
+
 void GraphSelection::toggle(NodeId id)
 {
     if (!m_ids.erase(id)) m_ids.insert(id);
     m_anchor = id;
+    changed();
+}
+
+void GraphSelection::assign(Set ids)
+{
+    if (ids == m_ids) return;   // a rubber band assigns every frame it's dragged
+    m_ids = std::move(ids);
+    changed();
 }
 
 void GraphSelection::erase(NodeId id)
 {
-    m_ids.erase(id);
     if (m_anchor == id) m_anchor = kNoNodeId;
+    if (m_ids.erase(id)) changed();
 }
 
 void GraphSelection::chain(const Project& project, NodeId id, bool additive)
 {
     std::vector<NodeId> path = m_anchor != kNoNodeId ? linkPath(project, m_anchor, id) : std::vector<NodeId>{};
     if (path.empty()) path.push_back(id);
-    if (!additive) m_ids.clear();
-    m_ids.insert(path.begin(), path.end());   // the anchor stays: the next Shift+click chains from it too
+    Set next = additive ? m_ids : Set{};
+    next.insert(path.begin(), path.end());   // the anchor stays: the next Shift+click chains from it too
+    assign(std::move(next));
 }
 
 std::vector<NodeId> linkPath(const Project& project, NodeId from, NodeId to)

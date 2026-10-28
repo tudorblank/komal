@@ -47,10 +47,11 @@ private:
     struct Leaf {
         TilePyramid pyramid;
         struct Level {
-            TileSet   done;               // uploaded (empty results included)
-            TileAtlas atlas;
-            uint64_t  revision = 0;       // bumps with every upload
-            uint64_t  placed   = ~0ull;   // the revision the atlas instances were built for
+            TileSet      done;               // uploaded (empty results included)
+            TileAtlas    atlas;
+            TileDrawList draw;               // every uploaded tile
+            uint64_t     revision = 0;       // bumps with every upload
+            uint64_t     placed   = ~0ull;   // the revision the draw was built for
         } levels[TilePyramid::kLevels];
     };
     // Where a node reads something from: a frozen leaf, or a reached node rebuilt each frame.

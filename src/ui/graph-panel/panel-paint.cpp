@@ -1,4 +1,4 @@
-#include "graph/panel.hpp"
+#include "ui/graph-panel/panel.hpp"
 #include "core/project.hpp"
 #include "graph/style.hpp"
 #include "ui/theme.hpp"
@@ -15,6 +15,11 @@ namespace {
 
 ImU32 withAlpha(ImU32 c, int a) { return (c & ~IM_COL32_A_MASK) | (ImU32(a) << IM_COL32_A_SHIFT); }
 
+}
+
+GraphPaint GraphPanel::paintContext(ImDrawList* dl, const GraphCamera& camera) const
+{
+    return { dl, camera, m_uiScale, graphFont(), graphNumberFont() };
 }
 
 void GraphPanel::paintGrid(const GraphPaint& g, ImVec2 min, ImVec2 max) const
@@ -95,7 +100,7 @@ void GraphPanel::paint(const GraphPaint& g, const Hit& hit, ImVec2 canvasMin, Im
         if (id != master) paintOne(g, id);
 
     // ---- the pinned master and the navigator, over the graph
-    paintOne(GraphPaint{ dl, m_pinned, m_uiScale }, master);
+    paintOne(paintContext(dl, m_pinned), master);
     m_minimap.paint(dl, *m_project, m_minimapEdges, m_selection.ids(), m_camera, m_canvasSize, ImGui::GetIO().MousePos,
                     m_drag == Drag::None || m_drag == Drag::Minimap);
 
@@ -138,21 +143,22 @@ void GraphPanel::drawPopups()
             ImGui::TextDisabled("%s", n->m_meta.label.c_str());
             ImGui::Separator();
             if (n->m_meta.type == NodeType::Raster) {
-                if (ImGui::MenuItem("Paint into this raster", nullptr, m_project->activeRasterId() == id))
-                    m_project->setActiveRaster(id);
+                if (ImGui::MenuItem("Paint into this raster", nullptr, m_project->activeRasterId() == id) && m_project->activeRasterId() != id)
+                    m_actions->run("raster.activate", { { "node", id } });
                 const auto* r = static_cast<const RasterRootNode*>(n);
-                if (ImGui::MenuItem("Lock pixels", nullptr, r->locked())) m_project->setRasterLocked(id, !r->locked());
-                if (ImGui::MenuItem("Lock transparency", nullptr, r->alphaLocked())) m_project->setRasterAlphaLocked(id, !r->alphaLocked());
+                if (ImGui::MenuItem("Lock pixels", nullptr, r->locked()))
+                    m_actions->run("raster.lock", { { "node", id }, { "on", !r->locked() } });
+                if (ImGui::MenuItem("Lock transparency", nullptr, r->alphaLocked()))
+                    m_actions->run("raster.lockAlpha", { { "node", id }, { "on", !r->alphaLocked() } });
             }
             if (!master) {
                 const NodeId out = m_project->master().m_meta.id;
                 const InputSlot top = InputSlot::newLayer(uint32_t(m_project->master().layers().size()));
                 if (ImGui::MenuItem("Add to Master", nullptr, false, m_project->canConnect(id, out, top)))
-                    m_project->connect(id, out, top);
-                if (ImGui::MenuItem("Reference it")) {
-                    const NodeId ref = m_project->createReference(n->m_meta.x + 30.0f, n->m_meta.y + 30.0f, id);
-                    m_selection.select(ref);
-                }
+                    m_actions->run("link.connect", { { "from", id }, { "to", out }, { "slot", top.text() } });
+                if (ImGui::MenuItem("Reference it"))
+                    if (const ActionResult ref = m_actions->run("node.reference", { { "node", id }, { "x", n->m_meta.x + 30.0f }, { "y", n->m_meta.y + 30.0f } }))
+                        m_selection.select(NodeId(ref.made));
             }
             const bool many = m_selection.contains(id) && m_selection.size() > 1;
             if (ImGui::MenuItem(many ? "Show selected in Canvas" : "Show in Canvas", "Double-click")) {
@@ -163,7 +169,7 @@ void GraphPanel::drawPopups()
                 // Lost far away: shift it so what it outputs starts at the canvas origin.
                 const BoundsI b = move->bounds();
                 if (ImGui::MenuItem("Move to Origin", nullptr, false, !b.empty() && (b.minX != 0 || b.minY != 0))) {
-                    m_project->setMoveOffset(id, move->offsetX() - b.minX, move->offsetY() - b.minY);
+                    m_actions->run("move.set", { { "node", id }, { "x", move->offsetX() - b.minX }, { "y", move->offsetY() - b.minY } });
                     showInCanvas({ id });
                 }
             }
@@ -179,7 +185,7 @@ void GraphPanel::drawPopups()
                 ImGui::Separator();
                 if (ImGui::MenuItem(many ? "Delete selected" : "Delete", "Del")) {
                     if (many) deleteSelection();
-                    else      m_project->deleteNode(id);
+                    else      m_actions->run("node.delete", { { "nodes", std::vector<NodeId>{ id } } });
                 }
             }
         }
@@ -198,18 +204,20 @@ void GraphPanel::drawPopups()
         const float width = ImGui::GetFontSize() * 10.0f;
         switch (m_edit.kind) {
         case ValueEdit::Kind::Rename:
-            if (Widgets::textField(kField, m_edit.text, sizeof m_edit.text, width)) m_project->setNodeLabel(m_edit.node, m_edit.text);
+            if (Widgets::textField(kField, m_edit.text, sizeof m_edit.text, width))
+                m_actions->run("node.rename", { { "node", m_edit.node }, { "label", m_edit.text } });
             break;
         case ValueEdit::Kind::Scale:
             if (Widgets::numberField(kField, m_edit.value, 0.0f, 100.0f, "%.1f%%", width))
-                m_project->setSignalScale(m_edit.node, m_edit.signal, m_edit.channel, m_edit.value / 100.0f);
+                m_actions->run("signal.set", { { "node", m_edit.node }, { "signal", m_edit.signal }, { "channel", m_edit.channel },
+                                               { "value", m_edit.value / 100.0f } });
             break;
         case ValueEdit::Kind::Offset:
             if (Widgets::numberField(kField, m_edit.value, -1e9f, 1e9f, "%.0f px", width))
                 if (const auto* m = dynamic_cast<MoveNode*>(m_project->find(m_edit.node))) {
                     const int v = int(std::lround(m_edit.value));
-                    if (m_edit.axis == 0) m_project->setMoveOffset(m_edit.node, v, m->offsetY());
-                    else                  m_project->setMoveOffset(m_edit.node, m->offsetX(), v);
+                    m_actions->run("move.set", { { "node", m_edit.node }, { "x", m_edit.axis == 0 ? v : m->offsetX() },
+                                                 { "y", m_edit.axis == 0 ? m->offsetY() : v } });
                 }
             break;
         }

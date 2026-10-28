@@ -92,3 +92,10 @@ private:
     WGPUQueue  m_queue = nullptr;
     GpuUniform m_uniform;
 };
+
+// A view's camera and the size it's shown at, handed to whatever navigates the view from outside
+// it (the navigator, the hand tool's 100% / Fit). A null camera: the view isn't shown.
+struct CanvasNavigation {
+    CanvasCamera* camera = nullptr;
+    float viewW = 0.0f, viewH = 0.0f;
+};

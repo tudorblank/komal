@@ -51,66 +51,66 @@ namespace {
     }
 
     // What ImGui's SDL3 backend reads (ImGui_ImplSDL3_ProcessEvent); the rest isn't queued for it.
-bool forImGui(Uint32 type)
-{
-    switch (type) {
-    case SDL_EVENT_MOUSE_MOTION:
-    case SDL_EVENT_MOUSE_WHEEL:
-    case SDL_EVENT_MOUSE_BUTTON_DOWN:
-    case SDL_EVENT_MOUSE_BUTTON_UP:
-    case SDL_EVENT_TEXT_INPUT:
-    case SDL_EVENT_KEY_DOWN:
-    case SDL_EVENT_KEY_UP:
-    case SDL_EVENT_DISPLAY_ORIENTATION:
-    case SDL_EVENT_DISPLAY_ADDED:
-    case SDL_EVENT_DISPLAY_REMOVED:
-    case SDL_EVENT_DISPLAY_MOVED:
-    case SDL_EVENT_DISPLAY_CONTENT_SCALE_CHANGED:
-    case SDL_EVENT_WINDOW_MOUSE_ENTER:
-    case SDL_EVENT_WINDOW_MOUSE_LEAVE:
-    case SDL_EVENT_WINDOW_FOCUS_GAINED:
-    case SDL_EVENT_WINDOW_FOCUS_LOST:
-    case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
-    case SDL_EVENT_WINDOW_MOVED:
-    case SDL_EVENT_WINDOW_RESIZED:
-    case SDL_EVENT_GAMEPAD_ADDED:
-    case SDL_EVENT_GAMEPAD_REMOVED:
-        return true;
-    default:
+    bool forImGui(Uint32 type)
+    {
+        switch (type) {
+        case SDL_EVENT_MOUSE_MOTION:
+        case SDL_EVENT_MOUSE_WHEEL:
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        case SDL_EVENT_MOUSE_BUTTON_UP:
+        case SDL_EVENT_TEXT_INPUT:
+        case SDL_EVENT_KEY_DOWN:
+        case SDL_EVENT_KEY_UP:
+        case SDL_EVENT_DISPLAY_ORIENTATION:
+        case SDL_EVENT_DISPLAY_ADDED:
+        case SDL_EVENT_DISPLAY_REMOVED:
+        case SDL_EVENT_DISPLAY_MOVED:
+        case SDL_EVENT_DISPLAY_CONTENT_SCALE_CHANGED:
+        case SDL_EVENT_WINDOW_MOUSE_ENTER:
+        case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+        case SDL_EVENT_WINDOW_FOCUS_GAINED:
+        case SDL_EVENT_WINDOW_FOCUS_LOST:
+        case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+        case SDL_EVENT_WINDOW_MOVED:
+        case SDL_EVENT_WINDOW_RESIZED:
+        case SDL_EVENT_GAMEPAD_ADDED:
+        case SDL_EVENT_GAMEPAD_REMOVED:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    // `b` continues the run of mouse moves `a` is in: only the last one matters.
+    bool sameRun(const SDL_Event& a, const SDL_Event& b)
+    {
+        return a.motion.windowID == b.motion.windowID &&
+            (a.motion.which == SDL_TOUCH_MOUSEID) == (b.motion.which == SDL_TOUCH_MOUSEID);   // ImGui tells touch apart
+    }
+
+    // When ImGui next changes what it draws by itself: a tooltip appearing while the mouse rests on
+    // an item, the caret blinking and keys repeating while typing. Ticks through those, from public
+    // state only. `sinceMove`: seconds from the last mouse move to this frame's start.
+    double imguiNextFrameIn(double sinceMove, bool keyHeld)
+    {
+        constexpr double kTick        = 0.1;   // 10 frames a second
+        constexpr double kTooltipRest = 0.6;   // every ImGui tooltip delay is shorter
+        const ImGuiIO& io = ImGui::GetIO();
+        if (io.WantTextInput) return keyHeld ? double(io.KeyRepeatRate) : kTick;
+        if (ImGui::IsAnyItemHovered() && sinceMove < kTooltipRest) return kTick;
+        return Application::kNoFrame;
+    }
+
+    // A key held that repeats while typing (not a modifier).
+    bool editingKeyHeld(const InputFrame& input)
+    {
+        for (SDL_Keycode k : input.held)
+            if (k != SDLK_LCTRL && k != SDLK_RCTRL && k != SDLK_LSHIFT && k != SDLK_RSHIFT &&
+                k != SDLK_LALT && k != SDLK_RALT && k != SDLK_LGUI && k != SDLK_RGUI) return true;
         return false;
     }
-}
 
-// `b` continues the run of mouse moves `a` is in: only the last one matters.
-bool sameRun(const SDL_Event& a, const SDL_Event& b)
-{
-    return a.motion.windowID == b.motion.windowID &&
-           (a.motion.which == SDL_TOUCH_MOUSEID) == (b.motion.which == SDL_TOUCH_MOUSEID);   // ImGui tells touch apart
-}
-
-// When ImGui next changes what it draws by itself: a tooltip appearing while the mouse rests on
-// an item, the caret blinking and keys repeating while typing. Ticks through those, from public
-// state only. `sinceMove`: seconds from the last mouse move to this frame's start.
-double imguiNextFrameIn(double sinceMove, bool keyHeld)
-{
-    constexpr double kTick        = 0.1;   // 10 frames a second
-    constexpr double kTooltipRest = 0.6;   // every ImGui tooltip delay is shorter
-    const ImGuiIO& io = ImGui::GetIO();
-    if (io.WantTextInput) return keyHeld ? double(io.KeyRepeatRate) : kTick;
-    if (ImGui::IsAnyItemHovered() && sinceMove < kTooltipRest) return kTick;
-    return Application::kNoFrame;
-}
-
-// A key held that repeats while typing (not a modifier).
-bool editingKeyHeld(const InputFrame& input)
-{
-    for (SDL_Keycode k : input.held)
-        if (k != SDLK_LCTRL && k != SDLK_RCTRL && k != SDLK_LSHIFT && k != SDLK_RSHIFT &&
-            k != SDLK_LALT && k != SDLK_RALT && k != SDLK_LGUI && k != SDLK_RGUI) return true;
-    return false;
-}
-
-float contentScale(SDL_Window* window)
+    float contentScale(SDL_Window* window)
     {
         const float display = SDL_GetWindowDisplayScale(window);
         const float density = SDL_GetWindowPixelDensity(window);

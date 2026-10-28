@@ -1,6 +1,7 @@
 #include "toolbox-panel.hpp"
 #include "core/actions.hpp"
 #include "core/project.hpp"
+#include "ui/panel-titles.hpp"
 #include "ui/tools/tool-manager.hpp"
 #include "ui/widgets.hpp"
 
@@ -8,8 +9,9 @@
 #include <imgui_internal.h>   // BeginViewportSideBar
 #include <cmath>
 
-void ToolboxPanel::draw(ToolManager& tools, Project& project, const ActionRegistry& actions)
+void ToolboxPanel::draw(ToolManager& tools, ActionRegistry& actions)
 {
+    if (!m_open) return;
     // A viewport side bar under the menu bar: the dockspace lays out below it.
     const float size = std::round(ImGui::GetFontSize() * 1.75f);   // a tool button
     const float pad  = std::round(ImGui::GetFontSize() * 0.25f);
@@ -28,7 +30,7 @@ void ToolboxPanel::draw(ToolManager& tools, Project& project, const ActionRegist
         for (const auto& t : tools.tools()) {
             ImGui::PushID(t.get());
             const ImVec2 p = ImGui::GetCursorScreenPos();
-            if (ImGui::InvisibleButton("##tool", ImVec2(size, size))) tools.select(*t, project);
+            if (ImGui::InvisibleButton("##tool", ImVec2(size, size))) actions.run(toolActionId(*t));
             const bool selected = &tools.selected() == t.get();
             const bool hovered  = ImGui::IsItemHovered();
             const ImVec2 q(p.x + size, p.y + size);
@@ -37,7 +39,8 @@ void ToolboxPanel::draw(ToolManager& tools, Project& project, const ActionRegist
             if (selected) dl->AddRect(p, q, ImGui::GetColorU32(ImGuiCol_CheckMark), st.FrameRounding);
             t->drawIcon(dl, ImVec2(p.x + size * 0.5f, p.y + size * 0.5f), size * 0.62f,
                         ImGui::GetColorU32(selected ? ImGuiCol_Text : ImGuiCol_TextDisabled));
-            ImGui::SetItemTooltip("%s (%s)", t->name(), actions.shortcutLabel(toolActionId(*t)).c_str());   // as bound
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))   // the label is looked up only when shown
+                ImGui::SetTooltip("%s (%s)", t->name(), actions.shortcutLabel(toolActionId(*t)).c_str());   // as bound
             ImGui::PopID();
             ImGui::SameLine();
         }
@@ -45,12 +48,13 @@ void ToolboxPanel::draw(ToolManager& tools, Project& project, const ActionRegist
     ImGui::End();   // a side bar is a window: always ended
 }
 
-void ToolPropertiesPanel::draw(bool* open, ToolManager& tools, Project& project)
+void ToolPropertiesPanel::draw(ToolManager& tools, Project& project, ActionRegistry& actions, const CanvasNavigation& canvas)
 {
-    if (!Widgets::beginPanel("Tool Properties", open)) { Widgets::endPanel(); return; }
+    if (!m_open) return;
+    if (!Widgets::beginPanel(PanelTitle::kToolProperties, actions, "view.toolProperties")) { Widgets::endPanel(); return; }
     Tool& tool = tools.selected();
     ImGui::SeparatorText(tool.name());
-    ToolContext ctx{ project, tools, tools.canvas() };
+    ToolContext ctx{ project, actions, tools, canvas };
     ImGui::PushID(&tool);
     tool.drawProperties(ctx);
     ImGui::PopID();

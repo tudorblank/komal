@@ -34,10 +34,20 @@ public:
     bool init(GpuDevice& gpu, Project& project, ToolManager& tools, const InputFrame& input, ActionRegistry& actions);
     void shutdown();
 
-    void draw(bool* open);                    // ImGui side: window, input, image, overlays
+    void draw();                              // ImGui side: window, input, image, overlays
+    bool& open() { return m_open; }           // shown (View > Canvas, the window's close button)
+    // The view, for what navigates it from outside (navigator, hand tool): its camera and size as
+    // last drawn, a null camera if it wasn't shown. The camera lives as long as the panel.
+    CanvasNavigation navigation();
     // A file dropped at `screen` (`window` topmost): true if it lands on the canvas, with its world point.
     bool dropTarget(const ImGuiWindow* window, ImVec2 screen, Vec2& world) const;
-    void renderGpu(WGPUCommandEncoder enc);   // wgpu side: the view renders if anything changed
+    // wgpu side: syncs the output's tiles (for every view of them), then the view renders if
+    // anything changed. Before any other view of the tiles renders.
+    void renderGpu(WGPUCommandEncoder enc);
+    // The output as tiles at every level of detail, and the pipelines to draw them: for other
+    // views of the picture (the navigator).
+    RasterTiles& outputTiles() { return m_tiles; }
+    const CanvasPipelines& pipelines() const { return m_scene.pipelines(); }
     // Fits world rectangle `b`; empty: centres the origin.
     void frameWorld(const BoundsI& b);
     bool busy() const { return m_visible && m_view.busy(); }   // still catching up: needs more frames
@@ -55,6 +65,7 @@ private:
     Project*     m_project = nullptr;
     int          m_subscription = 0;
     ToolManager* m_tools   = nullptr;
+    RasterTiles  m_tiles;   // the master's output, shared with other views
     CanvasScene  m_scene;
     CanvasView   m_view;
     RasterItem*      m_output       = nullptr;   // owned by m_scene
@@ -71,7 +82,8 @@ private:
 
     const ImGuiWindow* m_window = nullptr;   // this frame's, while the canvas is shown
     ImVec2 m_canvasMin{}, m_canvasMax{};
-    bool m_visible = false;   // false when collapsed / tabbed away
+    bool m_open    = true;
+    bool m_visible = false;   // false when closed, collapsed or tabbed away
     bool m_hasPointer = false;
     bool m_ready   = false;
 };

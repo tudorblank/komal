@@ -1,6 +1,8 @@
 #pragma once
 // Canvas tools (Photoshop style): the Toolbox picks one, Tool Properties shows its settings, the
-// canvas hands it the mouse. On the canvas a tool draws only its cursor overlay.
+// canvas hands it the pointer. A tool draws nothing on the canvas itself; what it changes shows
+// through the project (a stroke) or the camera (the hand). It edits the document and its own
+// settings only through actions (core/document-actions, ui/app-actions).
 
 #include "core/actions.hpp"
 #include "core/input.hpp"
@@ -15,12 +17,6 @@
 
 class Project;
 class ToolManager;
-
-// What the canvas publishes each frame for tools that navigate it (the hand's 100% / Fit).
-struct CanvasNavigation {
-    CanvasCamera* camera = nullptr;   // null while the canvas isn't shown
-    float viewW = 0.0f, viewH = 0.0f;
-};
 
 // The colours tools share: the primary paints, the secondary waits; X swaps them.
 struct ToolColors {
@@ -41,10 +37,11 @@ struct CanvasPointer {
 
 // The pointer over the canvas, for one frame.
 struct CanvasInput {
-    Project&      project;
+    const Project&  project;
+    ActionRegistry& actions;
     CanvasCamera& camera;
-    Vec2 mouse;      // viewport-local points (ImGui's, once per frame: hover, cursors)
-    Vec2 world;      // canvas pixels
+    Vec2 mouse;      // where the pointer is now, viewport-local points
+    Vec2 world;      // ... in canvas pixels
     // Every pointer event of the frame, in order, while the canvas has the pointer or the tool is busy.
     std::span<const CanvasPointer> pointer;
     const InputFrame& input;   // the frame as a whole (pen state)
@@ -53,10 +50,12 @@ struct CanvasInput {
     bool active;     // a button went down on the canvas and is held
 };
 
+// What Tool Properties hands a tool.
 struct ToolContext {
     Project&                project;
+    ActionRegistry&         actions;
     ToolManager&            tools;
-    const CanvasNavigation& canvas;
+    const CanvasNavigation& canvas;   // the canvas view, as last shown
 };
 
 class Tool {
@@ -65,15 +64,13 @@ public:
 
     virtual const char* name() const = 0;
     virtual SDL_Keycode shortcut() const = 0;   // selects it ("tool.<name>", no modifiers)
-    // The tool's own actions (usually ActionScope::Canvas); `isActive`: it's the canvas's tool now.
-    virtual void registerActions(ActionRegistry&, std::function<bool()> /*isActive*/) {}
     virtual void drawIcon(ImDrawList* dl, ImVec2 center, float size, ImU32 color) const = 0;
 
     virtual void drawProperties(ToolContext& ctx) = 0;   // inside the Tool Properties window
     virtual void canvasInput(const CanvasInput& in) = 0;
 
     virtual bool busy() const { return false; }   // mid-gesture (a stroke, a drag)
-    virtual void cancel(Project&) {}              // switched away: finish whatever is going on
+    virtual void cancel(ActionRegistry&) {}       // switched away: finish whatever is going on
 };
 
 // The id of the action that selects `tool`: "tool.brush".

@@ -15,11 +15,12 @@
 
 class CanvasScene {
 public:
-    bool init(const GpuHandles& ctx);
-    void shutdown();   // releases every item's GPU resources and the pipelines
+    bool init(const GpuHandles& ctx);              // with its own pipelines
+    bool init(const CanvasPipelines& shared);      // with another scene's (which must outlive it)
+    void shutdown();   // releases every item's GPU resources and its own pipelines
     ~CanvasScene() { shutdown(); }
 
-    const CanvasPipelines& pipelines() const { return m_pipelines; }
+    const CanvasPipelines& pipelines() const { return *m_pipelines; }
 
     template<class T, class... Args>
     T* addItem(Args&&... args)
@@ -47,7 +48,8 @@ private:
     void touch() { ++m_revision; }
     void sortIfNeeded();
 
-    CanvasPipelines m_pipelines;
+    CanvasPipelines        m_ownPipelines;
+    const CanvasPipelines* m_pipelines = &m_ownPipelines;
     std::vector<std::unique_ptr<CanvasItem>> m_items;   // z order once sorted
     uint64_t m_revision  = 1;
     uint64_t m_nextOrder = 0;

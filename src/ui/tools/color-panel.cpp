@@ -1,5 +1,7 @@
 #include "color-panel.hpp"
+#include "core/actions.hpp"
 #include "ui/theme.hpp"
+#include "ui/panel-titles.hpp"
 #include "ui/tools/tool.hpp"
 #include "ui/widgets.hpp"
 
@@ -43,9 +45,10 @@ void ColorPanel::writeTo(float rgb[3])
     std::memcpy(m_last, rgb, sizeof m_last);
 }
 
-void ColorPanel::draw(bool* open, ToolColors& colors)
+void ColorPanel::draw(ToolColors& colors, ActionRegistry& actions)
 {
-    if (!Widgets::beginPanel("Color", open)) { Widgets::endPanel(); return; }
+    if (!m_open) return;
+    if (!Widgets::beginPanel(PanelTitle::kColor, actions, "view.color")) { Widgets::endPanel(); return; }
     float* fg = m_editSecondary ? colors.background : colors.foreground;   // the colour being edited
     if (std::memcmp(fg, m_last, sizeof m_last) != 0) syncFrom(fg);
 
@@ -62,7 +65,7 @@ void ColorPanel::draw(bool* open, ToolColors& colors)
     drawWheel(wheel);
     const ImVec2 below = ImGui::GetCursorScreenPos();
     ImGui::SetCursorScreenPos(top);   // the swatches sit in the corner beside the wheel
-    drawSwatches(colors, block);
+    drawSwatches(colors, actions, block);
     ImGui::SetCursorScreenPos(below);
     if (float* now = m_editSecondary ? colors.background : colors.foreground; now != fg) {   // switched to the other colour
         fg = now;
@@ -74,11 +77,15 @@ void ColorPanel::draw(bool* open, ToolColors& colors)
     Widgets::sectionGap();
     drawSliders();
 
-    if (m_h != h0 || m_s != s0 || m_v != v0) writeTo(fg);   // a control changed the colour
+    if (m_h != h0 || m_s != s0 || m_v != v0) {   // a control changed the colour: its action writes it
+        float rgb[3];
+        writeTo(rgb);
+        actions.run("color.set", { { "target", m_editSecondary ? "secondary" : "primary" }, { "r", rgb[0] }, { "g", rgb[1] }, { "b", rgb[2] } });
+    }
     Widgets::endPanel();
 }
 
-void ColorPanel::drawSwatches(ToolColors& colors, float block)
+void ColorPanel::drawSwatches(ToolColors& colors, ActionRegistry& actions, float block)
 {
     const ImVec2 p = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton("##swatches", ImVec2(block, block));
@@ -92,7 +99,7 @@ void ColorPanel::drawSwatches(ToolColors& colors, float block)
     const auto inside = [&](ImVec2 a, ImVec2 b) { return m.x >= a.x && m.x <= b.x && m.y >= a.y && m.y <= b.y; };
     const bool overSwap = inside(swap0, swap1);
     if (ImGui::IsItemClicked()) {
-        if (overSwap)                    colors.swap();
+        if (overSwap)                    actions.run("color.swap");
         else if (inside(front0, front1)) m_editSecondary = false;
         else if (inside(back0, back1))   m_editSecondary = true;
     }

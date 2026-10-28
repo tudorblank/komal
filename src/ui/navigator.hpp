@@ -5,59 +5,49 @@
 //   drag the outline         moves the view with it
 //   click / drag elsewhere   centres the view there, then follows the mouse
 //   Ctrl+wheel on the map    zoom
-//   zoom row                 - / + steps, a slider, a field to type the percentage in
-//   rotation row             15° steps either way, a slider, a field to type the degrees in
+//   zoom row                 - / + steps, a ramp slider, a field to type the percentage in
+//   rotation row             15° steps either way, a wave slider, a field to type the degrees in
 //
 // The map is the master's bounds fitted to the window, proportions kept; the outline is clamped
-// to the map's edges. The picture renders at its shown size from the master's cache, only when
-// the master changed (throttled, never mid-stroke) or the window settled at a new size.
+// to the map's edges. The picture is a second view of the canvas's output tiles (RasterTiles),
+// at the level of detail that fits: drawn on the GPU, rebuilt only where the output changed,
+// and every tile it builds is one the canvas can reuse.
 
-#include "canvas/camera.hpp"
-#include "node/node.hpp"
+#include "canvas/items/checker.hpp"
+#include "canvas/items/raster.hpp"
+#include "canvas/view.hpp"
 
 #include <imgui.h>
-#include <webgpu/webgpu.h>
-#include <vector>
 
-class GpuDevice;
+class ActionRegistry;
 class Project;
-struct CanvasNavigation;
 
 class Navigator {
 public:
-    void init(GpuDevice& gpu, Project& project);
+    // After the canvas: draws its output tiles with its pipelines.
+    void init(Project& project, RasterTiles& tiles, const CanvasPipelines& pipelines);
     void shutdown();
 
     // Before the canvas, so its changes show on the canvas the same frame.
-    void draw(bool* open, CanvasNavigation& canvas);
-    double nextFrameIn() const { return m_nextFrameIn; }   // when the picture needs a render (Application::nextFrameIn)
+    void draw(const CanvasNavigation& canvas, ActionRegistry& actions);
+    bool& open() { return m_open; }   // shown (View > Navigator, the window's close button)
+    void renderGpu(WGPUCommandEncoder enc);   // after the canvas's (which syncs the tiles)
+    double nextFrameIn() const;               // tiles of the picture still coming in: now (Application::nextFrameIn)
 
 private:
-    static constexpr int    kMaxPicture  = 1024;          // pixels, either side
-    static constexpr double kMinInterval = 1.0 / 12.0;    // seconds between renders while the master changes
-    static constexpr double kSettle      = 0.15;          // seconds the map's size must hold before a re-render
+    static constexpr double kBuildBudgetMs = 2.0;   // per frame, for the picture's tiles
+    static constexpr float  kCheckerPixels = 8.0f;
 
-    void drawMap(ImVec2 size, CanvasNavigation& canvas);
-    void drawControls(CanvasNavigation& canvas);
-    void updatePicture(const BoundsI& bounds, float areaW, float areaH);   // the room it may fill, pixels
-    void renderPicture(Node& master, int width, int height);
+    void drawMap(ImVec2 size, const CanvasNavigation& canvas);
+    void drawControls(const CanvasNavigation& canvas);
 
-    Project*   m_project = nullptr;
-    WGPUDevice m_device  = nullptr;
-    WGPUQueue  m_queue   = nullptr;
-
-    // The picture: the top-left m_picW x m_picH of one max-size texture (no re-creation on resize).
-    WGPUTexture     m_texture = nullptr;
-    WGPUTextureView m_view    = nullptr;
-    int      m_picW = 0, m_picH = 0;
-    BoundsI  m_picBounds;                // the master's bounds it shows: the map is laid out from these
-    uint64_t m_picRevision = ~0ull;
-    double   m_renderedAt  = -1.0;
-    int      m_wantW = 0, m_wantH = 0;   // the size asked for, and since when
-    double   m_wantSince = 0.0;
-    double   m_nextFrameIn = 0.0;   // set by draw()
-    RenderCtx             m_render;
-    std::vector<RGBA> m_pixels;
+    Project*     m_project = nullptr;
+    CanvasScene  m_scene;   // a checkerboard under the output's tiles
+    CanvasView   m_view;    // the picture, sized and framed to the map's bounds
+    CheckerItem* m_checker = nullptr;   // owned by m_scene
+    bool         m_open = true;
+    bool         m_ready = false;
+    bool         m_pictureShown = false;   // drawn this frame: render it
 
     bool  m_dragging = false;
     Vec2  m_grab{};   // world offset from the mouse to the view's centre, while dragging

@@ -3,8 +3,53 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <string>
 #include <utility>
+
+// ---------------------------------------------------------------- input slots
+
+namespace {
+
+constexpr const char* kSignalNames[]  = { "main", "dry", "wet" };
+constexpr const char* kChannelNames[] = { "a", "r", "g", "b" };
+
+}
+
+std::string InputSlot::text() const
+{
+    switch (kind) {
+    case Kind::Input:    return "input";
+    case Kind::Layer:    return "layer:" + std::to_string(layer);
+    case Kind::NewLayer: return "new:" + std::to_string(layer);
+    case Kind::Mask:     return std::string("mask:") + kSignalNames[int(signal)] + "." + kChannelNames[int(channel)];
+    }
+    return "input";
+}
+
+InputSlot InputSlot::parse(std::string_view t)
+{
+    const auto index = [&](size_t from) { return uint32_t(std::strtoul(std::string(t.substr(from)).c_str(), nullptr, 10)); };
+    if (t.starts_with("layer:")) return stackLayer(index(6));
+    if (t.starts_with("new:"))   return newLayer(index(4));
+    if (t.starts_with("mask:")) {
+        const std::string_view m = t.substr(5);
+        const size_t dot = m.find('.');
+        InputSlot s = mask(NodeSignal::Main, NodeChannel::A);
+        for (int i = 0; i < kSignalCount; ++i)  if (m.substr(0, dot) == kSignalNames[i]) s.signal = NodeSignal(i);
+        if (dot != std::string_view::npos)
+            for (int i = 0; i < kChannelCount; ++i) if (m.substr(dot + 1) == kChannelNames[i]) s.channel = NodeChannel(i);
+        return s;
+    }
+    return input();
+}
+
+bool preferredInput(const Node& n, InputSlot& out)
+{
+    if (dynamic_cast<const UnaryNode*>(&n)) { out = InputSlot::input(); return true; }
+    if (auto* c = dynamic_cast<const CompositorNode*>(&n)) { out = InputSlot::newLayer(uint32_t(c->layers().size())); return true; }
+    return false;
+}
 
 namespace {
 
@@ -44,6 +89,7 @@ void Project::init()
     connect(bg,    m_master->m_meta.id, InputSlot::newLayer(0));
     connect(paint, m_master->m_meta.id, InputSlot::newLayer(1));
     setActiveRaster(paint);
+    m_history.setGraph(0, std::make_shared<GraphState>(captureGraph()));   // where undo can go back to
 }
 
 // ---------------------------------------------------------------- read
@@ -238,15 +284,18 @@ bool Project::deleteNodes(const std::vector<NodeId>& ids)
     for (const NodePtr& n : m_order) emitInputChanges(n->m_meta.id, before[n->m_meta.id]);
     for (NodeId id : doomed) emit(ProjectEventType::NodeRemoved, id);
 
-    if (doomed.contains(m_active)) {   // fall back to the most recently created raster
-        NodeId next = kNoNodeId;
-        for (auto r = m_order.rbegin(); r != m_order.rend(); ++r)
-            if ((*r)->m_meta.type == NodeType::Raster) { next = (*r)->m_meta.id; break; }
-        m_active = kNoNodeId;
-        setActiveRaster(next);
-        if (next == kNoNodeId) emit(ProjectEventType::ActiveRasterChanged);
-    }
+    if (doomed.contains(m_active)) fallBackActiveRaster();
     return true;
+}
+
+void Project::fallBackActiveRaster()
+{
+    NodeId next = kNoNodeId;
+    for (auto r = m_order.rbegin(); r != m_order.rend(); ++r)
+        if ((*r)->m_meta.type == NodeType::Raster) { next = (*r)->m_meta.id; break; }
+    m_active = kNoNodeId;
+    setActiveRaster(next);
+    if (next == kNoNodeId) emit(ProjectEventType::ActiveRasterChanged);
 }
 
 void Project::setNodePosition(NodeId id, float x, float y)
@@ -475,8 +524,11 @@ void Project::endStroke()
     m_strokeNode = kNoNodeId;
     if (!r) return;
     const RasterCommitId commit = r->commitDraft();
-    if (commit != kNoRasterCommit && m_history.push({ { { r->raster().id(), commit } } }))
-        emit(ProjectEventType::HistoryChanged);
+    if (commit == kNoRasterCommit) return;
+    const bool own = m_stepDepth == 0;   // ended outside any action: a step of its own
+    if (own) beginStep("Brush Stroke");
+    m_stepCommits.push_back({ r->raster().id(), commit });
+    if (own) endStep();
 }
 
 RasterRootNode* Project::strokeRaster() const
@@ -504,20 +556,180 @@ size_t Project::historyBytes() const
     return n;
 }
 
+// ---------------------------------------------------------------- history
+
+void Project::beginStep(std::string label)
+{
+    if (m_stepDepth++ > 0) return;   // inside another: merges into it
+    m_stepLabel = std::move(label);
+    m_stepCommits.clear();
+    m_stepBefore = captureGraph();
+    // Changed outside any step since (nothing should): undo comes back to what it really was.
+    const auto& here = m_history.step(m_history.current()).graph;
+    if (!here || !(*here == m_stepBefore)) m_history.setGraph(m_history.current(), std::make_shared<GraphState>(m_stepBefore));
+}
+
+void Project::endStep()
+{
+    if (m_stepDepth == 0 || --m_stepDepth > 0) return;
+    GraphState after = captureGraph();
+    if (m_stepCommits.empty() && after == m_stepBefore) return;   // changed nothing: undo never "does nothing"
+    m_history.push({ std::move(m_stepLabel), std::move(m_stepCommits), std::make_shared<GraphState>(std::move(after)) });
+    m_stepCommits.clear();
+    emit(ProjectEventType::HistoryChanged);
+}
+
 bool Project::undo()
 {
-    if (!canUndo()) return false;
-    m_history.undo([&](const RasterCommitRef& c) { flipRasterCommit(c); });
-    emit(ProjectEventType::HistoryChanged);
-    return true;
+    return canUndo() && goToHistory(m_history.parent(m_history.current()));
 }
 
 bool Project::redo()
 {
-    if (!canRedo()) return false;
-    m_history.redo([&](const RasterCommitRef& c) { flipRasterCommit(c); });
+    return canRedo() && goToHistory(m_history.redoChild(m_history.current()));
+}
+
+bool Project::goToHistory(uint32_t node)
+{
+    if (m_stroke.active() || m_stepDepth > 0 || node >= m_history.size() || node == m_history.current()) return false;
+    cancelPreview();
+    m_history.goTo(node, [&](const RasterCommitRef& c) { flipRasterCommit(c); });   // the pixels, step by step
+    if (const auto& graph = m_history.step(node).graph) restoreGraph(*graph);    // the graph, as it was there
     emit(ProjectEventType::HistoryChanged);
     return true;
+}
+
+GraphState Project::captureGraph() const
+{
+    GraphState g;
+    g.nodes.reserve(m_order.size());
+    for (const NodePtr& n : m_order) {
+        NodeState& s = g.nodes.emplace_back();
+        s.node  = n;
+        s.label = n->m_meta.label;
+        s.x = n->m_meta.x;
+        s.y = n->m_meta.y;
+        for (int sig = 0; sig < kSignalCount; ++sig)
+            for (int ch = 0; ch < kChannelCount; ++ch) {
+                const SignalChannels& c = n->signal(NodeSignal(sig));
+                s.scale[sig][ch] = c.scale[ch];
+                s.mask[sig][ch]  = c.mask[ch] ? c.mask[ch]->m_meta.id : kNoNodeId;
+            }
+        if (auto* u = dynamic_cast<const UnaryNode*>(n.get()); u && u->input()) s.input = u->input()->m_meta.id;
+        if (auto* c = dynamic_cast<const CompositorNode*>(n.get()))
+            for (const NodePtr& l : c->layers()) s.layers.push_back(l->m_meta.id);
+        if (auto* m = dynamic_cast<const MoveNode*>(n.get())) { s.offsetX = m->offsetX(); s.offsetY = m->offsetY(); }
+        if (auto* r = dynamic_cast<const RasterRootNode*>(n.get())) { s.locked = r->locked(); s.alphaLocked = r->alphaLocked(); }
+    }
+    return g;
+}
+
+void Project::restoreGraph(const GraphState& target)
+{
+    absl::flat_hash_map<NodeId, const NodeState*> wanted;
+    for (const NodeState& s : target.nodes) wanted.emplace(s.node->m_meta.id, &s);
+    const auto nodeOf = [&](NodeId id) -> NodePtr {
+        const auto it = wanted.find(id);
+        return it == wanted.end() ? nullptr : it->second->node;
+    };
+    const auto inputsWanted = [&](const NodeState& s) {
+        Inputs in;
+        in.input = nodeOf(s.input);
+        for (NodeId id : s.layers) in.layers.push_back(nodeOf(id));
+        for (int sig = 0; sig < kSignalCount; ++sig)
+            for (int ch = 0; ch < kChannelCount; ++ch) in.masks[sig][ch] = nodeOf(s.mask[sig][ch]);
+        return in;
+    };
+
+    // What fed every node before, for the events at the end.
+    absl::flat_hash_map<NodeId, Inputs> before;
+    for (const NodePtr& n : m_order) before.emplace(n->m_meta.id, inputsOf(*n));
+
+    // Nodes that come back, as themselves: unlinked (they were let go of when they went), told now.
+    for (const NodeState& s : target.nodes) {
+        const NodeId id = s.node->m_meta.id;
+        if (m_nodes.contains(id)) continue;
+        m_nodes.emplace(id, s.node);
+        m_order.push_back(s.node);
+        if (s.node->m_meta.type == NodeType::Raster)
+            m_rasterNodes[static_cast<const RasterRootNode*>(s.node.get())->raster().id()] = id;
+        before.emplace(id, Inputs{});
+        emit(ProjectEventType::NodeAdded, id);
+    }
+
+    // Links: every node whose inputs differ lets go of all of them first, then takes the wanted
+    // ones, so the graph never passes through a cycle on the way (it only ever holds wanted links).
+    std::vector<std::pair<Node*, Inputs>> relink;
+    for (const NodePtr& n : m_order) {
+        const auto it = wanted.find(n->m_meta.id);
+        Inputs want = it != wanted.end() ? inputsWanted(*it->second) : Inputs{};
+        if (inputsOf(*n) == want) continue;
+        n->detachAllInputs();
+        n->unlinkAllMasks();
+        relink.emplace_back(n.get(), std::move(want));
+    }
+    for (auto& [n, in] : relink) {
+        if (auto* u = dynamic_cast<UnaryNode*>(n)) u->setInput(in.input);
+        if (auto* c = dynamic_cast<CompositorNode*>(n))
+            for (const NodePtr& l : in.layers) c->addLayer(l);
+        for (int sig = 0; sig < kSignalCount; ++sig)
+            for (int ch = 0; ch < kChannelCount; ++ch)
+                if (in.masks[sig][ch]) n->linkMask(in.masks[sig][ch], NodeSignal(sig), NodeChannel(ch));
+    }
+
+    // Settings, each node type its own.
+    std::vector<NodeId> moved, changed;
+    for (const NodeState& s : target.nodes) {
+        Node& n = *s.node;
+        if (n.m_meta.x != s.x || n.m_meta.y != s.y) {
+            n.m_meta.x = s.x;
+            n.m_meta.y = s.y;
+            moved.push_back(n.m_meta.id);
+        }
+        bool c = false;
+        if (n.m_meta.label != s.label) { n.m_meta.label = s.label; c = true; }
+        for (int sig = 0; sig < kSignalCount; ++sig)
+            for (int ch = 0; ch < kChannelCount; ++ch)
+                if (n.hasSignal(NodeSignal(sig)) && n.signal(NodeSignal(sig)).scale[ch] != s.scale[sig][ch]) {
+                    n.setScale(NodeSignal(sig), NodeChannel(ch), s.scale[sig][ch]);
+                    c = true;
+                }
+        if (auto* m = dynamic_cast<MoveNode*>(&n); m && (m->offsetX() != s.offsetX || m->offsetY() != s.offsetY)) {
+            m->setOffset(s.offsetX, s.offsetY);
+            c = true;
+        }
+        if (auto* r = dynamic_cast<RasterRootNode*>(&n)) {
+            if (r->locked() != s.locked)           { r->setLocked(s.locked); c = true; }
+            if (r->alphaLocked() != s.alphaLocked) { r->setAlphaLocked(s.alphaLocked); c = true; }
+        }
+        if (c) changed.push_back(n.m_meta.id);
+    }
+
+    // Nodes that go: unlinked above, and nothing uses them any more. History keeps them.
+    std::vector<NodeId> removed;
+    for (const NodePtr& n : m_order) {
+        const NodeId id = n->m_meta.id;
+        if (wanted.contains(id)) continue;
+        removed.push_back(id);
+        m_nodes.erase(id);
+        if (n->m_meta.type == NodeType::Raster) absl::erase_if(m_rasterNodes, [&](const auto& kv) { return kv.second == id; });
+    }
+    m_order.clear();
+    for (const NodeState& s : target.nodes) m_order.push_back(s.node);   // creation order
+
+    // Told, once it's all done: links, settings, then the nodes that went.
+    for (const NodeState& s : target.nodes) emitInputChanges(s.node->m_meta.id, before[s.node->m_meta.id]);
+    for (NodeId id : removed) {
+        Inputs& was = before[id];
+        was.layers.clear();   // a stack goes with its node
+        emitInputChanges(id, was, Inputs{});
+    }
+    for (NodeId id : moved)   emit(ProjectEventType::NodeMoved, id);
+    for (NodeId id : changed) emit(ProjectEventType::NodeChanged, id);
+    for (NodeId id : removed) emit(ProjectEventType::NodeRemoved, id);
+
+    const bool anyRaster = std::any_of(m_order.begin(), m_order.end(), [](const NodePtr& n) { return n->m_meta.type == NodeType::Raster; });
+    if (m_active != kNoNodeId ? !find(m_active) : anyRaster) fallBackActiveRaster();
 }
 
 void Project::flipRasterCommit(const RasterCommitRef& c)

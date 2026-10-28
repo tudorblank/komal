@@ -1,4 +1,4 @@
-#include "graph/node-menu.hpp"
+#include "ui/graph-panel/node-menu.hpp"
 
 #include "ui/widgets.hpp"
 

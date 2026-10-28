@@ -243,8 +243,6 @@ void CompositorNode::enableCache(bool on)
     m_cacheOn = on;
     m_cache.clear();
     m_empty.clear();
-    m_dirtySync.clear();
-    m_fullSync = on;   // a GPU copy must read everything once
 }
 
 const Tile* CompositorNode::fetchWet(int tx, int ty, RenderCtx& ctx)
@@ -265,16 +263,6 @@ const Tile* CompositorNode::fetchWet(int tx, int ty, RenderCtx& ctx)
     ctx.rewind(mk);
     if (slot.isEmpty()) { m_cache.freeTile(tx, ty); m_empty.insert(k); return nullptr; }
     return &slot;
-}
-
-void CompositorNode::evictOutputTile(int tx, int ty)
-{
-    if (!m_cacheOn || m_fullSync) return;   // a full sync is pending: per-tile tracking is redundant
-    m_dirtySync.insert(TileUtils::packKey(tx, ty));
-    if (m_dirtySync.size() > kMaxDirtyTiles) {
-        m_dirtySync.clear();
-        m_fullSync = true;
-    }
 }
 
 void CompositorNode::evictRawTile(int tx, int ty)

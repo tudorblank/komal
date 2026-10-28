@@ -45,14 +45,22 @@ void InputCollector::beginFrame()
     m_frame.keys.clear();
 }
 
-void InputCollector::releaseAllKeys()
+void InputCollector::releaseAll()
 {
     m_frame.held.clear();
     m_frame.mods = ModNone;
+    m_frame.mouseButtons = 0;
+    m_frame.penButtons   = 0;
+    m_frame.pen.touching = false;
 }
 
 void InputCollector::push(PointerEvent ev)
 {
+    if (ev.type != PointerEvent::Type::Move) {
+        uint8_t& held = ev.device == PointerDevice::Mouse ? m_frame.mouseButtons : m_frame.penButtons;
+        const uint8_t bit = uint8_t(1u << uint8_t(ev.button));
+        held = ev.type == PointerEvent::Type::Down ? uint8_t(held | bit) : uint8_t(held & ~bit);
+    }
     // pen report (multiple events, folded)
     if (ev.type == PointerEvent::Type::Move && !m_frame.pointer.empty()) {
         PointerEvent& last = m_frame.pointer.back();
@@ -101,8 +109,8 @@ void InputCollector::handle(const SDL_Event& e)
         if (!k.down) std::erase(m_frame.held, k.key);
         break;
     }
-    case SDL_EVENT_WINDOW_FOCUS_LOST:   // keys released elsewhere never come back up here
-        releaseAllKeys();
+    case SDL_EVENT_WINDOW_FOCUS_LOST:   // keys and buttons released elsewhere never come back up here
+        releaseAll();
         break;
 
     // ---- mouse ---- //
@@ -133,6 +141,7 @@ void InputCollector::handle(const SDL_Event& e)
     case SDL_EVENT_PEN_PROXIMITY_OUT:
         pen.touching = false;
         pen.pressure = 0.0f;
+        m_frame.penButtons = 0;
         break;
     case SDL_EVENT_PEN_DOWN:
     case SDL_EVENT_PEN_UP:

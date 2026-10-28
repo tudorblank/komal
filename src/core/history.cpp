@@ -2,10 +2,8 @@
 
 #include <cassert>
 
-bool History::push(HistoryStep step)
+void History::push(HistoryStep step)
 {
-    if (step.empty()) return false;
-
     const uint32_t id = uint32_t(m_nodes.size());
     Node& n = m_nodes.emplace_back();
     n.parent = m_current;
@@ -15,7 +13,6 @@ bool History::push(HistoryStep step)
     m_nodes[m_current].children.push_back(id);
     m_nodes[m_current].redoChild = id;
     m_current = id;
-    return true;
 }
 
 void History::goTo(uint32_t target, const FlipRaster& flip)

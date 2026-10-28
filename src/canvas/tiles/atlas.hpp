@@ -1,6 +1,8 @@
 #pragma once
-// Raster tiles on the GPU: 64x64 tiles in slots of 2048x2048 pages, one instanced draw per page
-// (texture.wgsl, premultiplied). Owners decide which tiles go in and where they're drawn.
+// Raster tiles on the GPU: 64x64 tiles in slots of 2048x2048 pages (AtlasPages), found by key in
+// an atlas (TileAtlas; several atlases can share pages), and drawn by each view that shows them
+// with one instanced draw per page (TileDrawList, texture.wgsl, premultiplied). Owners decide
+// which tiles go in; views decide where they're drawn.
 
 #include "canvas/pipelines.hpp"
 #include "raster/tile.hpp"
@@ -17,33 +19,29 @@ struct ChunkInstance {
     float opacity;
 };
 
-class TileAtlas {
+// Pages of tile slots, shared by any number of atlases.
+class AtlasPages {
 public:
-    TileAtlas() = default;
-    ~TileAtlas() { release(); }
-    TileAtlas(const TileAtlas&) = delete;
-    TileAtlas& operator=(const TileAtlas&) = delete;
+    struct Slot { int page = -1, slot = -1; };
 
-    void upload(const CanvasPipelines& p, TileKey key, const RGBA* pixels);   // adds or replaces
-    void free(TileKey key);
-    void clear();     // drops every tile; pages are kept for reuse
-    void release();   // drops the GPU resources too
+    AtlasPages() = default;
+    ~AtlasPages() { release(); }
+    AtlasPages(const AtlasPages&) = delete;
+    AtlasPages& operator=(const AtlasPages&) = delete;
 
-    // What draw() shows: between begin and end, add() draws tile `key` over the world square
-    // (x, y, size), or only its part (subX, subY, subSize), in 0..1 of the tile. end() uploads
-    // the pages whose list changed; true if any did.
-    void beginInstances();
-    bool add(TileKey key, float x, float y, float size, float subX = 0.0f, float subY = 0.0f, float subSize = 1.0f);
-    bool endInstances(const CanvasPipelines& p, float opacity);
-    // The atlas pipeline and a camera must be bound.
-    void draw(WGPURenderPassEncoder pass) const;
+    Slot allocate(const CanvasPipelines& p);
+    void upload(const CanvasPipelines& p, Slot s, const RGBA* pixels);
+    // Reused only after recycle(): a view that drew it this frame still reads it.
+    void free(Slot s);
+    void freeNow(Slot s);   // no view drew it this frame
+    void recycle();         // freed slots back in use; once a frame, before any view builds its draw
+    void release();         // the GPU resources; the atlases on these pages must be cleared first
 
-    bool   contains(TileKey key) const { return m_chunks.contains(key); }
-    bool   empty()     const { return m_chunks.empty(); }
-    size_t tileCount() const { return m_chunks.size(); }
     size_t pageCount() const { return m_pages.size(); }
 
 private:
+    friend class TileDrawList;
+
     // A 1 px gutter repeats each tile's edge, so sampling on a tile border never reads the next slot.
     static constexpr int kGutter      = 1;
     static constexpr int kPageSize    = 2048;   // 16 MB of RGBA8, 961 tiles
@@ -52,23 +50,71 @@ private:
     static constexpr int kSlotsTotal  = kSlotsPerRow * kSlotsPerRow;
 
     struct Page {
-        WGPUTexture     texture        = nullptr;
-        WGPUTextureView view           = nullptr;
-        WGPUBindGroup   bindGroup      = nullptr;   // texture + sampler
-        WGPUBuffer      instanceBuffer = nullptr;
-        std::vector<ChunkInstance> instances;       // what the instance buffer holds now
-        std::vector<uint16_t> freeSlots;            // popped from the back: low slots first
-    };
-    struct Chunk {
-        int tx, ty;
-        int page, slot;
+        WGPUTexture     texture   = nullptr;
+        WGPUTextureView view      = nullptr;
+        WGPUBindGroup   bindGroup = nullptr;   // texture + sampler
+        std::vector<uint16_t> freeSlots;       // popped from the back: low slots first
+        std::vector<uint16_t> freed;           // until recycle()
     };
 
     Page createPage(const CanvasPipelines& p);
-    bool uploadInstances(const CanvasPipelines& p, std::vector<std::vector<ChunkInstance>>& next);
 
     std::vector<Page> m_pages;
-    absl::flat_hash_map<TileKey, Chunk> m_chunks;
-    std::vector<RGBA> m_staging;    // tile + gutter, one upload per tile
-    std::vector<std::vector<ChunkInstance>> m_building;   // per page, between begin/endInstances
+    std::vector<RGBA> m_staging;   // tile + gutter, one upload per tile
+};
+
+// Tiles by key, in the slots of its own pages or shared ones.
+class TileAtlas {
+public:
+    TileAtlas() = default;
+    ~TileAtlas() { clear(); }
+    TileAtlas(const TileAtlas&) = delete;
+    TileAtlas& operator=(const TileAtlas&) = delete;
+
+    void share(AtlasPages& pages) { m_pages = &pages; }   // while empty; they must outlive it
+
+    void upload(const CanvasPipelines& p, TileKey key, const RGBA* pixels);   // adds or replaces
+    void free(TileKey key);   // its slot is reused after the pages' next recycle()
+    void clear();             // drops every tile; before any view draws from it this frame
+    void release();           // clear(), and drops its own pages' GPU resources
+
+    bool   contains(TileKey key) const { return m_chunks.contains(key); }
+    bool   empty()     const { return m_chunks.empty(); }
+    size_t tileCount() const { return m_chunks.size(); }
+    const AtlasPages& pages() const { return *m_pages; }
+
+private:
+    friend class TileDrawList;
+
+    AtlasPages  m_own;
+    AtlasPages* m_pages = &m_own;
+    absl::flat_hash_map<TileKey, AtlasPages::Slot> m_chunks;
+};
+
+// What one view draws from one atlas: between begin and end, add() draws tile `key` over the
+// world square (x, y, size), or only its part (subX, subY, subSize), in 0..1 of the tile. end()
+// uploads the pages whose list changed; true if any did.
+class TileDrawList {
+public:
+    TileDrawList() = default;
+    ~TileDrawList() { release(); }
+    TileDrawList(const TileDrawList&) = delete;
+    TileDrawList& operator=(const TileDrawList&) = delete;
+
+    void begin(const TileAtlas& atlas);
+    bool add(TileKey key, float x, float y, float size, float subX = 0.0f, float subY = 0.0f, float subSize = 1.0f);
+    bool end(const CanvasPipelines& p, float opacity);
+    // The atlas pipeline and a camera must be bound.
+    void draw(WGPURenderPassEncoder pass) const;
+    void release();
+    bool empty() const;   // draws nothing
+
+private:
+    struct Page {
+        WGPUBuffer buffer = nullptr;
+        std::vector<ChunkInstance> instances;   // what the buffer holds now
+    };
+    const TileAtlas* m_atlas = nullptr;
+    std::vector<Page> m_pages;
+    std::vector<std::vector<ChunkInstance>> m_building;   // per page, between begin and end
 };

@@ -47,10 +47,28 @@ void HandTool::drawProperties(ToolContext& ctx)
 
 void HandTool::canvasInput(const CanvasInput& in)
 {
-    m_dragging = in.active && ImGui::IsMouseDown(ImGuiMouseButton_Left);
-    const ImVec2 d = ImGui::GetIO().MouseDelta;
-    if (m_dragging && (d.x != 0.0f || d.y != 0.0f)) {
-        in.camera.pan.x += d.x;
-        in.camera.pan.y += d.y;
+    // From a primary press on the canvas to its release, by the device that pressed.
+    const auto isPen = [](PointerDevice d) { return d != PointerDevice::Mouse; };
+    for (const CanvasPointer& p : in.pointer) {
+        const PointerEvent& ev = p.event;
+        const bool down = ev.type == PointerEvent::Type::Down, up = ev.type == PointerEvent::Type::Up;
+        if (!m_dragging) {
+            // ImGui must have given the canvas this press (not a popup, not another panel).
+            if (down && ev.button == PointerButton::Primary && in.active) {
+                m_dragging = true;
+                m_dragPen  = isPen(ev.device);
+                m_last     = { ev.x, ev.y };
+            }
+            continue;
+        }
+        if (isPen(ev.device) != m_dragPen || (!up && ev.type != PointerEvent::Type::Move)) continue;
+        if (up && ev.button != PointerButton::Primary) continue;
+        in.camera.pan.x += ev.x - m_last.x;
+        in.camera.pan.y += ev.y - m_last.y;
+        m_last = { ev.x, ev.y };
+        if (up) m_dragging = false;
     }
+    // Safety net: a release the app never saw (focus lost mid-drag) still ends the drag.
+    if (m_dragging && !in.input.buttonHeld(m_dragPen ? PointerDevice::Pen : PointerDevice::Mouse, PointerButton::Primary))
+        m_dragging = false;
 }

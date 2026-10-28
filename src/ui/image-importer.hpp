@@ -1,6 +1,6 @@
 #pragma once
 // Image files -> new raster nodes. Decoding and tiling run on a worker thread; poll() makes the
-// node on the main thread. Placement:
+// node on the main thread, through the image.import action. Placement:
 //   Canvas  dropped on the canvas: centred on that world point, on top of the master, active
 //   Graph   dropped on the graph: the node where it was dropped, at the world origin, unlinked
 //   Default File > Import, the command line: at the world origin, on top of the master, active
@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+class ActionRegistry;
 struct SDL_Window;
 
 class ImageImporter {
@@ -33,7 +34,7 @@ public:
     void open(std::string path);   // Default placement
     void open(std::string path, Placement placement);
     void showOpenDialog(SDL_Window* window);    // File > Import Image...
-    std::vector<Imported> poll(Project& project);   // once per frame, main thread
+    std::vector<Imported> poll(ActionRegistry& actions);   // once per frame, main thread
     const std::string& lastError() const { return m_lastError; }
 
 private:

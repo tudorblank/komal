@@ -1,4 +1,5 @@
 #include "ui/widgets.hpp"
+#include "core/actions.hpp"
 #include "ui/theme.hpp"
 
 #include <imgui_internal.h>   // ImRect, FindRenderedTextEnd, ClearActiveID
@@ -55,10 +56,10 @@ void textCentered(const ImRect& r, const char* text, const char* end, ImU32 colo
 }
 
 // The slider grab: a small pill with a dark outline, centred on (x, cy).
-void drawGrab(float x, float cy, bool hot)
+void drawGrab(float x, float cy, bool hot, float halfHeight = 0.0f)   // 0: the standard height
 {
     const float u = Widgets::metrics().unit;
-    const float gw = std::round(3.0f * u), gh = std::round(6.5f * u);
+    const float gw = std::round(3.0f * u), gh = halfHeight > 0.0f ? halfHeight : std::round(6.5f * u);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(ImVec2(x - gw - 1.0f, cy - gh - 1.0f), ImVec2(x + gw + 1.0f, cy + gh + 1.0f), kGrabBorder, 2.0f * u);
     dl->AddRectFilled(ImVec2(x - gw, cy - gh), ImVec2(x + gw, cy + gh), hot ? kGrabHot : kGrab, 1.5f * u);
@@ -67,13 +68,13 @@ void drawGrab(float x, float cy, bool hot)
 // A slider's item and the grab's travel (x0..x1 keeps the grab inside the item). While active,
 // `t` follows the mouse (0..1); returns whether it does.
 struct Track { float x0, x1, cy; bool hot; };
-bool trackItem(const char* id, float width, float& t, Track& out)
+bool trackItem(const char* id, float width, float& t, Track& out, float margin = -1.0f)   // margin: kept clear at each end
 {
     const Widgets::Metrics m = Widgets::metrics();
     const ImVec2 p = ImGui::GetCursorScreenPos();
     width = std::max(width, 8.0f);
     ImGui::InvisibleButton(id, ImVec2(width, m.rowHeight));
-    const float margin = std::round(3.0f * m.unit) + 1.0f;
+    if (margin < 0.0f) margin = std::round(3.0f * m.unit) + 1.0f;   // the small grab's half width
     out = { p.x + margin, p.x + width - margin, std::round(p.y + m.rowHeight * 0.5f), ImGui::IsItemHovered() || ImGui::IsItemActive() };
     if (!ImGui::IsItemActive()) return false;
     t = std::clamp((ImGui::GetIO().MousePos.x - out.x0) / std::max(1.0f, out.x1 - out.x0), 0.0f, 1.0f);
@@ -171,12 +172,17 @@ Metrics metrics()
 
 // ---------------------------------------------------------------- panels
 
-bool beginPanel(const char* name, bool* open, ImGuiWindowFlags flags)
+bool beginPanel(const char* name, ActionRegistry& actions, const char* closeAction, ImGuiWindowFlags flags)
 {
     const float p = metrics().panelPadding;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(p, p));
-    const bool shown = ImGui::Begin(name, open, flags);
+    bool keep = true;
+    const bool shown = ImGui::Begin(name, &keep, flags);
     ImGui::PopStyleVar();
+    // A docked panel's tab bar ends in a separator in the selected tab's colour (the panel's):
+    // the top padding counts from the tab bar, like every other side.
+    if (shown && ImGui::IsWindowDocked()) ImGui::SetCursorPosY(ImGui::GetCursorPosY() - ImGui::GetStyle().TabBarBorderSize);
+    if (!keep) actions.run(closeAction);
     return shown;
 }
 
@@ -325,6 +331,68 @@ bool slider(const char* id, float& v, float min, float max, float width, bool lo
     dl->AddRectFilled(ImVec2(tr.x0, tr.cy - th * 0.5f), ImVec2(tr.x1, tr.cy + th * 0.5f), kTrack, th * 0.5f);
     dl->AddRectFilled(ImVec2(tr.x0, tr.cy - th * 0.5f), ImVec2(xv, tr.cy + th * 0.5f), kTrackFill, th * 0.5f);
     drawGrab(xv, tr.cy, tr.hot);
+    return changed;
+}
+
+bool figureSlider(const char* id, float& v, float min, float max, float width, SliderFigure figure, bool logarithmic, float defaultValue)
+{
+    const bool log = logarithmic && min > 0.0f && max > min;
+    const auto toT   = [&](float x) { return log ? std::log(x / min) / std::log(max / min) : (x - min) / (max - min); };
+    const auto fromT = [&](float t) { return log ? min * std::pow(max / min, t) : min + (max - min) * t; };
+
+    const Metrics m = metrics();
+    const float grabHalfW = std::round(3.0f * m.unit) + 1.0f;   // the standard grab, with its rim
+    float t = 0.0f;
+    Track tr{};
+    bool changed = false;
+    if (trackItem(id, width, t, tr, grabHalfW + std::round(2.0f * m.unit))) {
+        const float nv = std::clamp(fromT(t), min, max);
+        if (nv != v) { v = nv; changed = true; }
+    }
+    if (!std::isnan(defaultValue) && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        v = std::clamp(defaultValue, min, max);   // after the click above moved it
+        changed = true;
+        ImGui::ClearActiveID();                   // no drag while the button is still down
+    }
+
+    // A field's box, slimmer than the fields beside it; the grab a little taller than the box.
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float margin = grabHalfW + std::round(2.0f * m.unit);
+    const float boxH   = std::round(m.boxHeight * 0.62f);
+    const ImRect box(ImVec2(tr.x0 - margin, tr.cy - boxH * 0.5f), ImVec2(tr.x1 + margin, tr.cy + boxH * 0.5f));
+    drawBox(box, tr.hot);
+
+    // The figure, filled in the track's grey; the part the value covers in the slider blue: up to
+    // the grab, or for a value either side of zero (a Wave), from the middle to it.
+    const float pad = std::round(2.0f * m.unit);
+    const float fx0 = box.Min.x + pad, fx1 = box.Max.x - pad, fy0 = box.Min.y + pad, fy1 = box.Max.y - pad;
+    const auto drawFigure = [&](ImU32 col) {
+        if (figure == SliderFigure::Ramp) {   // a wedge: a sliver at the left, the full height at the right
+            const float sliver = std::max(1.0f, std::round(m.unit));
+            dl->AddQuadFilled(ImVec2(fx0, fy1 - sliver), ImVec2(fx1, fy0), ImVec2(fx1, fy1), ImVec2(fx0, fy1), col);
+            return;
+        }
+        // One turn of a sine, filled down to the bottom (one shape: no seams): low left of the
+        // middle, high right of it.
+        constexpr int kSteps = 48;
+        const float mid = (fy0 + fy1) * 0.5f, amp = (fy1 - fy0) * 0.38f;
+        ImVec2 pts[kSteps + 3];
+        for (int i = 0; i <= kSteps; ++i) {
+            const float s = float(i) / kSteps;
+            pts[i] = ImVec2(fx0 + (fx1 - fx0) * s, mid - std::sin((s * 2.0f - 1.0f) * kPi) * amp);
+        }
+        pts[kSteps + 1] = ImVec2(fx1, fy1);
+        pts[kSteps + 2] = ImVec2(fx0, fy1);
+        dl->AddConcavePolyFilled(pts, kSteps + 3, col);
+    };
+    const float xv = std::round(tr.x0 + (tr.x1 - tr.x0) * std::clamp(toT(v), 0.0f, 1.0f));
+    const float from = figure == SliderFigure::Wave ? std::round(tr.x0 + (tr.x1 - tr.x0) * std::clamp(toT(0.0f), 0.0f, 1.0f)) : fx0;
+    drawFigure(kTrack);
+    dl->PushClipRect(ImVec2(std::min(from, xv), fy0), ImVec2(std::max(from, xv), fy1), true);
+    drawFigure(kTrackFill);
+    dl->PopClipRect();
+
+    drawGrab(xv, tr.cy, tr.hot, std::round(m.boxHeight * 0.38f));
     return changed;
 }
 
@@ -507,6 +575,18 @@ bool sliderRow(const char* label, float& v, float min, float max, const char* fo
     changed |= numberField("##field", v, min, max, format);
     ImGui::PopID();
     return changed;
+}
+
+// ---------------------------------------------------------------- menus
+
+void actionMenuItem(ActionRegistry& actions, std::string_view id)
+{
+    const Action* a = actions.find(id);
+    if (!a) return;
+    const std::string shortcut = a->shortcuts.empty() ? std::string() : shortcutLabel(a->shortcuts.front());
+    const bool checked = a->checked && a->checked();
+    if (ImGui::MenuItem(a->title.c_str(), shortcut.empty() ? nullptr : shortcut.c_str(), checked, a->isEnabled()))
+        actions.run(id);
 }
 
 }

@@ -1,5 +1,6 @@
 #include "canvas-panel.hpp"
 #include "core/project.hpp"
+#include "ui/panel-titles.hpp"
 #include "gfx/device.hpp"
 #include "ui/tools/tool-manager.hpp"
 
@@ -33,7 +34,7 @@ bool CanvasPanel::init(GpuDevice& gpu, Project& project, ToolManager& tools, con
     m_actions = &actions;
     m_ready = m_scene.init(GpuHandles{ gpu.device(), gpu.queue(), kFormat }) && m_view.init(m_scene);
     if (!m_ready) return false;
-    actions.add({ .id = "canvas.frameAll", .title = "Frame All", .shortcuts = { { SDLK_F } }, .scope = ActionScope::Canvas,
+    actions.add({ .id = "canvas.frameAll", .title = "Frame All", .kind = ActionKind::Interface, .shortcuts = { { SDLK_F } }, .scope = ActionScope::Canvas,
                   .run = [this] { frameWorld(m_project->master().bounds()); } });   // lost? back to the picture
 
     CanvasCamera& cam = m_view.camera();
@@ -42,7 +43,8 @@ bool CanvasPanel::init(GpuDevice& gpu, Project& project, ToolManager& tools, con
 
     // The scene: the project's output (unbounded), overlays on top.
     m_scene.addItem<CheckerItem>()->setZ(kZBackground);   // transparency, wherever nothing covers it
-    m_output = m_scene.addItem<RasterItem>(&project.master());
+    m_tiles.setSource(&project.master());
+    m_output = m_scene.addItem<RasterItem>(m_tiles);
     m_output->setZ(kZOutput);
     m_preview = m_scene.addItem<EditPreviewItem>(project);
     m_preview->setZ(kZOutput);
@@ -86,26 +88,27 @@ void CanvasPanel::shutdown()
     m_subscription = 0;
     m_view.shutdown();
     m_scene.shutdown();
+    m_tiles.release();
     m_output = nullptr;
     m_selectionBounds.clear();
     m_preview      = nullptr;
     m_previewFrom  = nullptr;
     m_previewTo    = nullptr;
-    if (m_tools) m_tools->canvas() = {};
     m_ready = false;
 }
 
-void CanvasPanel::draw(bool* open)
+void CanvasPanel::draw()
 {
     m_visible = false;
     m_window  = nullptr;
     m_hasPointer = false;
+    if (!m_open) return;
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    const bool shown = ImGui::Begin("Canvas", open, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    bool keep = true;   // the close button runs view.canvas
+    const bool shown = ImGui::Begin(PanelTitle::kCanvas, &keep, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
 
-    m_tools->canvas() = {};
     if (shown && m_ready) {
         const ImVec2 origin = ImGui::GetCursorScreenPos();
         const ImVec2 avail  = ImGui::GetContentRegionAvail();
@@ -115,7 +118,6 @@ void CanvasPanel::draw(bool* open)
             m_window  = ImGui::GetCurrentWindowRead();
             m_canvasMin = origin;
             m_canvasMax = ImVec2(origin.x + avail.x, origin.y + avail.y);
-            m_tools->canvas() = { &m_view.camera(), avail.x, avail.y };
 
             // One item covers the canvas and owns the mouse while a button is held.
             ImGui::InvisibleButton("##canvas", avail, ImGuiButtonFlags_MouseButtonLeft |
@@ -131,6 +133,13 @@ void CanvasPanel::draw(bool* open)
         }
     }
     ImGui::End();
+    if (!keep) m_actions->run("view.canvas");
+}
+
+CanvasNavigation CanvasPanel::navigation()
+{
+    if (!m_open || !m_visible) return {};
+    return { &m_view.camera(), m_view.width(), m_view.height() };
 }
 
 bool CanvasPanel::dropTarget(const ImGuiWindow* window, ImVec2 screen, Vec2& world) const
@@ -172,7 +181,7 @@ void CanvasPanel::handleInput(const ImVec2& origin)
     if (hovered || active || tool.busy())   // busy: a stroke still gets its release outside the canvas
         for (const PointerEvent& ev : m_input->pointer)
             m_pointer.push_back({ ev, cam.screenToWorld({ ev.x - origin.x, ev.y - origin.y }) });
-    tool.canvasInput({ *m_project, cam, mouse, cam.screenToWorld(mouse), m_pointer, *m_input,
+    tool.canvasInput({ *m_project, *m_actions, cam, mouse, cam.screenToWorld(mouse), m_pointer, *m_input,
                        { m_view.width(), m_view.height() }, hovered, active });
 }
 
@@ -239,7 +248,7 @@ void CanvasPanel::drawHud(ImDrawList* dl, const ImVec2& origin)
                   m_view.camera().zoom * 100.0f, m_tools->active().name(),
                   active ? active->m_meta.label.c_str() : "nothing (click a raster node)",
                   active && active->locked() ? " (locked)" : "", active && !shown ? " (not in Master)" : "",
-                  m_output->drawLevel(), m_output->chunkCount(), m_output->pageCount(), m_output->syncPending() ? " (syncing)" : "");
+                  m_output->drawLevel(), m_tiles.tileCount(), m_tiles.pageCount(), m_output->syncPending() ? " (syncing)" : "");
     const ImVec2 pad(8.0f, 6.0f);
     const ImVec2 size = ImGui::CalcTextSize(hud);
     const ImVec2 pos(origin.x + pad.x, origin.y + m_view.height() - size.y - pad.y * 2.0f);
@@ -257,6 +266,8 @@ void CanvasPanel::frameWorld(const BoundsI& b)
 
 void CanvasPanel::renderGpu(WGPUCommandEncoder enc)
 {
+    if (!m_ready) return;
+    m_tiles.sync();   // once a frame, before any view of them
     if (!m_visible) return;
     // A stroke shows tile by tile as it's painted: holding the picture would make it jump.
     m_view.setHoldAllowed(!m_project->strokeActive());

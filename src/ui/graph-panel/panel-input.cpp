@@ -1,5 +1,6 @@
-#include "graph/panel.hpp"
+#include "ui/graph-panel/panel.hpp"
 #include "core/application.hpp"
+#include "core/document-actions.hpp"
 #include "core/input.hpp"
 #include "core/project.hpp"
 #include "graph/style.hpp"
@@ -117,16 +118,21 @@ void GraphPanel::handleMouse(const Hit& hit, bool hovered)
         case Drag::Empty:  // a click on nothing
             if (!m_pressCtrl && !m_pressShift) m_selection.clear();
             break;
+        case Drag::MoveNodes:
+            m_actions->endGesture("node.drag", { { "dx", m_dragDelta.x }, { "dy", m_dragDelta.y } });
+            break;
         case Drag::Link:
             finishLink(hit);
             break;
-        case Drag::Scale:
-        case Drag::Offset:   // the drag is over: now the graph changes, once
-            m_project->applyPreview();
+        case Drag::Scale:    // the drag is over: now the graph changes, once
+            m_actions->endGesture("signal.scrub", m_scrubArgs);
+            break;
+        case Drag::Offset:
+            m_actions->endGesture("move.scrub", m_scrubArgs);
             break;
         case Drag::Layer:    // the stack changes once, where the gap is
             if (m_layerDrag.lifted && m_layerDrag.at >= 0 && m_layerDrag.at != int(m_layerDrag.layer))
-                m_project->moveLayer(m_layerDrag.node, m_layerDrag.layer, size_t(m_layerDrag.at));
+                m_actions->run("layer.move", { { "node", m_layerDrag.node }, { "from", m_layerDrag.layer }, { "to", m_layerDrag.at } });
             m_layerDrag = {};
             break;
         default:
@@ -152,8 +158,8 @@ void GraphPanel::pressNode(NodeId id)
         m_pressWasSelected = m_selection.contains(id) && m_selection.size() > 1;
         if (!m_selection.contains(id)) m_selection.select(id);
         m_selection.setAnchor(id);
-        if (Node* n = m_project->find(id); n && n->m_meta.type == NodeType::Raster)
-            m_project->setActiveRaster(id);   // clicking a raster makes it the one the canvas paints
+        if (Node* n = m_project->find(id); n && n->m_meta.type == NodeType::Raster && m_project->activeRasterId() != id)
+            m_actions->run("raster.activate", { { "node", id } });   // clicking a raster makes it the one the canvas paints
     }
     if (!m_selection.contains(id)) return;   // Ctrl+click took it out: nothing to drag
 
@@ -185,10 +191,10 @@ void GraphPanel::pressWidget(const Hit& hit, bool doubleClick)
         }
         break;
     case NodeItemControl::Lock:
-        m_project->setRasterLocked(hit.node, !static_cast<RasterRootNode*>(n)->locked());
+        m_actions->run("raster.lock", { { "node", hit.node }, { "on", !static_cast<RasterRootNode*>(n)->locked() } });
         break;
     case NodeItemControl::LockAlpha:
-        m_project->setRasterAlphaLocked(hit.node, !static_cast<RasterRootNode*>(n)->alphaLocked());
+        m_actions->run("raster.lockAlpha", { { "node", hit.node }, { "on", !static_cast<RasterRootNode*>(n)->alphaLocked() } });
         break;
     case NodeItemControl::SectionToggle: {
         bool& e = m_viewStates[hit.node].expanded[int(w.signal)];
@@ -208,7 +214,8 @@ void GraphPanel::pressWidget(const Hit& hit, bool doubleClick)
             break;
         }
         for (const NodeItemChannelRow& row : s->channels)   // the track drags; the value text doesn't
-            if (row.signal == w.signal && row.channel == w.channel && m_pressGraph.x <= row.track.Max.x + 5.0f)
+            if (row.signal == w.signal && row.channel == w.channel && m_pressGraph.x <= row.track.Max.x + 5.0f &&
+                m_actions->beginGesture("signal.scrub", { { "node", hit.node }, { "signal", w.signal }, { "channel", w.channel } }))
                 m_drag = Drag::Scale;
         break;
     case NodeItemControl::OffsetX:
@@ -224,6 +231,7 @@ void GraphPanel::pressWidget(const Hit& hit, bool doubleClick)
             openValueEdit(e);
             break;
         }
+        if (!m_actions->beginGesture("move.scrub", { { "node", hit.node } })) break;
         m_drag = Drag::Offset;
         m_dragValue = axis == 0 ? m->offsetX() : m->offsetY();
         break;
@@ -252,13 +260,17 @@ void GraphPanel::updateDrag()
     const bool moved = ImGui::IsMouseDragging(ImGuiMouseButton_Left);
 
     switch (m_drag) {
-    case Drag::Node:
+    case Drag::Node: {
         if (!moved) break;
+        std::vector<NodeId> ids;
+        for (const auto& [id, start] : m_moveStart) ids.push_back(id);
+        if (!m_actions->beginGesture("node.drag", { { "nodes", ids } })) break;
         m_drag = Drag::MoveNodes;
         [[fallthrough]];
+    }
     case Drag::MoveNodes:
-        for (const auto& [id, start] : m_moveStart)
-            m_project->setNodePosition(id, start.x + gm.x - m_pressGraph.x, start.y + gm.y - m_pressGraph.y);
+        m_dragDelta = ImVec2(gm.x - m_pressGraph.x, gm.y - m_pressGraph.y);
+        m_actions->updateGesture("node.drag", { { "dx", m_dragDelta.x }, { "dy", m_dragDelta.y } });
         break;
 
     case Drag::Empty:
@@ -283,13 +295,9 @@ void GraphPanel::updateDrag()
         for (const NodeItemChannelRow& row : s->channels)
             if (row.signal == m_pressWidget.signal && row.channel == m_pressWidget.channel) {
                 // Previewed only: the graph changes once, on release (see EditPreview).
-                EditPreview e;
-                e.kind    = EditPreview::Kind::SignalScale;
-                e.node    = m_press.node;
-                e.signal  = row.signal;
-                e.channel = row.channel;
-                e.scale   = std::round(std::clamp((gm.x - row.track.Min.x) / row.track.GetWidth(), 0.0f, 1.0f) * 1000.0f) / 1000.0f;
-                m_project->previewEdit(e);
+                const float value = std::round(std::clamp((gm.x - row.track.Min.x) / row.track.GetWidth(), 0.0f, 1.0f) * 1000.0f) / 1000.0f;
+                m_scrubArgs = { { "node", m_press.node }, { "signal", row.signal }, { "channel", row.channel }, { "value", value } };
+                m_actions->updateGesture("signal.scrub", m_scrubArgs);
             }
         break;
     }
@@ -298,12 +306,10 @@ void GraphPanel::updateDrag()
         const auto* m = dynamic_cast<MoveNode*>(m_project->find(m_press.node));
         if (!m) break;
         const int v = m_dragValue + int(std::lround(gm.x - m_pressGraph.x));   // one pixel per graph unit
-        EditPreview e;   // previewed only, applied on release
-        e.kind = EditPreview::Kind::MoveOffset;
-        e.node = m_press.node;
-        e.x    = m_pressWidget.control == NodeItemControl::OffsetX ? v : m->offsetX();
-        e.y    = m_pressWidget.control == NodeItemControl::OffsetY ? v : m->offsetY();
-        m_project->previewEdit(e);
+        const int x = m_pressWidget.control == NodeItemControl::OffsetX ? v : m->offsetX();
+        const int y = m_pressWidget.control == NodeItemControl::OffsetY ? v : m->offsetY();
+        m_scrubArgs = { { "node", m_press.node }, { "x", x }, { "y", y } };   // previewed only, applied on release
+        m_actions->updateGesture("move.scrub", m_scrubArgs);
         break;
     }
 
@@ -322,8 +328,8 @@ void GraphPanel::updateDrag()
             const uint32_t index = m_layerDrag.layer;
             m_layerDrag = {};
             m_drag = Drag::None;
-            if (layer) {
-                m_project->disconnect(stack, InputSlot::stackLayer(index));
+            if (layer && m_actions->beginGesture("link.move", { { "source", layer->m_meta.id }, { "from", stack },
+                                                                 { "slot", InputSlot::stackLayer(index).text() } })) {
                 m_link = {};
                 m_link.node = layer->m_meta.id;
                 m_link.pickedUp = true;
@@ -353,9 +359,9 @@ void GraphPanel::startLink(const Hit& hit)
         m_link.node = hit.node;
     } else if (const NodePtr src = m_project->inputAt(hit.node, p.slot)) {
         // Lift the link off the input and carry it from its source.
+        if (!m_actions->beginGesture("link.move", { { "source", src->m_meta.id }, { "from", hit.node }, { "slot", p.slot.text() } })) return;
         m_link.node     = src->m_meta.id;
         m_link.pickedUp = true;
-        m_project->disconnect(hit.node, p.slot);
     } else {
         m_link.node       = hit.node;
         m_link.fromOutput = false;
@@ -406,12 +412,16 @@ GraphPanel::LinkTarget GraphPanel::linkTarget(const Hit& hit) const
 void GraphPanel::finishLink(const Hit& hit)
 {
     const LinkTarget t = linkTarget(hit);
-    if (t.valid) {
-        if (m_link.fromOutput) m_project->connect(m_link.node, t.node, t.slot);
-        else                   m_project->connect(t.node, m_link.node, m_link.slot);
+    if (m_link.pickedUp) {   // carried from its source: connects where it lands, else stays off
+        if (t.valid) m_actions->endGesture("link.move", { { "to", t.node }, { "toSlot", t.slot.text() } });
+        else         m_actions->endGesture("link.move", { { "dropped", true } });
         return;
     }
-    if (m_link.pickedUp) return;   // lifted off and dropped on nothing: stays disconnected
+    if (t.valid) {
+        if (m_link.fromOutput) m_actions->run("link.connect", { { "from", m_link.node }, { "to", t.node }, { "slot", t.slot.text() } });
+        else                   m_actions->run("link.connect", { { "from", t.node }, { "to", m_link.node }, { "slot", m_link.slot.text() } });
+        return;
+    }
     if (hit.kind != Hit::Kind::None && hit.kind != Hit::Kind::Link && hit.kind != Hit::Kind::Insert) return;
 
     // Dropped on empty space: pick a node to create there, already connected.
@@ -446,25 +456,15 @@ void GraphPanel::applyAdd(NodeType type)
     case PendingAdd::Mode::ToInput:    x -= kNodeWidth;        y -= portY;     break;   // output port at the mouse
     case PendingAdd::Mode::Insert:     x -= kNodeWidth * 0.5f; y -= portY;     break;   // centred where the link was clicked
     }
-    const NodeId id = m_project->createNode(type, x, y);
-    const Node* n = m_project->find(id);
-    if (!n) return;
-
-    InputSlot in;
-    const bool hasInput = preferredInput(*n, in);
-    switch (a.mode) {
-    case PendingAdd::Mode::Free:
-        break;
-    case PendingAdd::Mode::FromOutput:
-        if (hasInput) m_project->connect(a.from, id, in);
-        break;
-    case PendingAdd::Mode::ToInput:
-        m_project->connect(id, a.to, a.slot);
-        break;
-    case PendingAdd::Mode::Insert:
-        if (hasInput && m_project->connect(a.from, id, in)) m_project->connect(id, a.to, a.slot);
-        break;
+    ActionArgs args{ { "type", nodeTypeName(type) }, { "x", x }, { "y", y } };
+    if (a.mode == PendingAdd::Mode::FromOutput || a.mode == PendingAdd::Mode::Insert) args.add({ "from", a.from });
+    if (a.mode == PendingAdd::Mode::ToInput || a.mode == PendingAdd::Mode::Insert) {
+        args.add({ "into", a.to });
+        args.add({ "slot", a.slot.text() });
     }
+    const ActionResult r = m_actions->run("node.add", std::move(args));
+    if (!r) return;
+    const NodeId id = NodeId(r.made);
     m_selection.select(id);
     bringToFront(id);
 }

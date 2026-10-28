@@ -14,6 +14,9 @@
 #include <imgui.h>
 #include <cstddef>
 #include <limits>
+#include <string_view>
+
+class ActionRegistry;
 
 namespace Widgets {
 
@@ -35,7 +38,8 @@ Metrics metrics();
 constexpr float kNoDefault = std::numeric_limits<float>::quiet_NaN();
 
 // ---- panels
-bool  beginPanel(const char* name, bool* open, ImGuiWindowFlags flags = 0);   // always pair with endPanel()
+// A tool window whose close button runs `closeAction` (its View toggle). Always pair with endPanel().
+bool  beginPanel(const char* name, ActionRegistry& actions, const char* closeAction, ImGuiWindowFlags flags = 0);
 void  endPanel();
 void  sectionGap();
 // The height `rows` control rows, `headings` heading lines and `gaps` section gaps take, spacing
@@ -61,6 +65,13 @@ bool swatch(const char* id, const float rgba[4]);       // a square box showing 
 bool slider(const char* id, float& v, float min, float max, float width, bool logarithmic = false, float defaultValue = kNoDefault);
 // A slider whose track shows `stops` (evenly spaced colours); `v` in 0..1.
 bool gradientSlider(const char* id, float& v, const ImU32* stops, int count, float width);
+// A thick slider (Clip Studio's navigator): a field's box with a filled figure inside showing how
+// the value runs, the part the value covers in the slider blue, under a box-tall grab. Ramp: a
+// wedge growing left to right (zoom). Wave: falls and rises about the middle, filled from there
+// (rotation). Otherwise as slider().
+enum class SliderFigure { Ramp, Wave };
+bool figureSlider(const char* id, float& v, float min, float max, float width, SliderFigure figure,
+                  bool logarithmic = false, float defaultValue = kNoDefault);
 
 // A number, centred in a box (`prefix` drawn dim before it); click to type, applied on Enter or
 // when left. True then. Width 0: fieldWidth.
@@ -80,6 +91,10 @@ bool isEditing(const char* id);    // a field with this id is being typed into
 
 bool radio(const char* label, bool active);   // true when clicked
 bool checkbox(const char* label, bool& v);    // true when toggled
+
+// ---- menus
+// A menu entry for a registered action: its title, shortcut, check mark and enabled state.
+void actionMenuItem(ActionRegistry& actions, std::string_view id);
 
 // ---- rows
 // [label] [slider] [field]. True when `v` changed.

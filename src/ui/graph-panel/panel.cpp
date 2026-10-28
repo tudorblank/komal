@@ -1,8 +1,8 @@
-#include "graph/panel.hpp"
+#include "ui/graph-panel/panel.hpp"
 #include "core/actions.hpp"
 #include "core/input.hpp"
 #include "core/project.hpp"
-#include "gfx/device.hpp"
+#include "ui/panel-titles.hpp"
 #include "graph/style.hpp"
 
 #include <imgui.h>
@@ -19,13 +19,13 @@ constexpr float  kFrameMargin    = 40.0f;  // points around framed nodes
 
 }
 
-void GraphPanel::init(GpuDevice& gpu, Project& project, const InputFrame& input, ActionRegistry& actions)
+void GraphPanel::init(const CanvasPipelines* pipelines, Project& project, const InputFrame& input, ActionRegistry& actions)
 {
     m_project = &project;
     m_input   = &input;
     m_actions = &actions;
     registerActions(actions);
-    m_thumbs.init(gpu.device(), gpu.queue());
+    m_thumbs.init(pipelines);
     m_subscription = project.subscribe([this](const ProjectEvent& e) { onProjectEvent(e); });
     // The ones made before we listened: every item first, then the links between them.
     for (const NodePtr& n : project.nodes()) addNodeItem(n->m_meta.id, false);
@@ -39,13 +39,16 @@ void GraphPanel::shutdown()
     m_thumbs.shutdown();
 }
 
-void GraphPanel::draw(bool* open)
+void GraphPanel::draw()
 {
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    const bool shown = ImGui::Begin("Graph", open, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-    ImGui::PopStyleVar();
-    const ImVec2 size = ImGui::GetContentRegionAvail();
     m_window = nullptr;
+    if (!m_open) return;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    bool keep = true;
+    const bool shown = ImGui::Begin(PanelTitle::kGraph, &keep, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::PopStyleVar();
+    if (!keep) m_actions->run("view.graph");   // its close button
+    const ImVec2 size = ImGui::GetContentRegionAvail();
     if (!shown || size.x < 1.0f || size.y < 1.0f) { ImGui::End(); return; }
 
     const ImVec2 canvasMin = ImGui::GetCursorScreenPos();
@@ -66,7 +69,7 @@ void GraphPanel::draw(bool* open)
         --m_frameOnStart;
     }
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const GraphPaint g = paintContext(dl);
+    const GraphPaint g = paintContext(dl, m_camera);
     placeLinkCurves(g);
 
     const ImVec2 mouse = ImGui::GetIO().MousePos;
@@ -365,22 +368,24 @@ GraphPanel::Hit GraphPanel::hitTest(ImVec2 mouse, const GraphPaint& g) const
 
 void GraphPanel::registerActions(ActionRegistry& actions)
 {
+    // Interface actions: framing, selecting, opening the add menu. Delete runs node.delete (logged).
     const auto graph = ActionScope::Graph;
-    actions.add({ .id = "graph.delete", .title = "Delete Selected",
+    const auto ui    = ActionKind::Interface;
+    actions.add({ .id = "graph.delete", .title = "Delete Selected", .kind = ui,
                   .shortcuts = { { SDLK_DELETE }, { SDLK_BACKSPACE } }, .scope = graph,
                   .enabled = [this] { return !m_selection.empty(); }, .run = [this] { deleteSelection(); } });
-    actions.add({ .id = "graph.frameSelected", .title = "Frame Selected", .shortcuts = { { SDLK_F } }, .scope = graph,
+    actions.add({ .id = "graph.frameSelected", .title = "Frame Selected", .kind = ui, .shortcuts = { { SDLK_F } }, .scope = graph,
                   .run = [this] { frameNodes(!m_selection.empty(), m_canvasSize); } });
-    actions.add({ .id = "graph.frameAll", .title = "Frame All", .shortcuts = { { SDLK_HOME } }, .scope = graph,
+    actions.add({ .id = "graph.frameAll", .title = "Frame All", .kind = ui, .shortcuts = { { SDLK_HOME } }, .scope = graph,
                   .run = [this] { frameNodes(false, m_canvasSize); } });
-    actions.add({ .id = "graph.selectAll", .title = "Select All", .shortcuts = { { SDLK_A, ModPrimary } }, .scope = graph,
+    actions.add({ .id = "graph.selectAll", .title = "Select All", .kind = ui, .shortcuts = { { SDLK_A, ModPrimary } }, .scope = graph,
                   .run = [this] {
                       GraphSelection::Set all;
                       for (const auto& [id, s] : m_items)
                           if (!isMaster(id)) all.insert(id);
                       m_selection.assign(std::move(all));
                   } });
-    actions.add({ .id = "graph.addNode", .title = "Add Node...", .shortcuts = { { SDLK_A, ModShift } }, .scope = graph,
+    actions.add({ .id = "graph.addNode", .title = "Add Node...", .kind = ui, .shortcuts = { { SDLK_A, ModShift } }, .scope = graph,
                   .run = [this] {
                       PendingAdd add;
                       add.at = m_camera.toGraph(ImGui::GetIO().MousePos);
@@ -393,21 +398,13 @@ void GraphPanel::showInCanvas(const std::vector<NodeId>& ids)
     BoundsI b;
     for (NodeId id : ids)
         if (Node* n = m_project->find(id)) b.expand(n->bounds());   // a Move: where it moved them to
-    m_canvasFrame = b;
-}
-
-bool GraphPanel::takeCanvasFrame(BoundsI& out)
-{
-    if (!m_canvasFrame) return false;
-    out = *m_canvasFrame;
-    m_canvasFrame.reset();
-    return true;
+    if (m_showInCanvas) m_showInCanvas(b);
 }
 
 void GraphPanel::deleteSelection()
 {
     const std::vector<NodeId> ids(m_selection.ids().begin(), m_selection.ids().end());
-    m_project->deleteNodes(ids);   // the master is skipped; the rest heal the links around them
+    m_actions->run("node.delete", { { "nodes", ids } });   // the master is skipped; the rest heal the links around them
 }
 
 void GraphPanel::frameNodes(bool selectionOnly, ImVec2 canvasSize)

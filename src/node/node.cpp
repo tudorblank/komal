@@ -259,10 +259,21 @@ void Node::finishChange(const TileSet& d, Bounds b, Evict e)
     emitDirty(d, e);
 }
 
+std::shared_ptr<TileWatch> Node::watchOutput()
+{
+    auto watch = std::make_shared<TileWatch>();
+    m_watches.push_back(watch);
+    return watch;
+}
+
 void Node::emitDirty(const TileSet& tiles, Evict e)
 {
     ++m_revision;
     if (tiles.empty()) return;
+
+    for (const auto& w : m_watches)
+        if (auto watch = w.lock()) watch->add(tiles);
+    std::erase_if(m_watches, [](const std::weak_ptr<TileWatch>& w) { return w.expired(); });
 
     for (TileKey k : tiles) {
         const auto p = TileUtils::unpackKey(k);

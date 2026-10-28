@@ -1,11 +1,15 @@
 #include "brush-tool.hpp"
+#include "core/document-actions.hpp"
 #include "core/project.hpp"
 #include "canvas/scene.hpp"
+#include "ui/panel-titles.hpp"
 #include "ui/theme.hpp"
 #include "ui/widgets.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <span>
 
 void BrushTool::drawIcon(ImDrawList* dl, ImVec2 c, float size, ImU32 color) const
 {
@@ -18,62 +22,69 @@ void BrushTool::drawIcon(ImDrawList* dl, ImVec2 c, float size, ImU32 color) cons
                           ImVec2(c.x - s * 0.80f, c.y + s * 0.80f), color);
 }
 
-void BrushTool::drawProperties(ToolContext&)
+void BrushTool::drawProperties(ToolContext& ctx)
 {
     using namespace Widgets;
     const Metrics m = metrics();
+    ActionRegistry& actions = ctx.actions;
+    // Each control edits a copy; a change runs the setting's action (which writes it here).
+    const auto row = [&](const char* label, const char* action, float value, float min, float max, const char* format, bool log = false) {
+        if (sliderRow(label, value, min, max, format, log)) actions.run(action, { { "value", value } });
+    };
 
     rowLabel("Mode");
-    if (radio("Paint", !m_erase)) m_erase = false;
+    if (radio("Paint", !m_erase)) actions.run("brush.mode", { { "erase", false } });
     nextGroup();
-    if (radio("Erase", m_erase)) m_erase = true;
+    if (radio("Erase", m_erase)) actions.run("brush.mode", { { "erase", true } });
 
-    sliderRow("Size", m_params.diameter, 1.0f, kMaxDiameter, "%.0f px", true);
-    sliderRow("Hardness", m_params.hardness, 0.0f, 1.0f, "%.2f");
-    float opacity = m_params.opacity / 255.0f;
-    if (sliderRow("Opacity", opacity, 0.0f, 1.0f, "%.2f")) m_params.opacity = uint8_t(opacity * 255.0f + 0.5f);
-    sliderRow("Flow", m_params.flow, 0.01f, 1.0f, "%.2f");
-    sliderRow("Spacing", m_params.spacing, 0.02f, 1.0f, "%.2f");
+    row("Size", "brush.size", m_params.diameter, 1.0f, kMaxDiameter, "%.0f px", true);
+    row("Hardness", "brush.hardness", m_params.hardness, 0.0f, 1.0f, "%.2f");
+    row("Opacity", "brush.opacity", m_params.opacity / 255.0f, 0.0f, 1.0f, "%.2f");
+    row("Flow", "brush.flow", m_params.flow, 0.01f, 1.0f, "%.2f");
+    row("Spacing", "brush.spacing", m_params.spacing, 0.02f, 1.0f, "%.2f");
 
     // The primary colour: swatch (opens the Color panel), hex, alpha.
-    float* fg = m_colors.foreground;
+    const float* fg = m_colors.foreground;
+    const auto setColor = [&](const float (&c)[4]) {
+        actions.run("color.set", { { "target", "primary" }, { "r", c[0] }, { "g", c[1] }, { "b", c[2] }, { "a", c[3] } });
+    };
     rowLabel("Color");
-    if (swatch("##swatch", fg)) ImGui::SetWindowFocus("Color");
+    if (swatch("##swatch", fg)) ImGui::SetWindowFocus(PanelTitle::kColor);
     sameRow();
-    hexField("##hex", fg, stretchWidth(m.fieldWidth));
+    float c[4] = { fg[0], fg[1], fg[2], fg[3] };
+    if (hexField("##hex", c, stretchWidth(m.fieldWidth))) setColor(c);
     alignRight(m.fieldWidth);
     float alpha = fg[3] * 100.0f;
-    if (numberField("##alpha", alpha, 0.0f, 100.0f, "%.0f%%", 0.0f, "A")) fg[3] = alpha / 100.0f;
+    if (numberField("##alpha", alpha, 0.0f, 100.0f, "%.0f%%", 0.0f, "A")) {
+        c[3] = alpha / 100.0f;
+        setColor(c);
+    }
 
+    const auto toggle = [&](const char* label, const char* action, bool value, const char* tip) {
+        if (checkbox(label, value)) actions.run(action, { { "on", value } });
+        ImGui::SetItemTooltip("%s", tip);
+    };
     rowLabel("Edges");
-    checkbox("Antialiased", m_params.antialias);
-    ImGui::SetItemTooltip("Off: hard pixels (diameter 1 = single pixels).");
+    toggle("Antialiased", "brush.antialias", m_params.antialias, "Off: hard pixels (diameter 1 = single pixels).");
     rowLabel("Pressure");
-    checkbox("Size", m_params.pressureSize);
-    ImGui::SetItemTooltip("Pen pressure scales the brush size.");
+    toggle("Size", "brush.pressureSize", m_params.pressureSize, "Pen pressure scales the brush size.");
     nextGroup();
-    checkbox("Flow", m_params.pressureFlow);
-    ImGui::SetItemTooltip("Pen pressure scales how much each dab adds.");
+    toggle("Flow", "brush.pressureFlow", m_params.pressureFlow, "Pen pressure scales how much each dab adds.");
 
     ImGui::Spacing();
     ImGui::TextDisabled("LMB / pen paint   RMB / pen eraser erase   [ ] size");
-}
-
-void BrushTool::registerActions(ActionRegistry& actions, std::function<bool()> isActive)
-{
-    actions.add({ .id = "brush.bigger", .title = "Bigger Brush", .shortcuts = { { SDLK_RIGHTBRACKET } },
-                  .scope = ActionScope::Canvas, .repeats = true, .enabled = isActive,
-                  .run = [this] { m_params.diameter = std::min(kMaxDiameter, std::round(m_params.diameter * 1.25f + 0.5f)); } });
-    actions.add({ .id = "brush.smaller", .title = "Smaller Brush", .shortcuts = { { SDLK_LEFTBRACKET } },
-                  .scope = ActionScope::Canvas, .repeats = true, .enabled = isActive,
-                  .run = [this] { m_params.diameter = std::max(1.0f, std::round(m_params.diameter / 1.25f)); } });
 }
 
 void BrushTool::canvasInput(const CanvasInput& in)
 {
     // A stroke (one undo step) runs from a press to the release of the same button, through every sample.
     const auto flush = [&] {
-        if (m_stroking && !m_points.empty()) in.project.strokeTo(m_points);
+        if (m_stroking && !m_points.empty()) {
+            ActionArgs path;
+            path.payload = std::span<const StrokePoint>(m_points);
+            in.actions.updateGesture("brush.stroke", path);
+            m_strokePoints += int(m_points.size());
+        }
         m_points.clear();
     };
     const auto isPen = [](PointerDevice d) { return d != PointerDevice::Mouse; };
@@ -85,15 +96,20 @@ void BrushTool::canvasInput(const CanvasInput& in)
         case PointerEvent::Type::Down: {
             // ImGui must have given the canvas this press (not a popup, not another panel).
             if (m_stroking || !in.active || ev.button == PointerButton::Middle) break;
-            BrushParams params = m_params;
+            StrokeStart start{ m_params, at };
             const float* c = m_colors.foreground;
-            params.color = { uint8_t(c[0] * 255.0f + 0.5f), uint8_t(c[1] * 255.0f + 0.5f), uint8_t(c[2] * 255.0f + 0.5f), uint8_t(c[3] * 255.0f + 0.5f) };
+            start.params.color = { uint8_t(c[0] * 255.0f + 0.5f), uint8_t(c[1] * 255.0f + 0.5f), uint8_t(c[2] * 255.0f + 0.5f), uint8_t(c[3] * 255.0f + 0.5f) };
             const bool erase = m_erase || ev.button == PointerButton::Secondary || ev.device == PointerDevice::Eraser;
-            params.mode = erase ? CompositeMode::Erase : CompositeMode::Over;
-            in.project.beginStroke(params, at);
-            m_stroking     = true;
+            start.params.mode = erase ? CompositeMode::Erase : CompositeMode::Over;
+            char color[16];
+            std::snprintf(color, sizeof color, "#%02X%02X%02X%02X", start.params.color.r, start.params.color.g, start.params.color.b, start.params.color.a);
+            ActionArgs args{ { "raster", in.project.activeRasterId() }, { "mode", erase ? "erase" : "paint" },
+                             { "size", start.params.diameter }, { "color", color }, { "device", isPen(ev.device) ? "pen" : "mouse" } };
+            args.payload = start;
+            m_stroking = in.actions.beginGesture("brush.stroke", std::move(args));
             m_strokeButton = ev.button;
             m_strokePen    = isPen(ev.device);
+            m_strokePoints = 1;
             break;
         }
         case PointerEvent::Type::Move:
@@ -103,7 +119,7 @@ void BrushTool::canvasInput(const CanvasInput& in)
             if (m_stroking && ev.button == m_strokeButton && isPen(ev.device) == m_strokePen) {
                 m_points.push_back(at);
                 flush();
-                cancel(in.project);
+                cancel(in.actions);
             }
             break;
         }
@@ -111,14 +127,12 @@ void BrushTool::canvasInput(const CanvasInput& in)
     flush();
 
     // Safety net: a release the app never saw (focus lost mid-stroke) still ends the stroke.
-    const bool held = ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Right) || in.input.pen.touching;
-    if (m_stroking && !held) cancel(in.project);
+    if (m_stroking && !in.input.anyButtonHeld()) cancel(in.actions);
 }
 
-void BrushTool::cancel(Project& project)
+void BrushTool::cancel(ActionRegistry& actions)
 {
     if (!m_stroking) return;
-    project.endStroke();
     m_stroking = false;
+    actions.endGesture("brush.stroke", { { "points", m_strokePoints } });
 }
-

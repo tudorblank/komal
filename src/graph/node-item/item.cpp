@@ -33,13 +33,6 @@ void NodeItem::moveTo(float x, float y)
     shift(bounds);
 }
 
-bool preferredInput(const Node& n, InputSlot& out)
-{
-    if (dynamic_cast<const UnaryNode*>(&n)) { out = InputSlot::input(); return true; }
-    if (auto* c = dynamic_cast<const CompositorNode*>(&n)) { out = InputSlot::newLayer(uint32_t(c->layers().size())); return true; }
-    return false;
-}
-
 namespace {
 
 class Builder {

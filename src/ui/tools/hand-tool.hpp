@@ -1,7 +1,8 @@
 #pragma once
 #include "ui/tools/tool.hpp"
 
-// Pans the canvas with LMB (also held Space from any tool). Its properties zoom and fit.
+// Pans the canvas with LMB or the pen's tip (also held Space from any tool), following every
+// pointer sample. Its properties zoom and fit.
 class HandTool : public Tool {
 public:
     const char* name() const override { return "Hand"; }
@@ -11,8 +12,10 @@ public:
     void drawProperties(ToolContext& ctx) override;
     void canvasInput(const CanvasInput& in) override;
     bool busy() const override { return m_dragging; }
-    void cancel(Project&) override { m_dragging = false; }
+    void cancel(ActionRegistry&) override { m_dragging = false; }
 
 private:
     bool m_dragging = false;
+    bool m_dragPen  = false;   // the drag ends when this device releases
+    Vec2 m_last{};             // the drag's last sample, window points
 };

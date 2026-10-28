@@ -105,6 +105,3 @@ void buildNodeItem(const Project& project, const Node& n, const NodeItemState& v
 
 // A layer row's thumbnail, inside its rect.
 ImRect layerThumbRect(const ImRect& row);
-
-// The slot a link dropped on the node's body connects to (none: false).
-bool preferredInput(const Node& n, InputSlot& out);

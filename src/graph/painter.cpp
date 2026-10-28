@@ -1,7 +1,6 @@
 #include "graph/painter.hpp"
 #include "graph/style.hpp"
 #include "graph/node-item/thumbnails.hpp"
-#include "ui/theme.hpp"
 
 #include <algorithm>
 #include <cfloat>
@@ -24,7 +23,7 @@ float quantizedSize(float px)
 
 void textCentered(const GraphPaint& g, const ImRect& r, float size, ImU32 color, const char* text)
 {
-    const float w = textWidth(size, text);
+    const float w = textWidth(g, size, text);
     drawText(g, ImVec2(r.GetCenter().x - w * 0.5f, r.GetCenter().y - size * 0.5f), size, color, text);
 }
 
@@ -80,8 +79,12 @@ void drawThumb(const GraphPaint& g, const ImRect& r, NodeId id, NodeItemThumbnai
     g.dl->AddRectFilled(a, b, kInset);
     NodeItemThumbnails::View v;
     if (!thumbs.get(id, v)) return;
-    if (v.empty) textCentered(g, r, textSize, kDimText, "Empty");
-    else         g.dl->AddImage(v.texture, a, b, v.uv0, v.uv1);
+    if (v.empty) {
+        textCentered(g, r, textSize, kDimText, "Empty");
+        return;
+    }
+    const auto at = [&](ImVec2 f) { return ImVec2(a.x + (b.x - a.x) * f.x, a.y + (b.y - a.y) * f.y); };   // the slot's proportions are the rect's
+    g.dl->AddImage(v.texture, at(v.fit0), at(v.fit1), v.uv0, v.uv1);
 }
 
 }
@@ -95,7 +98,7 @@ void drawText(const GraphPaint& g, ImVec2 graphPos, float size, ImU32 color, con
     const float q = quantizedSize(px);
     const ImVec2 p = g.at(graphPos);
     const int first = g.dl->VtxBuffer.Size;
-    g.dl->AddText(font ? font : graphFont(), q, p, color, text, end);
+    g.dl->AddText(font ? font : g.font, q, p, color, text, end);
     // Laid out at the baked size from a truncated position: scale to the exact size and position.
     const float k = px / q;
     const ImVec2 o(std::trunc(p.x), std::trunc(p.y));
@@ -105,16 +108,16 @@ void drawText(const GraphPaint& g, ImVec2 graphPos, float size, ImU32 color, con
     }
 }
 
-float textWidth(float size, const char* text, const char* end, ImFont* font)
+float textWidth(const GraphPaint& g, float size, const char* text, const char* end, ImFont* font)
 {
-    return (font ? font : graphFont())->CalcTextSizeA(size, FLT_MAX, 0.0f, text, end).x;
+    return (font ? font : g.font)->CalcTextSizeA(size, FLT_MAX, 0.0f, text, end).x;
 }
 
-std::string elide(const std::string& text, float size, float maxWidth)
+std::string elide(const GraphPaint& g, const std::string& text, float size, float maxWidth)
 {
-    if (textWidth(size, text.c_str()) <= maxWidth) return text;
+    if (textWidth(g, size, text.c_str()) <= maxWidth) return text;
     std::string s = text;
-    while (!s.empty() && textWidth(size, (s + "...").c_str()) > maxWidth) s.pop_back();
+    while (!s.empty() && textWidth(g, size, (s + "...").c_str()) > maxWidth) s.pop_back();
     return s + "...";
 }
 
@@ -181,13 +184,13 @@ void paintNode(const GraphPaint& g, const Project& project, const Node& n, const
     }
 
     // ---- header
-    const std::string title = elide(n.m_meta.label, kTitleText, kNodeWidth - 2.0f * kPad);
+    const std::string title = elide(g, n.m_meta.label, kTitleText, kNodeWidth - 2.0f * kPad);
     textInRow(g, item.header.Min.x + kPad, item.header, kTitleText, kTitleColor, title.c_str());
 
     // ---- body: I/O labels, raster toggles, thumbnail
     if (item.ioRow.GetHeight() > 0.0f) {
         if (item.output()) {
-            const float w = textWidth(kSmallText, "Output");
+            const float w = textWidth(g, kSmallText, "Output");
             textInRow(g, item.ioRow.Max.x - kPad - 4.0f - w, item.ioRow, kSmallText, kDimText, "Output");
         }
         if (item.input(InputSlot::input()))
@@ -248,7 +251,7 @@ void paintNode(const GraphPaint& g, const Project& project, const Node& n, const
         drawArrow(g, ImVec2(sec.rect.Min.x + 12.0f, sec.rect.GetCenter().y), 7.0f, sec.expanded, hot ? kTitleColor : kDimText);
         textInRow(g, sec.rect.Min.x + 21.0f, sec.rect, kText, hot ? kTitleColor : kTextColor, kSignalName[int(sec.signal)]);
         if (Node::gainByte(scaleOf(sec.signal, NodeChannel::A)) == 0) {
-            const float w = textWidth(kSmallText, "off");
+            const float w = textWidth(g, kSmallText, "off");
             textInRow(g, sec.rect.Max.x - kPad - w, sec.rect, kSmallText, kDimText, "off");
         }
     }
@@ -267,8 +270,8 @@ void paintNode(const GraphPaint& g, const Project& project, const Node& n, const
 
         char buf[8];
         std::snprintf(buf, sizeof buf, "%d", int(std::lround(v * 100.0f)));
-        const float w = textWidth(kSmallText, buf, nullptr, graphNumberFont());
-        textInRow(g, row.rect.Max.x - 20.0f - w, row.rect, kSmallText, kTextColor, buf, graphNumberFont());
+        const float w = textWidth(g, kSmallText, buf, nullptr, g.numberFont);
+        textInRow(g, row.rect.Max.x - 20.0f - w, row.rect, kSmallText, kTextColor, buf, g.numberFont);
         textInRow(g, row.rect.Max.x - 13.0f, row.rect, kSmallText, kChannelColor[int(row.channel)], kChannelName[int(row.channel)]);
     }
 
@@ -291,7 +294,7 @@ void paintLayerRow(const GraphPaint& g, const Node& layer, const ImRect& rect, N
     textCentered(g, chip, kSmallText, kDimText, "Normal");
 
     const float nameX = thumb.Max.x + 6.0f;
-    const std::string name = elide(layer.m_meta.label, kSmallText, chip.Min.x - 4.0f - nameX);
+    const std::string name = elide(g, layer.m_meta.label, kSmallText, chip.Min.x - 4.0f - nameX);
     textInRow(g, nameX, rect, kSmallText, kTextColor, name.c_str());
 }
 
