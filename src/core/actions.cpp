@@ -38,11 +38,21 @@ bool ActionRegistry::run(std::string_view id)
     return true;
 }
 
-void ActionRegistry::dispatch(const InputFrame& input, ActionScope scope)
+void ActionRegistry::claimKeyboard(ActionScope scope, KeyboardClaim claim)
 {
-    if (input.keys.empty()) return;
+    if (m_claimed && claim <= m_claim) return;
+    m_claimScope = scope;
+    m_claim      = claim;
+    m_claimed    = true;
+}
+
+void ActionRegistry::dispatch(const InputFrame& input, bool typing)
+{
+    const ActionScope panel = m_claimed ? m_claimScope : ActionScope::Global;
+    m_claimed = false;   // claimed afresh while this frame draws
+    if (typing || input.keys.empty()) return;
     for (const Action& a : m_actions) {
-        if (a.scope != scope || !a.run) continue;
+        if ((a.scope != ActionScope::Global && a.scope != panel) || !a.run) continue;
         for (const Shortcut& s : a.shortcuts)
             if (input.pressed(s, a.repeats)) {
                 if (a.isEnabled()) a.run();

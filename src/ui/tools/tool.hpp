@@ -15,7 +15,6 @@
 
 class Project;
 class ToolManager;
-struct OverlayContext;
 
 // What the canvas publishes each frame for tools that navigate it (the hand's 100% / Fit).
 struct CanvasNavigation {
@@ -72,10 +71,6 @@ public:
 
     virtual void drawProperties(ToolContext& ctx) = 0;   // inside the Tool Properties window
     virtual void canvasInput(const CanvasInput& in) = 0;
-    virtual void drawOverlay(ImDrawList*, const OverlayContext&, Vec2 /*world*/) const {}
-    virtual ImGuiMouseCursor cursor() const { return ImGuiMouseCursor_Arrow; }
-    // A system ring cursor (RingCursors), `radius` in screen points at `zoom`. False: cursor() only.
-    virtual bool cursorRing(float /*zoom*/, float& /*radius*/, bool& /*erase*/) const { return false; }
 
     virtual bool busy() const { return false; }   // mid-gesture (a stroke, a drag)
     virtual void cancel(Project&) {}              // switched away: finish whatever is going on

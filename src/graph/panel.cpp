@@ -26,14 +26,10 @@ void GraphPanel::init(GpuDevice& gpu, Project& project, const InputFrame& input,
     m_actions = &actions;
     registerActions(actions);
     m_thumbs.init(gpu.device(), gpu.queue());
-    m_subscription = project.subscribe([this](const ProjectEvent& e) {
-        if (e.type != ProjectEventType::NodeRemoved) return;
-        m_selection.erase(e.node);
-        m_viewStates.erase(e.node);
-        m_items.erase(e.node);
-        m_thumbs.forget(e.node);
-        std::erase(m_zOrder, e.node);
-    });
+    m_subscription = project.subscribe([this](const ProjectEvent& e) { onProjectEvent(e); });
+    // The ones made before we listened: every item first, then the links between them.
+    for (const NodePtr& n : project.nodes()) addNodeItem(n->m_meta.id, false);
+    for (const NodePtr& n : project.nodes()) addLinksInto(n->m_meta.id);
 }
 
 void GraphPanel::shutdown()
@@ -64,7 +60,6 @@ void GraphPanel::draw(bool* open)
     m_camera.setFrame(canvasMin, m_uiScale);
     m_canvasSize = size;
 
-    syncNodes();
     layoutOverlays(canvasMin, canvasMax);
     if (m_frameOnStart > 0) {
         frameNodes(false, size);
@@ -72,22 +67,21 @@ void GraphPanel::draw(bool* open)
     }
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const GraphPaint g = paintContext(dl);
-    rebuildLinks(g);
+    placeLinkCurves(g);
 
     const ImVec2 mouse = ImGui::GetIO().MousePos;
     const bool tracking = hovered || m_drag != Drag::None;
     Hit hit = tracking ? hitTest(mouse, g) : Hit{};
     handleMouse(hit, hovered);
-    // Its shortcuts while hovered, or focused with the pointer not on the canvas. Fired inside the
-    // window, so what they open (the add menu) belongs to it.
-    const bool focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
-    if ((hovered || (focused && !m_pointerElsewhere)) && !ImGui::GetIO().WantTextInput)
-        m_actions->dispatch(*m_input, ActionScope::Graph);
+    // Its shortcuts next frame: the pointer over it, or focused (a panel with the pointer wins).
+    if (hovered) m_actions->claimKeyboard(ActionScope::Graph, KeyboardClaim::Pointer);
+    else if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) m_actions->claimKeyboard(ActionScope::Graph, KeyboardClaim::Focus);
 
-    // Input may have changed the project: draw it as it is now.
-    syncNodes();
+    // Input changed the project through its calls, and the items through its events; a drag
+    // may have moved a gap in a stack.
+    updateStackGaps();
     layoutOverlays(canvasMin, canvasMax);
-    rebuildLinks(g);
+    placeLinkCurves(g);
     hit = tracking ? hitTest(mouse, g) : Hit{};
     m_hoveredLink = (hit.kind == Hit::Kind::Link || hit.kind == Hit::Kind::Insert) ? hit.index : -1;
     // A link dragged over a stack opens a gap where it would land (laid out from next frame on).
@@ -95,7 +89,6 @@ void GraphPanel::draw(bool* open)
     if (m_drag == Drag::Link)
         if (const LinkTarget t = linkTarget(hit); t.valid && t.slot.kind == InputSlot::Kind::NewLayer)
             m_pendingLayer = { t.node, int(t.slot.layer) };
-    if (tracking) setCursor(hit);
 
     dl->PushClipRect(canvasMin, canvasMax, true);
     paint(g, hit, canvasMin, canvasMax);
@@ -122,18 +115,140 @@ void GraphPanel::selectOnly(NodeId id)
     bringToFront(id);
 }
 
-void GraphPanel::syncNodes()
+// ---------------------------------------------------------------- items
+
+void GraphPanel::onProjectEvent(const ProjectEvent& e)
 {
-    // Rebuilt in place every time (cheap, and never stale); removed nodes leave via NodeRemoved.
-    for (const NodePtr& n : m_project->nodes()) {
-        const NodeId id = n->m_meta.id;
-        StackLayout layout;
-        if (id == m_layerDrag.node && m_layerDrag.lifted) layout = { m_layerDrag.at, int(m_layerDrag.layer) };
-        else if (id == m_pendingLayer.node)               layout.gap = m_pendingLayer.at;
-        auto [it, added] = m_items.try_emplace(id);
-        buildNodeItem(*m_project, *n, m_viewStates[id], layout, it->second);
-        if (added) m_zOrder.push_back(id);
+    switch (e.type) {
+    case ProjectEventType::NodeAdded:     addNodeItem(e.node); break;
+    case ProjectEventType::NodeRemoved:   removeNodeItem(e.node); break;
+    case ProjectEventType::NodeMoved:     moveNodeItem(e.node); break;
+    case ProjectEventType::LinkAdded:     addLink(e.source, e.node, e.slot); break;
+    case ProjectEventType::LinkRemoved:   removeLink(e.node, e.slot); break;
+    case ProjectEventType::LayersChanged:
+        layoutNodeItem(e.node);
+        addLinksInto(e.node, true);
+        break;
+    default:   // values, pixels, previews, history: painted as they are
+        break;
     }
+}
+
+void GraphPanel::addNodeItem(NodeId id, bool withLinks)
+{
+    const Node* n = m_project->find(id);
+    if (!n || m_items.contains(id)) return;
+    buildNodeItem(*m_project, *n, m_viewStates[id], {}, m_items[id]);
+    m_zOrder.push_back(id);
+    ++m_itemsVersion;
+    if (withLinks) addLinksInto(id);   // made already wired (a reference)
+}
+
+void GraphPanel::removeNodeItem(NodeId id)
+{
+    m_selection.erase(id);
+    m_viewStates.erase(id);
+    m_items.erase(id);
+    m_thumbs.forget(id);
+    std::erase(m_zOrder, id);
+    std::erase(m_gapped, id);
+    std::erase_if(m_links, [&](const GraphLink& l) { return l.from == id || l.to == id; });
+    m_linksMoved = true;
+    ++m_itemsVersion;
+}
+
+void GraphPanel::moveNodeItem(NodeId id)
+{
+    auto it = m_items.find(id);
+    const Node* n = m_project->find(id);
+    if (it == m_items.end() || !n) return;
+    it->second.moveTo(n->m_meta.x, n->m_meta.y);
+    placeLinkEndsOf(id);
+    ++m_itemsVersion;
+}
+
+void GraphPanel::layoutNodeItem(NodeId id)
+{
+    auto it = m_items.find(id);
+    const Node* n = m_project->find(id);
+    if (it == m_items.end() || !n) return;
+    const StackLayout stack = stackLayout(id);
+    buildNodeItem(*m_project, *n, m_viewStates[id], stack, it->second);
+    std::erase(m_gapped, id);
+    if (it->second.stack != StackLayout{}) m_gapped.push_back(id);
+    placeLinkEndsOf(id);
+    ++m_itemsVersion;
+}
+
+void GraphPanel::addLink(NodeId from, NodeId to, const InputSlot& slot)
+{
+    std::erase_if(m_links, [&](const GraphLink& l) { return l.to == to && l.slot == slot; });   // a slot has one source
+    const bool mask = slot.kind == InputSlot::Kind::Mask;
+    if (mask) layoutNodeItem(to);   // a collapsed section shows every masked channel
+    GraphLink l{ from, to, slot, mask, isMaster(to), {}, {}, {} };
+    placeLinkEnds(l);
+    m_links.push_back(l);
+    m_linksMoved = true;
+}
+
+void GraphPanel::removeLink(NodeId to, const InputSlot& slot)
+{
+    std::erase_if(m_links, [&](const GraphLink& l) { return l.to == to && l.slot == slot; });
+    if (slot.kind == InputSlot::Kind::Mask) layoutNodeItem(to);
+    m_linksMoved = true;
+}
+
+void GraphPanel::addLinksInto(NodeId to, bool layersOnly)
+{
+    const Node* n = m_project->find(to);
+    if (!n) return;
+    std::erase_if(m_links, [&](const GraphLink& l) { return l.to == to && (!layersOnly || l.slot.kind == InputSlot::Kind::Layer); });
+    m_linksMoved = true;
+    if (auto* c = dynamic_cast<const CompositorNode*>(n))
+        for (uint32_t i = 0; i < uint32_t(c->layers().size()); ++i) addLink(c->layers()[i]->m_meta.id, to, InputSlot::stackLayer(i));
+    if (layersOnly) return;
+    if (auto* u = dynamic_cast<const UnaryNode*>(n); u && u->input()) addLink(u->input()->m_meta.id, to, InputSlot::input());
+    for (int s = 0; s < kSignalCount; ++s)
+        for (int ch = 0; ch < kChannelCount; ++ch)
+            if (const NodePtr& m = n->signal(NodeSignal(s)).mask[ch])
+                addLink(m->m_meta.id, to, InputSlot::mask(NodeSignal(s), NodeChannel(ch)));
+}
+
+void GraphPanel::placeLinkEnds(GraphLink& l) const
+{
+    const NodeItem* from = item(l.from);
+    const NodeItem* to   = item(l.to);
+    const NodeItemPort* out = from ? from->output() : nullptr;
+    const NodeItemPort* in  = to ? to->input(l.slot) : nullptr;
+    l.shown = out && in;
+    if (out) l.fromGraph = out->pos;
+    if (in)  l.toGraph   = in->pos;
+}
+
+void GraphPanel::placeLinkEndsOf(NodeId id)
+{
+    for (GraphLink& l : m_links)
+        if (l.from == id || l.to == id) placeLinkEnds(l);
+    m_linksMoved = true;
+}
+
+StackLayout GraphPanel::stackLayout(NodeId id) const
+{
+    if (!dynamic_cast<const CompositorNode*>(m_project->find(id))) return {};
+    if (id == m_layerDrag.node && m_layerDrag.lifted) return { m_layerDrag.at, int(m_layerDrag.layer) };
+    if (id == m_pendingLayer.node)                    return { m_pendingLayer.at, -1 };
+    return {};
+}
+
+void GraphPanel::updateStackGaps()
+{
+    const auto check = [&](NodeId id) {
+        const NodeItem* s = item(id);
+        if (s && s->stack != stackLayout(id)) layoutNodeItem(id);
+    };
+    for (NodeId id : std::vector<NodeId>(m_gapped)) check(id);   // copy: laying out edits it
+    check(m_layerDrag.node);
+    check(m_pendingLayer.node);
 }
 
 bool GraphPanel::isMaster(NodeId id) const
@@ -157,25 +272,30 @@ void GraphPanel::layoutOverlays(ImVec2 canvasMin, ImVec2 canvasMax)
                                    s->bounds.Min.y - (margin - m_pinnedScroll) / k);
         m_pinnedRect = ImRect(m_pinned.toScreen(s->bounds.Min), m_pinned.toScreen(s->bounds.Max));
     }
-    m_minimap.layout(m_items, master, canvasMin, canvasMax, m_pinnedRect, m_uiScale);
+    const std::array<float, 9> key{ canvasMin.x, canvasMin.y, canvasMax.x, canvasMax.y,
+                                    m_pinnedRect.Min.x, m_pinnedRect.Min.y, m_pinnedRect.Max.x, m_pinnedRect.Max.y, m_uiScale };
+    if (key != m_minimapKey || m_itemsVersion != m_minimapVersion) {   // fitted to the items: only when they or its room changed
+        m_minimapKey     = key;
+        m_minimapVersion = m_itemsVersion;
+        m_minimap.layout(m_items, master, canvasMin, canvasMax, m_pinnedRect, m_uiScale);
+    }
 }
 
-void GraphPanel::rebuildLinks(const GraphPaint& g)
+void GraphPanel::placeLinkCurves(const GraphPaint& g)
 {
-    m_links.clear();
-    for (const NodePtr& n : m_project->nodes()) {
-        const NodeId to = n->m_meta.id;
-        const NodeItem* dst = item(to);
-        for (const NodeItemPort& p : dst->ports) {
-            if (p.output) continue;
-            const NodePtr src = m_project->inputAt(to, p.slot);
-            const NodeItem* from = src ? item(src->m_meta.id) : nullptr;
-            const NodeItemPort* out = from ? from->output() : nullptr;
-            if (!out) continue;
-            const ImVec2 a = cameraFor(src->m_meta.id).toScreen(out->pos), b = cameraFor(to).toScreen(p.pos);
-            m_links.push_back({ src->m_meta.id, to, p.slot, p.mask, isMaster(to), linkCurve(g, a, b), out->pos, p.pos });
-        }
+    // Curves are screen space: placed again when a link or either camera moved.
+    const ImVec2 a = m_camera.toScreen(ImVec2(0, 0)), b = m_pinned.toScreen(ImVec2(0, 0));
+    const std::array<float, 6> cameras{ a.x, a.y, m_camera.scale(), b.x, b.y, m_uiScale };
+    if (!m_linksMoved && cameras == m_linkCameras) return;
+    if (m_linksMoved) {
+        m_minimapEdges.clear();
+        for (const GraphLink& l : m_links)
+            if (l.shown && !l.toMaster) m_minimapEdges.push_back({ l.fromGraph, l.toGraph, l.mask });
     }
+    m_linksMoved  = false;
+    m_linkCameras = cameras;
+    for (GraphLink& l : m_links)
+        if (l.shown) l.curve = linkCurve(g, cameraFor(l.from).toScreen(l.fromGraph), cameraFor(l.to).toScreen(l.toGraph));
 }
 
 const NodeItem* GraphPanel::item(NodeId id) const
@@ -235,6 +355,7 @@ GraphPanel::Hit GraphPanel::hitTest(ImVec2 mouse, const GraphPaint& g) const
     int best = -1;
     float bestDist = g.px(kLinkHoverPx);
     for (size_t i = 0; i < m_links.size(); ++i) {
+        if (!m_links[i].shown) continue;
         const float d = linkDistance(m_links[i].curve, mouse);
         if (d < bestDist) { bestDist = d; best = int(i); }
     }

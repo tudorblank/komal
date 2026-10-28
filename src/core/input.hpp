@@ -1,4 +1,14 @@
 #pragma once
+// Input reaches the app two ways, from the same SDL events (Application::processEvents):
+//
+//   ImGui (Application)      widgets, windows, docking, text; and who has the pointer: a panel
+//                            owns it while ImGui says its item is hovered or held
+//   InputFrame (here)        every pointer sample with its pen data, for the tools of the panel
+//                            that owns the pointer; key presses for shortcuts (ActionRegistry,
+//                            dispatched once a frame); held keys (Space for the hand)
+//
+// Widgets read ImGui only; tools read the InputFrame only, and only while their panel owns the
+// pointer.
 
 #include <SDL3/SDL_events.h>
 

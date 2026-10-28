@@ -1,5 +1,4 @@
 #include "brush-tool.hpp"
-#include "ui/tools/ring-cursor.hpp"
 #include "core/project.hpp"
 #include "canvas/scene.hpp"
 #include "ui/theme.hpp"
@@ -82,7 +81,6 @@ void BrushTool::canvasInput(const CanvasInput& in)
     for (const CanvasPointer& p : in.pointer) {
         const PointerEvent& ev = p.event;
         const StrokePoint at{ p.world.x, p.world.y, ev.pressure };
-        if (isPen(ev.device)) m_pressure = in.input.pen.touching ? ev.pressure : 1.0f;
         switch (ev.type) {
         case PointerEvent::Type::Down: {
             // ImGui must have given the canvas this press (not a popup, not another panel).
@@ -124,32 +122,3 @@ void BrushTool::cancel(Project& project)
     m_stroking = false;
 }
 
-float BrushTool::cursorDiameter() const
-{
-    // While a pen presses, the size its pressure gives the dabs.
-    return m_params.pressureSize && m_pressure < 1.0f ? std::max(1.0f, m_params.diameter * m_pressure) : m_params.diameter;
-}
-
-bool BrushTool::cursorRing(float zoom, float& radius, bool& erase) const
-{
-    radius = cursorDiameter() * 0.5f * zoom;
-    erase  = m_erase;
-    return true;
-}
-
-void BrushTool::drawOverlay(ImDrawList* dl, const OverlayContext& ctx, Vec2 world) const
-{
-    // The ring is the system cursor (no lag). Drawn here: the pixel under the mouse when zoomed
-    // in, and a ring too big for a system cursor.
-    if (ctx.camera.zoom >= 6.0f) {
-        const float px = std::floor(world.x), py = std::floor(world.y);
-        const Vec2 a = ctx.toScreen(px, py), b = ctx.toScreen(px + 1.0f, py), c = ctx.toScreen(px + 1.0f, py + 1.0f), d = ctx.toScreen(px, py + 1.0f);
-        dl->AddQuad(ImVec2(a.x, a.y), ImVec2(b.x, b.y), ImVec2(c.x, c.y), ImVec2(d.x, d.y), IM_COL32(255, 255, 255, 120));
-    }
-    const float r = cursorDiameter() * 0.5f * ctx.camera.zoom;
-    if (!RingCursors::fits(r)) {
-        const Vec2 c = ctx.toScreen(world.x, world.y);
-        dl->AddCircle(ImVec2(c.x, c.y), r + 1.0f, IM_COL32(0, 0, 0, 160), 0, 1.5f);
-        dl->AddCircle(ImVec2(c.x, c.y), r, m_erase ? IM_COL32(255, 140, 140, 220) : IM_COL32(255, 255, 255, 220), 0, 1.0f);
-    }
-}

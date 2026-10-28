@@ -5,12 +5,14 @@
 //   Graph   dropped on the graph: the node where it was dropped, at the world origin, unlinked
 //   Default File > Import, the command line: at the world origin, on top of the master, active
 //
-// open() is thread-safe (the native file dialog answers on its own thread).
+// open() is thread-safe (the native file dialog answers on its own thread). Requests and finished
+// work wake the main loop, so nothing waits on frames meanwhile.
 
 #include "core/image-load.hpp"
 #include "core/project.hpp"
 #include "raster/tile-grid.hpp"
 
+#include <atomic>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -32,7 +34,6 @@ public:
     void open(std::string path, Placement placement);
     void showOpenDialog(SDL_Window* window);    // File > Import Image...
     std::vector<Imported> poll(Project& project);   // once per frame, main thread
-    bool busy() const { return !m_jobs.empty(); }
     const std::string& lastError() const { return m_lastError; }
 
 private:
@@ -40,10 +41,13 @@ private:
     struct Job {
         Request request;
         std::future<bool> done;
+        std::atomic<bool> finished{ false };   // set last on the worker, then the loop is woken
         ImageFile image;       // decoded...
         TileGrid tiles;        // ...and cut into tiles where it goes, on the worker
         std::string error;
     };
+    static bool importOnWorker(Job& j);   // decodes and tiles it
+
     std::mutex m_mutex;
     std::vector<Request> m_queued;                // guarded by m_mutex
     std::vector<std::unique_ptr<Job>> m_jobs;     // main thread only

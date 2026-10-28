@@ -4,47 +4,125 @@
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
-#include <imgui_internal.h>   // GImGui: hover timer (tooltips)
 #include <algorithm>
-#include <utility>
-#include <vector>
+#include <cmath>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_wgpu.h>
 #include <cstdio>
+#include <string>
 #include <stb_image.h>
 
-extern const unsigned char kAppIcon[];   // assets/komal-icon-256.png, see embed_file() in CMakeLists.txt
+extern const unsigned char kAppIcon[];   // assets/komal-icon-256.png
 extern const unsigned int  kAppIconSize;
 
 namespace {
-
-// The window icon at runtime (the .exe / app bundle carry it too, see CMakeLists.txt).
-void setWindowIcon(SDL_Window* window)
-{
-    int w = 0, h = 0, channels = 0;
-    stbi_uc* px = stbi_load_from_memory(kAppIcon, int(kAppIconSize), &w, &h, &channels, 4);
-    if (!px) return;
-    if (SDL_Surface* icon = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, px, w * 4)) {
-        SDL_SetWindowIcon(window, icon);   // copies the pixels
-        SDL_DestroySurface(icon);
+    // APP ICON //
+    void setWindowIcon(SDL_Window* window)
+    {
+        int w = 0, h = 0, channels = 0;
+        stbi_uc* px = stbi_load_from_memory(kAppIcon, int(kAppIconSize), &w, &h, &channels, 4);
+        if (!px) return;
+        if (SDL_Surface* icon = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, px, w * 4)) {
+            SDL_SetWindowIcon(window, icon);   // copies the pixels
+            SDL_DestroySurface(icon);
+        }
+        stbi_image_free(px);
     }
-    stbi_image_free(px);
+
+    // WINDOW STATE //
+    struct WindowState { int width = 0, height = 0; bool maximized = false; };
+    WindowState loadWindowState(const std::string& path)
+    {
+        WindowState s;
+        if (FILE* f = std::fopen(path.c_str(), "r")) {
+            int m = 0;
+            if (std::fscanf(f, "%d %d %d", &s.width, &s.height, &m) == 3) s.maximized = m != 0;
+            else s = {};
+            std::fclose(f);
+        }
+        return s;
+    }
+    void saveWindowState(const std::string& path, const WindowState& s)
+    {
+        if (FILE* f = std::fopen(path.c_str(), "w")) {
+            std::fprintf(f, "%d %d %d\n", s.width, s.height, s.maximized ? 1 : 0);
+            std::fclose(f);
+        }
+    }
+
+    // What ImGui's SDL3 backend reads (ImGui_ImplSDL3_ProcessEvent); the rest isn't queued for it.
+bool forImGui(Uint32 type)
+{
+    switch (type) {
+    case SDL_EVENT_MOUSE_MOTION:
+    case SDL_EVENT_MOUSE_WHEEL:
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+    case SDL_EVENT_TEXT_INPUT:
+    case SDL_EVENT_KEY_DOWN:
+    case SDL_EVENT_KEY_UP:
+    case SDL_EVENT_DISPLAY_ORIENTATION:
+    case SDL_EVENT_DISPLAY_ADDED:
+    case SDL_EVENT_DISPLAY_REMOVED:
+    case SDL_EVENT_DISPLAY_MOVED:
+    case SDL_EVENT_DISPLAY_CONTENT_SCALE_CHANGED:
+    case SDL_EVENT_WINDOW_MOUSE_ENTER:
+    case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+    case SDL_EVENT_WINDOW_FOCUS_GAINED:
+    case SDL_EVENT_WINDOW_FOCUS_LOST:
+    case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+    case SDL_EVENT_WINDOW_MOVED:
+    case SDL_EVENT_WINDOW_RESIZED:
+    case SDL_EVENT_GAMEPAD_ADDED:
+    case SDL_EVENT_GAMEPAD_REMOVED:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// `b` continues the run of mouse moves `a` is in: only the last one matters.
+bool sameRun(const SDL_Event& a, const SDL_Event& b)
+{
+    return a.motion.windowID == b.motion.windowID &&
+           (a.motion.which == SDL_TOUCH_MOUSEID) == (b.motion.which == SDL_TOUCH_MOUSEID);   // ImGui tells touch apart
+}
+
+// When ImGui next changes what it draws by itself: a tooltip appearing while the mouse rests on
+// an item, the caret blinking and keys repeating while typing. Ticks through those, from public
+// state only. `sinceMove`: seconds from the last mouse move to this frame's start.
+double imguiNextFrameIn(double sinceMove, bool keyHeld)
+{
+    constexpr double kTick        = 0.1;   // 10 frames a second
+    constexpr double kTooltipRest = 0.6;   // every ImGui tooltip delay is shorter
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.WantTextInput) return keyHeld ? double(io.KeyRepeatRate) : kTick;
+    if (ImGui::IsAnyItemHovered() && sinceMove < kTooltipRest) return kTick;
+    return Application::kNoFrame;
+}
+
+// A key held that repeats while typing (not a modifier).
+bool editingKeyHeld(const InputFrame& input)
+{
+    for (SDL_Keycode k : input.held)
+        if (k != SDLK_LCTRL && k != SDLK_RCTRL && k != SDLK_LSHIFT && k != SDLK_RSHIFT &&
+            k != SDLK_LALT && k != SDLK_RALT && k != SDLK_LGUI && k != SDLK_RGUI) return true;
+    return false;
 }
 
 float contentScale(SDL_Window* window)
-{
-    const float display = SDL_GetWindowDisplayScale(window);
-    const float density = SDL_GetWindowPixelDensity(window);
-    return (display > 0.0f && density > 0.0f) ? display / density : 1.0f;
-}
-
+    {
+        const float display = SDL_GetWindowDisplayScale(window);
+        const float density = SDL_GetWindowPixelDensity(window);
+        return (display > 0.0f && density > 0.0f) ? display / density : 1.0f;
+    }
 }
 
 Application::~Application() { shutdown(); }
 
 bool Application::init(const char* title, int width, int height)
 {
-    // ---- SDL
+    // ---- SDL (window)
 #if defined(__linux__)
     // Prefer X11 (XWayland): swapchains pace better there. Wayland if X11 is unavailable.
     if (!SDL_getenv("SDL_VIDEO_DRIVER"))
@@ -59,11 +137,35 @@ bool Application::init(const char* title, int width, int height)
         return false;
     }
 
+    // Settings: ~/.local/share/Komal, %APPDATA%\Komal, ~/Library/Application Support/Komal.
+    if (char* dir = SDL_GetPrefPath(nullptr, "Komal")) {
+        m_prefDir = dir;
+        SDL_free(dir);
+    }
+
     SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
 
 #if defined(__APPLE__)
     flags |= SDL_WINDOW_METAL; // wgpu surface is a CAMetalLayer
 #endif
+
+    // load window state
+    const WindowState saved = loadWindowState(m_prefDir + "window.cfg");
+    if (saved.width > 0 && saved.height > 0) {
+        SDL_Rect usable{};
+        const bool known = SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &usable);
+        width  = std::clamp(saved.width,  640, known ? std::max(640, usable.w) : saved.width);
+        height = std::clamp(saved.height, 400, known ? std::max(400, usable.h) : saved.height);
+        m_normalW = width;
+        m_normalH = height;
+        if (saved.maximized) {
+            flags |= SDL_WINDOW_MAXIMIZED;
+            if (known) { width = usable.w; height = usable.h; }
+        }
+    } else {
+        m_normalW = width;
+        m_normalH = height;
+    }
 
     m_window = SDL_CreateWindow(title, width, height, flags);
     if (!m_window) {
@@ -86,21 +188,14 @@ bool Application::init(const char* title, int width, int height)
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
-    // Layout file: ~/.local/share/Komal, %APPDATA%\Komal, ~/Library/Application Support/Komal.
-    if (char* dir = SDL_GetPrefPath(nullptr, "Komal")) {
-        m_iniPath = std::string(dir) + "imgui.ini";
-        SDL_free(dir);
-    } else {
-        m_iniPath = "imgui.ini";
-    }
+    m_iniPath = m_prefDir + "imgui.ini";   // the layout
     io.IniFilename = m_iniPath.c_str();
-    io.ConfigInputTrickleEventQueue = false;
+    io.ConfigInputTrickleEventQueue = false;   // ImGuiFeed does it, without the backlog
 
     loadUiFonts();
 
     // ---- GPU setup
     ImGui_ImplSDL3_InitForOther(m_window);
-    m_cursors.init(m_window);
 
     ImGui_ImplWGPU_InitInfo wgpuInfo;
     wgpuInfo.Device             = m_gpu.device();
@@ -136,63 +231,58 @@ int Application::exec()
 {
     while (m_running && !m_userInterface.quitRequested()) {
         if (SDL_GetWindowFlags(m_window) & SDL_WINDOW_MINIMIZED) {
-            SDL_WaitEventTimeout(nullptr, 100);   // sleep until something happens
+            SDL_WaitEvent(nullptr);   // nothing to draw until it's back; leaves the event queued
             processEvents();
             continue;
         }
-        // Idle: sleep until input arrives.
-        if (m_quietFrames >= kIdleFrames && !needsFrame()) {
-            const int timeoutMs = ImGui::GetIO().WantTextInput ? 500 : 1000;   // a text caret blinks; otherwise a safety net
-            SDL_WaitEventTimeout(nullptr, timeoutMs);   // leaves the event queued for processEvents()
-        }
+        waitForFrame();
         renderFrame();
     }
     return 0;
 }
 
-bool Application::needsFrame() const
+double Application::nextFrameIn() const
 {
-    if (!m_imguiDeferredReleases.empty() || m_userInterface.busy()) return true;
-    const ImGuiIO& io = ImGui::GetIO();
-    for (bool down : io.MouseDown)
-        if (down) return true;   // holds are timed (the graph's right-button zoom)
-    const ImGuiContext& g = *GImGui;
-    return g.HoveredId != 0 && g.HoveredIdTimer < 1.0f;   // tooltips appear after a hover delay
+    if (m_framesAfterInput > 0 || m_imguiFeed.holding()) return 0.0;
+    const double sinceMove = m_lastMoveNs < m_frameStartNs ? double(m_frameStartNs - m_lastMoveNs) * 1e-9 : 0.0;
+    return std::min(m_userInterface.nextFrameIn(), imguiNextFrameIn(sinceMove, editingKeyHeld(m_input.frame())));
 }
 
-void Application::processEvents()
+void Application::waitForFrame()
+{
+    if (m_noImage) {   // no swapchain image last time (zero size, surface rebuilt): retry after input, else now and then
+        if (m_framesAfterInput == 0) SDL_WaitEventTimeout(nullptr, kNoImageRetryMs);
+        return;
+    }
+    const double next = nextFrameIn();
+    if (next <= 0.0) return;
+    if (next == kNoFrame) {
+        SDL_WaitEvent(nullptr);   // until input; leaves the event queued for processEvents()
+        return;
+    }
+    const double left = next - double(SDL_GetTicksNS() - m_frameStartNs) * 1e-9;
+    if (left > 0.0) SDL_WaitEventTimeout(nullptr, Sint32(std::ceil(left * 1000.0)) + 1);   // just past it: no wake too early
+}
+
+bool Application::processEvents()
 {
     m_input.beginFrame();
-    std::vector<SDL_Event> events = std::exchange(m_imguiDeferredReleases, {});
-    const size_t carried = events.size();
+    m_imguiFeed.beginFrame();
+    bool any = false;
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
+        any = true;
+        if (e.type == SDL_EVENT_MOUSE_MOTION) m_lastMoveNs = e.common.timestamp;
         m_input.handle(e);
-        events.push_back(e);
+        m_imguiFeed.push(e);
+        handleEvent(e);
     }
-    m_quietFrames = events.size() > carried ? 0 : m_quietFrames + 1;
-
-    uint32_t pressedButtons = 0;
-    std::vector<SDL_Keycode> pressedKeys;
-    for (size_t i = 0; i < events.size(); ++i) {
-        const SDL_Event& ev = events[i];
-        if (i >= carried) {
-            if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN) pressedButtons |= 1u << ev.button.button;
-            if (ev.type == SDL_EVENT_KEY_DOWN) pressedKeys.push_back(ev.key.key);
-            if ((ev.type == SDL_EVENT_MOUSE_BUTTON_UP && (pressedButtons & (1u << ev.button.button))) ||
-                (ev.type == SDL_EVENT_KEY_UP && std::find(pressedKeys.begin(), pressedKeys.end(), ev.key.key) != pressedKeys.end())) {
-                m_imguiDeferredReleases.push_back(ev);
-                continue;
-            }
-        }
-        handleEvent(ev);
-    }
+    m_imguiFeed.endEvents();
+    return any;
 }
 
 void Application::handleEvent(const SDL_Event& e)
 {
-    ImGui_ImplSDL3_ProcessEvent(&e);
-
     if (e.type == SDL_EVENT_QUIT)
         m_running = false;
     if (e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
@@ -200,6 +290,11 @@ void Application::handleEvent(const SDL_Event& e)
         m_running = false;
     if (e.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED)
         applyContentScale();
+    if (e.type == SDL_EVENT_WINDOW_RESIZED &&
+        !(SDL_GetWindowFlags(m_window) & (SDL_WINDOW_MAXIMIZED | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MINIMIZED))) {
+        m_normalW = e.window.data1;   // the size to come back to un-maximized
+        m_normalH = e.window.data2;
+    }
     if (e.type == SDL_EVENT_DROP_FILE && e.drop.data) {
         if (e.drop.windowID == 0)
             m_userInterface.openFile(e.drop.data);   // opened with the app (macOS Finder, Dock icon): no window, no position
@@ -231,10 +326,14 @@ void Application::renderFrame()
     const bool acquired = m_gpu.acquire(frame);
     const Uint64 t1 = SDL_GetPerformanceCounter();
 
-    processEvents();
-    if (!acquired)
+    const bool input = processEvents();
+    m_noImage = !acquired;
+    if (!acquired) {   // a zero-size or rebuilt surface: the input waits for the retry
+        m_framesAfterInput = input ? kFramesAfterInput + 1 : std::max(0, m_framesAfterInput - 1);
         return;
+    }
 
+    m_frameStartNs = SDL_GetTicksNS();
     ImGui_ImplWGPU_NewFrame();
     ImGui_ImplSDL3_NewFrame();
     
@@ -248,8 +347,6 @@ void Application::renderFrame()
     m_userInterface.draw();
 
     ImGui::Render();
-    m_cursors.setCustom(m_userInterface.cursorOverride());
-    m_cursors.update();
 
     // offscreen passes first, in the same encoder
     m_userInterface.renderGpu(frame.encoder);
@@ -259,6 +356,9 @@ void Application::renderFrame()
     ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), frame.pass);
     m_gpu.present(frame);
     const Uint64 t2 = SDL_GetPerformanceCounter();
+
+    // Frames still owed to this input (nextFrameIn()).
+    m_framesAfterInput = input ? kFramesAfterInput : std::max(0, m_framesAfterInput - 1);
 
     // smoothed
     m_acquireMs = m_acquireMs * 0.95f + (float)((t1 - t0) * 1000.0 / freq) * 0.05f;
@@ -272,13 +372,108 @@ void Application::shutdown()
 {
     m_userInterface.shutdown();
     if (m_imguiReady) {
-        m_cursors.shutdown();
         ImGui_ImplWGPU_Shutdown();
         ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext();
         m_imguiReady = false;
     }
     m_gpu.shutdown();
-    if (m_window) { SDL_DestroyWindow(m_window); m_window = nullptr; }
+    if (m_window) {
+        if (!m_prefDir.empty())
+            saveWindowState(m_prefDir + "window.cfg", { m_normalW, m_normalH, (SDL_GetWindowFlags(m_window) & SDL_WINDOW_MAXIMIZED) != 0 });
+        SDL_DestroyWindow(m_window);
+        m_window = nullptr;
+    }
     SDL_Quit();
+}
+
+// ---------------------------------------------------------------- frames, from anywhere
+
+void Application::wakeMainLoop()
+{
+    SDL_Event e{};
+    e.type = SDL_EVENT_USER;
+    SDL_PushEvent(&e);
+}
+
+// ---------------------------------------------------------------- ImGui's input
+
+void Application::ImGuiFeed::beginFrame()
+{
+    m_buttonsChanged = 0;
+    m_keysChanged.clear();
+    m_cut = false;
+    std::swap(m_held, m_replay);
+    const bool flood = m_replay.size() > kMaxHeld;
+    for (Held& h : m_replay) {
+        if (h.event.type == SDL_EVENT_TEXT_INPUT) h.event.text.text = h.text.c_str();
+        if (flood) ImGui_ImplSDL3_ProcessEvent(&h.event);
+        else       push(h.event);
+    }
+    m_replay.clear();
+}
+
+void Application::ImGuiFeed::push(const SDL_Event& e)
+{
+    if (!forImGui(e.type)) return;
+    if (m_cut) { hold(e); return; }
+    if (e.type == SDL_EVENT_MOUSE_MOTION) {
+        if (m_hasMove && !sameRun(m_move, e)) flushMove();
+        m_move    = e;
+        m_hasMove = true;
+        return;
+    }
+    flushMove();   // where the mouse was when this happened
+    if (changedTwice(e)) {
+        m_cut = true;
+        hold(e);
+        return;
+    }
+    ImGui_ImplSDL3_ProcessEvent(&e);
+}
+
+void Application::ImGuiFeed::endEvents()
+{
+    flushMove();
+}
+
+void Application::ImGuiFeed::flushMove()
+{
+    if (!m_hasMove) return;
+    ImGui_ImplSDL3_ProcessEvent(&m_move);
+    m_hasMove = false;
+}
+
+bool Application::ImGuiFeed::changedTwice(const SDL_Event& e)
+{
+    switch (e.type) {
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_UP: {
+        const uint32_t bit = 1u << (e.button.button & 31u);
+        if (m_buttonsChanged & bit) return true;
+        m_buttonsChanged |= bit;
+        return false;
+    }
+    case SDL_EVENT_KEY_DOWN:
+    case SDL_EVENT_KEY_UP:
+        if (e.key.repeat) return false;   // still down: no change
+        if (std::find(m_keysChanged.begin(), m_keysChanged.end(), e.key.scancode) != m_keysChanged.end()) return true;
+        m_keysChanged.push_back(e.key.scancode);
+        return false;
+    default:
+        return false;
+    }
+}
+
+void Application::ImGuiFeed::hold(const SDL_Event& e)
+{
+    if (e.type == SDL_EVENT_MOUSE_MOTION && !m_held.empty() && m_held.back().event.type == SDL_EVENT_MOUSE_MOTION &&
+        sameRun(m_held.back().event, e)) {
+        m_held.back().event = e;
+        return;
+    }
+    Held& h = m_held.emplace_back();
+    h.event = e;
+    h.text.clear();
+    if (e.type == SDL_EVENT_TEXT_INPUT && e.text.text) h.text = e.text.text;
 }

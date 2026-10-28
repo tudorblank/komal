@@ -147,7 +147,9 @@ NodeId Project::createReference(float x, float y, NodeId target)
 {
     NodePtr t = findPtr(target);
     if (t && isMaster(target)) t = nullptr;   // the master output is a sink
-    return adopt(ReferenceNode::create(std::move(t)), x, y);
+    const NodeId id = adopt(ReferenceNode::create(t), x, y);
+    if (t) emit({ ProjectEventType::LinkAdded, id, t->m_meta.id, InputSlot::input() });
+    return id;
 }
 
 NodeId Project::createMove(float x, float y)       { return adopt(MoveNode::create(), x, y); }
@@ -192,14 +194,15 @@ bool Project::deleteNodes(const std::vector<NodeId>& ids)
     if (doomed.contains(m_preview.node)) cancelPreview();
     if (doomed.contains(m_strokeNode)) endStroke();   // committed while its node is still there
 
+    // Every node's inputs before, to tell what changed once it's done.
+    absl::flat_hash_map<NodeId, Inputs> before;
+    for (const NodePtr& n : m_order) before.emplace(n->m_meta.id, inputsOf(*n));
+
     // Re-feed every surviving slot a doomed node fed, before anything is removed (indices stay valid).
-    absl::flat_hash_set<NodeId> rewired;
     for (const NodePtr& n : m_order) {
-        const NodeId id = n->m_meta.id;
-        if (doomed.contains(id)) continue;
+        if (doomed.contains(n->m_meta.id)) continue;
         const auto source = [&](const NodePtr& old) -> NodePtr {
             if (!old || !doomed.contains(old->m_meta.id)) return nullptr;
-            rewired.insert(id);
             return bridgeSource(*old, doomed);
         };
         if (auto* u = dynamic_cast<UnaryNode*>(n.get()))
@@ -224,10 +227,16 @@ bool Project::deleteNodes(const std::vector<NodeId>& ids)
         if (node->m_meta.type == NodeType::Raster)
             absl::erase_if(m_rasterNodes, [&](const auto& kv) { return kv.second == id; });
         // The raster's pixels stay in m_rasters: history may still bring them back.
-        emit(ProjectEventType::NodeRemoved, id);
     }
-    for (NodeId id : rewired) emit(ProjectEventType::GraphChanged, id);
-    emit(ProjectEventType::GraphChanged);
+
+    // Done: the links that went or were healed, then the nodes.
+    for (NodeId id : doomed) {
+        Inputs& was = before[id];
+        was.layers.clear();   // a stack goes with its node
+        emitInputChanges(id, was, Inputs{});
+    }
+    for (const NodePtr& n : m_order) emitInputChanges(n->m_meta.id, before[n->m_meta.id]);
+    for (NodeId id : doomed) emit(ProjectEventType::NodeRemoved, id);
 
     if (doomed.contains(m_active)) {   // fall back to the most recently created raster
         NodeId next = kNoNodeId;
@@ -326,6 +335,7 @@ bool Project::connect(NodeId from, NodeId to, const InputSlot& slot)
     if (!canConnect(from, to, slot)) return false;
     NodePtr src = findPtr(from);
     Node* dst = find(to);
+    const Inputs before = inputsOf(*dst);
 
     switch (slot.kind) {
     case InputSlot::Kind::Input:
@@ -354,7 +364,7 @@ bool Project::connect(NodeId from, NodeId to, const InputSlot& slot)
         dst->linkMask(src, slot.signal, slot.channel);
         break;
     }
-    emit(ProjectEventType::GraphChanged, to);
+    emitInputChanges(to, before);
     return true;
 }
 
@@ -362,13 +372,14 @@ bool Project::disconnect(NodeId to, const InputSlot& slot)
 {
     if (!inputAt(to, slot)) return false;
     Node* dst = find(to);
+    const Inputs before = inputsOf(*dst);
     switch (slot.kind) {
     case InputSlot::Kind::Input: static_cast<UnaryNode*>(dst)->setInput(nullptr); break;
     case InputSlot::Kind::Layer: static_cast<CompositorNode*>(dst)->removeLayer(slot.layer); break;
     case InputSlot::Kind::NewLayer: return false;   // inputAt() already said no
     case InputSlot::Kind::Mask:  dst->linkMask(nullptr, slot.signal, slot.channel); break;
     }
-    emit(ProjectEventType::GraphChanged, to);
+    emitInputChanges(to, before);
     return true;
 }
 
@@ -377,7 +388,7 @@ bool Project::moveLayer(NodeId compositor, size_t from, size_t to)
     auto* c = dynamic_cast<CompositorNode*>(find(compositor));
     if (!c || from >= c->layers().size() || to >= c->layers().size() || from == to) return false;
     c->moveLayer(from, to);
-    emit(ProjectEventType::GraphChanged, compositor);
+    emit(ProjectEventType::LayersChanged, compositor);
     return true;
 }
 
@@ -536,9 +547,8 @@ void Project::unsubscribe(int token)
     if (m_emitting == 0) std::erase_if(m_listeners, [](const auto& s) { return s->removed; });
 }
 
-void Project::emit(ProjectEventType t, NodeId n)
+void Project::emit(const ProjectEvent& e)
 {
-    const ProjectEvent e{ t, n };
     ++m_emitting;
     const size_t count = m_listeners.size();   // subscribed during this emit: next event on
     for (size_t i = 0; i < count; ++i) {
@@ -546,4 +556,33 @@ void Project::emit(ProjectEventType t, NodeId n)
         if (!s->removed) s->listener(e);
     }
     if (--m_emitting == 0) std::erase_if(m_listeners, [](const auto& s) { return s->removed; });
+}
+
+Project::Inputs Project::inputsOf(const Node& n)
+{
+    Inputs in;
+    if (auto* u = dynamic_cast<const UnaryNode*>(&n)) in.input = u->input();
+    if (auto* c = dynamic_cast<const CompositorNode*>(&n)) in.layers = c->layers();
+    for (int s = 0; s < kSignalCount; ++s)
+        for (int ch = 0; ch < kChannelCount; ++ch) in.masks[s][ch] = n.signal(NodeSignal(s)).mask[ch];
+    return in;
+}
+
+void Project::emitInputChanges(NodeId to, const Inputs& before, const Inputs& now)
+{
+    const auto single = [&](const NodePtr& was, const NodePtr& is, const InputSlot& slot) {
+        if (was == is) return;
+        if (was) emit({ ProjectEventType::LinkRemoved, to, was->m_meta.id, slot });
+        if (is)  emit({ ProjectEventType::LinkAdded,   to, is->m_meta.id,  slot });
+    };
+    single(before.input, now.input, InputSlot::input());
+    for (int s = 0; s < kSignalCount; ++s)
+        for (int ch = 0; ch < kChannelCount; ++ch)
+            single(before.masks[s][ch], now.masks[s][ch], InputSlot::mask(NodeSignal(s), NodeChannel(ch)));
+    if (before.layers != now.layers) emit(ProjectEventType::LayersChanged, to);
+}
+
+void Project::emitInputChanges(NodeId to, const Inputs& before)
+{
+    if (const Node* n = find(to)) emitInputChanges(to, before, inputsOf(*n));
 }

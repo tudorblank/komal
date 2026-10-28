@@ -1,4 +1,5 @@
 #include "ui/navigator.hpp"
+#include "core/application.hpp"
 #include "core/project.hpp"
 #include "gfx/device.hpp"
 #include "node/node-picture.hpp"
@@ -89,7 +90,7 @@ void Navigator::shutdown()
 
 void Navigator::draw(bool* open, CanvasNavigation& canvas)
 {
-    m_pending = false;
+    m_nextFrameIn = Application::kNoFrame;
     if (Widgets::beginPanel("Navigator", open, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
         if (!canvas.camera) {
             ImGui::TextDisabled("The canvas is hidden.");
@@ -212,14 +213,18 @@ void Navigator::updatePicture(const BoundsI& bounds, float areaW, float areaH)
     if (width != m_wantW || height != m_wantH) { m_wantW = width; m_wantH = height; m_wantSince = now; }
     const bool resized = width != m_picW || height != m_picH;
     if (!stale && !resized) return;
-    m_pending = true;
-    if (m_picW > 0 && resized && !stale && now - m_wantSince < kSettle) return;   // mid-resize: stretch the old one
-    if (m_picW > 0 && stale && now - m_renderedAt < kMinInterval) return;
+    if (m_picW > 0 && resized && !stale && now - m_wantSince < kSettle) {   // mid-resize: stretch the old one
+        m_nextFrameIn = kSettle - (now - m_wantSince);
+        return;
+    }
+    if (m_picW > 0 && stale && now - m_renderedAt < kMinInterval) {
+        m_nextFrameIn = kMinInterval - (now - m_renderedAt);
+        return;
+    }
     renderPicture(master, width, height);
     m_picBounds   = bounds;
     m_picRevision = master.revision();
     m_renderedAt  = now;
-    m_pending     = false;
 }
 
 void Navigator::renderPicture(Node& n, int width, int height)

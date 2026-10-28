@@ -1,23 +1,4 @@
 #pragma once
-// The node graph, drawn and edited here: every user action becomes a Project call. Only view
-// state is kept (camera, selection, collapsed sections, z order); node items are rebuilt from the
-// Project every frame. Split over panel.cpp (frame, layout), panel-input.cpp, panel-paint.cpp.
-//
-//   LMB on a node            select (Ctrl toggle, Shift chain), drag to move
-//   LMB on empty space       rubber band (Ctrl toggles, Shift adds); click clears
-//   drag from a port         link; drop on nothing opens the add menu, auto-connected;
-//                            over a compositor a gap opens where the mouse is: drop to insert there
-//   drag a layer row         reorder (lands on release); pulled out sideways it comes off as a link
-//   drag a linked input      lift the link off (drop on nothing disconnects)
-//   hover a link, click +    insert a node into it
-//   RMB                      click: node menu / add menu; hold or drag: zoom
-//   MMB drag, wheel          pan (sideways wheel: left / right);  Ctrl+wheel zoom
-//   Del / Backspace          delete selection, healing links around it
-//   F / Home                 frame selection / everything;  Ctrl+A select all
-//   Shift+A, Tab, dbl-click  add menu at the mouse
-//
-// The master is pinned to the top-right corner at 100% (a compositor like any other); links into
-// it are dashed and fade out. The minimap sits bottom-right.
 
 #include "graph/camera.hpp"
 #include "graph/minimap.hpp"
@@ -28,6 +9,7 @@
 #include "graph/node-item/thumbnails.hpp"
 
 #include <absl/container/flat_hash_map.h>
+#include <array>
 #include <optional>
 #include <vector>
 
@@ -35,21 +17,35 @@ class ActionRegistry;
 class GpuDevice;
 struct InputFrame;
 class Project;
+struct ProjectEvent;
 
+// The node graph editor. Like a Qt scene, it keeps an item per node and per link, built once
+// and then changed only by what Project says changed:
+//
+//   NodeAdded      addNodeItem      item laid out, links into it added
+//   NodeRemoved    removeNodeItem   item and its links dropped
+//   NodeMoved      moveNodeItem     item shifted, its links' ends follow
+//   LinkAdded      addLink          one link (a mask link also lays out its node: a row appears)
+//   LinkRemoved    removeLink       one link
+//   LayersChanged  layoutNodeItem   the stack laid out again, its layer links re-added
+//   anything else                   nothing: values and pixels are painted as they are
+//
+// Edits go the other way: input calls Project (connect, setNodePosition, ...), and the event it
+// emits updates the items. The graph's own view state works the same way: opening a section or
+// a drag opening a gap in a stack lays out that one item. Link curves are screen space, placed
+// again when a link or a camera moved. A frame paints and hit-tests the items as they are.
 class GraphPanel {
 public:
     void init(GpuDevice& gpu, Project& project, const InputFrame& input, ActionRegistry& actions);
     void shutdown();
     void setUiScale(float scale) { m_uiScale = scale; }
-    // The canvas has the pointer: its shortcuts win over the focused graph's.
-    void setPointerElsewhere(bool elsewhere) { m_pointerElsewhere = elsewhere; }
     void draw(bool* open);
     // A file dropped at `screen` (`window` topmost): true if it lands on the graph, with the
     // position for a new node centred under it.
     bool dropTarget(const ImGuiWindow* window, ImVec2 screen, ImVec2& nodePos) const;
     void selectOnly(NodeId id);
     const GraphSelection::Set& selection() const { return m_selection.ids(); }
-    bool busy() const { return m_thumbs.pending(); }   // work left that needs more frames
+    double nextFrameIn() const;   // see Application::nextFrameIn
     // A world rectangle for the canvas to show (double-click, "Show in Canvas"). True once per request.
     bool takeCanvasFrame(BoundsI& out);
 
@@ -73,6 +69,7 @@ private:
         bool      toMaster;           // drawn dashed, fading out
         LinkCurve curve;              // screen
         ImVec2    fromGraph, toGraph; // port positions in each node's own space
+        bool      shown = true;       // both ports are there (a lifted layer's isn't)
     };
     struct LinkDrag {
         NodeId    node = kNoNodeId;   // the end that stays put
@@ -108,10 +105,22 @@ private:
     GraphPaint paintContext(ImDrawList* dl) const { return { dl, m_camera, m_uiScale }; }
     bool isMaster(NodeId id) const;
     const GraphCamera& cameraFor(NodeId id) const { return isMaster(id) ? m_pinned : m_camera; }   // whose space its node item is in
-    void syncNodes();
+    // ---- items, kept in step with the project
+    void onProjectEvent(const ProjectEvent& e);
+    void addNodeItem(NodeId id, bool withLinks = true);
+    void removeNodeItem(NodeId id);
+    void moveNodeItem(NodeId id);
+    void layoutNodeItem(NodeId id);   // after anything its layout depends on changed
+    void addLink(NodeId from, NodeId to, const InputSlot& slot);
+    void removeLink(NodeId to, const InputSlot& slot);
+    void addLinksInto(NodeId to, bool layersOnly = false);   // what the project wires into it
+    void placeLinkEnds(GraphLink& l) const;
+    void placeLinkEndsOf(NodeId id);   // its ports moved
+    StackLayout stackLayout(NodeId id) const;   // the gap a drag opens in its stack, if any
+    void updateStackGaps();           // a drag opened, moved or closed one
     void layoutOverlays(ImVec2 canvasMin, ImVec2 canvasMax);   // the pinned master and the navigator
     Hit  hitNode(NodeId id, const NodeItem& s, ImVec2 graphPoint, float portRadius) const;
-    void rebuildLinks(const GraphPaint& g);
+    void placeLinkCurves(const GraphPaint& g);   // when a link or a camera moved
     Hit  hitTest(ImVec2 mouse, const GraphPaint& g) const;
     const NodeItem* item(NodeId id) const;
     void bringToFront(NodeId id);
@@ -132,7 +141,6 @@ private:
     void deleteSelection();
     void frameNodes(bool selectionOnly, ImVec2 canvasSize);
     void showInCanvas(const std::vector<NodeId>& ids);   // their output's world bounds, for the canvas
-    void setCursor(const Hit& hit) const;
     int  activeWidget(NodeId id) const;   // index of the widget being dragged, or -1
 
     void paint(const GraphPaint& g, const Hit& hit, ImVec2 canvasMin, ImVec2 canvasMax);
@@ -141,7 +149,7 @@ private:
 
     Project*    m_project = nullptr;
     const InputFrame* m_input = nullptr;   // keys and modifiers, straight from SDL
-    ActionRegistry*   m_actions = nullptr; // graph.* shortcuts fire here, while the graph has focus
+    ActionRegistry*   m_actions = nullptr; // graph.* shortcuts: claimed for the graph while it has the pointer or focus
     int         m_subscription = 0;
     const ImGuiWindow* m_window = nullptr;   // this frame's, while the graph is shown
     ImVec2      m_canvasMin{};
@@ -151,15 +159,20 @@ private:
     ImRect      m_pinnedRect;          // the master on screen
     ImVec2      m_canvasSize;
     GraphMinimap m_minimap;
-    std::vector<GraphMinimap::Edge> m_minimapEdges;
+    std::vector<GraphMinimap::Edge> m_minimapEdges;   // built with the links
     float       m_uiScale = 1.0f;
-    bool        m_pointerElsewhere = false;
     int         m_frameOnStart = 3;   // frames to frame everything for (the dock layout settles first)
 
     absl::flat_hash_map<NodeId, NodeItemState> m_viewStates;
-    absl::flat_hash_map<NodeId, NodeItem>      m_items;      // this frame's
+    absl::flat_hash_map<NodeId, NodeItem>      m_items;
     std::vector<NodeId>    m_zOrder;                       // back to front
+    std::vector<NodeId>    m_gapped;                       // stacks laid out with a drag's gap
     std::vector<GraphLink> m_links;
+    bool   m_linksMoved = true;             // curves (and the minimap's edges) to place again
+    std::array<float, 6> m_linkCameras{};   // both cameras, as the curves were placed for
+    uint64_t m_itemsVersion = 0;            // bumped whenever an item changes
+    std::array<float, 9> m_minimapKey{};    // what the minimap was laid out for
+    uint64_t m_minimapVersion = ~0ull;
     GraphSelection         m_selection;
     NodeItemThumbnails         m_thumbs;
     NodeMenu               m_menu;

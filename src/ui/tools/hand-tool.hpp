@@ -10,7 +10,6 @@ public:
 
     void drawProperties(ToolContext& ctx) override;
     void canvasInput(const CanvasInput& in) override;
-    ImGuiMouseCursor cursor() const override { return m_dragging ? ImGuiMouseCursor_ResizeAll : ImGuiMouseCursor_Hand; }
     bool busy() const override { return m_dragging; }
     void cancel(Project&) override { m_dragging = false; }
 

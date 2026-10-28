@@ -72,6 +72,13 @@ struct NodeItemState {
     bool expanded[kSignalCount] = {};   // by NodeSignal; collapsed until the user opens one
 };
 
+// A stack laid out around a drag: `hidden` layer left out, a gap at position `gap` (0 = bottom). -1: none.
+struct StackLayout {
+    int gap    = -1;
+    int hidden = -1;
+    bool operator==(const StackLayout&) const = default;
+};
+
 struct NodeItem {
     NodeId id = kNoNodeId;
     std::vector<NodeItemBox>        boxes;     // [0] carries the header
@@ -85,16 +92,13 @@ struct NodeItem {
     std::vector<NodeItemChannelRow> channels;
     std::vector<NodeItemLayerRow>   layers;   // top of the stack first
     ImRect bounds;
+    StackLayout stack;            // the drag layout it was built with
 
     const NodeItemPort* output() const;
     const NodeItemPort* input(const InputSlot& slot) const;
+    void moveTo(float x, float y);   // the node moved: same layout, shifted
 };
 
-// A stack laid out around a drag: `hidden` layer left out, a gap at position `gap` (0 = bottom). -1: none.
-struct StackLayout {
-    int gap    = -1;
-    int hidden = -1;
-};
 
 // Lays `n` out into `out`, reusing its storage.
 void buildNodeItem(const Project& project, const Node& n, const NodeItemState& view, StackLayout stack, NodeItem& out);

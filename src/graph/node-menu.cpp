@@ -44,13 +44,13 @@ void NodeMenu::open(Fit fit)
     m_search[0]  = 0;
     m_highlight  = 0;
     m_open       = true;
-    m_justOpened = true;
-    ImGui::OpenPopup(kPopup);
+    m_justOpened = true;   // the popup opens in draw(), inside the graph's window (its ID stack)
 }
 
 bool NodeMenu::draw(NodeType& picked)
 {
     if (!m_open) return false;
+    if (m_justOpened) ImGui::OpenPopup(kPopup);
     if (!ImGui::BeginPopup(kPopup)) { m_open = false; return false; }
 
     // Search field first, focused when the menu opens.

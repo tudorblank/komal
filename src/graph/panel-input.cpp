@@ -1,4 +1,5 @@
 #include "graph/panel.hpp"
+#include "core/application.hpp"
 #include "core/input.hpp"
 #include "core/project.hpp"
 #include "graph/style.hpp"
@@ -192,6 +193,7 @@ void GraphPanel::pressWidget(const Hit& hit, bool doubleClick)
     case NodeItemControl::SectionToggle: {
         bool& e = m_viewStates[hit.node].expanded[int(w.signal)];
         e = !e;
+        layoutNodeItem(hit.node);
         break;
     }
     case NodeItemControl::Scale:
@@ -231,6 +233,16 @@ void GraphPanel::pressWidget(const Hit& hit, bool doubleClick)
         m_layerDrag = { hit.node, w.layer, m_pressGraph.y - w.rect.Min.y, false, -1 };
         break;
     }
+}
+
+double GraphPanel::nextFrameIn() const
+{
+    if (!m_window) return Application::kNoFrame;      // not shown this frame
+    if (m_frameOnStart > 0) return 0.0;   // framing everything while the dock layout settles
+    double next = m_thumbs.nextFrameIn();
+    if (m_rightDown && !m_rightZooming)   // a right press held long enough turns into a zoom
+        next = std::min(next, kRightHoldSeconds - (ImGui::GetTime() - m_rightPressAt));
+    return next;
 }
 
 void GraphPanel::updateDrag()
@@ -484,28 +496,3 @@ int GraphPanel::activeWidget(NodeId id) const
     return -1;
 }
 
-void GraphPanel::setCursor(const Hit& hit) const
-{
-    ImGuiMouseCursor c = ImGuiMouseCursor_Arrow;
-    if (m_rightZooming) c = ImGuiMouseCursor_ResizeNS;
-    else if (m_canvasActive && ImGui::IsMouseDown(ImGuiMouseButton_Middle)) c = ImGuiMouseCursor_ResizeAll;
-    else if (m_drag == Drag::Scale || m_drag == Drag::Offset) c = ImGuiMouseCursor_ResizeEW;
-    else if (m_drag == Drag::Layer) c = ImGuiMouseCursor_ResizeNS;
-    else if (m_drag == Drag::Link) c = ImGuiMouseCursor_Hand;
-    else if (m_drag == Drag::None) {
-        if (hit.kind == Hit::Kind::Port || hit.kind == Hit::Kind::Insert) c = ImGuiMouseCursor_Hand;
-        if (hit.kind == Hit::Kind::Widget) {
-            switch (item(hit.node)->widgets[size_t(hit.index)].control) {
-            case NodeItemControl::Lock:
-            case NodeItemControl::LockAlpha:
-            case NodeItemControl::SectionToggle: c = ImGuiMouseCursor_Hand; break;
-            case NodeItemControl::Scale:
-            case NodeItemControl::OffsetX:
-            case NodeItemControl::OffsetY:       c = ImGuiMouseCursor_ResizeEW; break;
-            case NodeItemControl::Layer:         c = ImGuiMouseCursor_ResizeNS; break;
-            case NodeItemControl::Title:         break;
-            }
-        }
-    }
-    ImGui::SetMouseCursor(c);
-}

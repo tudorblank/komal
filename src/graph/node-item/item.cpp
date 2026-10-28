@@ -15,6 +15,24 @@ const NodeItemPort* NodeItem::input(const InputSlot& slot) const
     return nullptr;
 }
 
+void NodeItem::moveTo(float x, float y)
+{
+    const ImVec2 d(x - header.Min.x, y - header.Min.y);   // the header's corner is the node's position
+    const auto shift = [&](ImRect& r) { if (r.Min.x <= r.Max.x) r.Translate(d); };   // empty ones stay empty
+    for (NodeItemBox& b : boxes) shift(b.rect);
+    shift(header);
+    shift(ioRow);
+    shift(thumb);
+    shift(offsetRow[0]);
+    shift(offsetRow[1]);
+    for (NodeItemPort& p : ports) p.pos = ImVec2(p.pos.x + d.x, p.pos.y + d.y);
+    for (NodeItemWidget& w : widgets) shift(w.rect);
+    for (NodeItemSectionRow& r : sections) shift(r.rect);
+    for (NodeItemChannelRow& r : channels) { shift(r.rect); shift(r.track); }
+    for (NodeItemLayerRow& r : layers) shift(r.rect);
+    shift(bounds);
+}
+
 bool preferredInput(const Node& n, InputSlot& out)
 {
     if (dynamic_cast<const UnaryNode*>(&n)) { out = InputSlot::input(); return true; }
@@ -32,6 +50,7 @@ public:
     void build()
     {
         m_item.id = m_node.m_meta.id;
+        m_item.stack = m_stack;
         m_item.boxes.clear();
         m_item.ports.clear();
         m_item.widgets.clear();

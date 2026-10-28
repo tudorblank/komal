@@ -8,9 +8,10 @@
 //                 .enabled = [&] { return project.canUndo(); },
 //                 .run     = [&] { project.undo(); } });
 //
-// Shortcuts fire through dispatch(), called by each scope's owner while it's live: the canvas
-// while it has the pointer, the graph while hovered or focused (unless the canvas has the
-// pointer), the global scope unless a text field is typing. Never two panels at once.
+// Shortcuts fire in one place, dispatch(), once a frame before the panels draw: the global ones,
+// and those of the one panel scope that has the keyboard. A panel claims it while drawing, for
+// the next frame: with the pointer over it, or focused; the pointer wins. Nothing fires while a
+// text field is typing.
 
 #include "core/input.hpp"
 
@@ -23,6 +24,11 @@ enum class ActionScope : uint8_t {
     Global,
     Canvas,
     Graph,
+};
+
+enum class KeyboardClaim : uint8_t {
+    Focus,     // the panel's window is focused
+    Pointer,   // the pointer is over the panel (or held on it)
 };
 
 struct Action {
@@ -44,14 +50,19 @@ public:
     const Action* find(std::string_view id) const;
     bool run(std::string_view id);   // false if unknown or disabled
 
-    // Runs the enabled actions of `scope` whose shortcut went down this frame.
-    void dispatch(const InputFrame& input, ActionScope scope);
+    void claimKeyboard(ActionScope scope, KeyboardClaim claim);   // the first of the strongest wins
+    // Runs the enabled actions whose shortcut went down this frame: global ones, and those of the
+    // scope claimed last frame. Once a frame, before the panels draw.
+    void dispatch(const InputFrame& input, bool typing);
 
     std::string shortcutLabel(std::string_view id) const;   // "Ctrl+Shift+Z" ("" if none)
     const std::vector<Action>& actions() const { return m_actions; }
 
 private:
     std::vector<Action> m_actions;
+    ActionScope   m_claimScope = ActionScope::Global;   // for the next dispatch
+    KeyboardClaim m_claim      = KeyboardClaim::Focus;
+    bool          m_claimed    = false;
 };
 
 std::string shortcutLabel(const Shortcut& s);   // Cmd on macOS

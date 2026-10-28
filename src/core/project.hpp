@@ -5,28 +5,13 @@
 #include "node/node-types.hpp"
 #include "raster/brush.hpp"
 
+#include <array>
 #include <deque>
 #include <functional>
 #include <memory>
 #include <span>
 #include <string>
 #include <vector>
-
-enum class ProjectEventType : uint8_t {
-    NodeAdded,
-    NodeRemoved,
-    NodeMoved,             // editor position
-    NodeChanged,           // signal scales, move offset, label, raster locks
-    PreviewChanged,        // an interactive edit started, moved, was applied or cancelled
-    GraphChanged,          // inputs, layers or masks of `node` changed
-    ActiveRasterChanged,
-    RasterEdited,          // pixels of `node` changed (edit, undo, redo)
-    HistoryChanged,
-};
-struct ProjectEvent {
-    ProjectEventType type;
-    NodeId node = kNoNodeId;
-};
 
 // Where a link lands on a node.
 struct InputSlot {
@@ -49,6 +34,29 @@ struct InputSlot {
         if (kind == Kind::Mask)  return signal == o.signal && channel == o.channel;
         return true;
     }
+};
+
+// What changed, told to every listener right after the change is made (the project's state is
+// final by then). Views keep their own items and update them from these; nothing re-reads the
+// whole project. Pixels travel separately, as dirty tiles through the node graph.
+enum class ProjectEventType : uint8_t {
+    NodeAdded,             // node
+    NodeRemoved,           // node (its links are removed first)
+    NodeMoved,             // node: its editor position
+    NodeChanged,           // node: a value (signal scale, move offset, label, raster locks)
+    LinkAdded,             // source feeds node at slot: a single input (Input, Mask)
+    LinkRemoved,           // source no longer feeds node at slot
+    LayersChanged,         // node: a stack's layers were added, removed, replaced or reordered
+    PreviewChanged,        // an interactive edit started, moved, was applied or cancelled
+    ActiveRasterChanged,
+    RasterEdited,          // pixels of `node` changed (edit, undo, redo)
+    HistoryChanged,
+};
+struct ProjectEvent {
+    ProjectEventType type;
+    NodeId    node   = kNoNodeId;
+    NodeId    source = kNoNodeId;   // Link*
+    InputSlot slot;                 // Link*
 };
 
 // An edit being dragged (a slider, an offset). While previewed the graph is untouched (nothing
@@ -145,7 +153,18 @@ private:
     NodePtr bridgeSource(const Node& n, const absl::flat_hash_set<NodeId>& deleted) const;
     bool activeRasterEditable() const;
     RasterRootNode* rasterNode(RasterId id) const;
-    void emit(ProjectEventType t, NodeId n = kNoNodeId);
+    void emit(ProjectEventType t, NodeId n = kNoNodeId) { emit(ProjectEvent{ t, n, kNoNodeId, {} }); }
+    void emit(const ProjectEvent& e);
+
+    // What feeds a node: snapshotted before an edit, compared after it to emit what changed.
+    struct Inputs {
+        NodePtr input;
+        std::vector<NodePtr> layers;
+        std::array<std::array<NodePtr, kChannelCount>, kSignalCount> masks;
+    };
+    static Inputs inputsOf(const Node& n);
+    void emitInputChanges(NodeId to, const Inputs& before, const Inputs& now);
+    void emitInputChanges(NodeId to, const Inputs& before);   // ... against its inputs now
     void endPreviewBounds();   // the previewed node's bounds back to its applied state
     void applyStrokeChanges();
     RasterRootNode* strokeRaster() const;

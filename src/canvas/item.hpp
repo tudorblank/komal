@@ -6,7 +6,7 @@
 //   prepare()      CPU, before rendering: upload changed data, catch up with its source within
 //                  the frame's shared budget. Returns "I changed".
 //   drawGpu()      in the view's canvas pass, world space, by z: part of the picture.
-//   drawOverlay()  ImGui, screen space, over the canvas: outlines, cursors. Never re-renders.
+//   drawOverlay()  ImGui, screen space, over the canvas: outlines. Never re-renders.
 // Overlay-only items return false from drawsOnGpu(): showing or moving them costs no re-render.
 
 #include "canvas/camera.hpp"

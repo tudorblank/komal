@@ -1,4 +1,5 @@
 #include "graph/node-item/thumbnails.hpp"
+#include "core/application.hpp"
 #include "core/perf.hpp"
 #include "core/project.hpp"
 #include "gfx/handles.hpp"
@@ -77,7 +78,7 @@ bool NodeItemThumbnails::allocate(Thumb& t)
 void NodeItemThumbnails::refresh(Project& project, double budgetMs)
 {
     PerfScope perf(Perf::Thumbnails);
-    m_pending = false;
+    m_nextFrameIn = Application::kNoFrame;
     if (project.strokeActive()) {   // brought up to date once the stroke ends
         m_requested.clear();
         return;
@@ -87,12 +88,12 @@ void NodeItemThumbnails::refresh(Project& project, double budgetMs)
     const double now = ImGui::GetTime();
 
     for (NodeId id : m_requested) {
-        if (Clock::now() >= deadline) { m_pending = true; break; }   // the rest stay requested by being drawn again
+        if (Clock::now() >= deadline) { m_nextFrameIn = 0.0; break; }   // the rest stay requested by being drawn again
         Node* n = project.find(id);
         if (!n) continue;
         Thumb& t = m_thumbs[id];
         if (t.rendered && t.revision == n->revision()) continue;
-        if (t.rendered && now - t.renderedAt < kMinInterval) { m_pending = true; continue; }
+        if (t.rendered && now - t.renderedAt < kMinInterval) { m_nextFrameIn = std::min(m_nextFrameIn, kMinInterval - (now - t.renderedAt)); continue; }
         if (t.page < 0 && !allocate(t)) continue;
         render(*n, t);
         t.revision   = n->revision();

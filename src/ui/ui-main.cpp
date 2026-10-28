@@ -1,4 +1,5 @@
 #include "ui-main.hpp"
+#include "core/application.hpp"
 #include "core/input.hpp"
 #include "ui/action-ui.hpp"
 #include "ui/widgets.hpp"
@@ -35,10 +36,14 @@ void UserInterface::shutdown()
     m_initialized = false;
 }
 
-bool UserInterface::busy() const
+double UserInterface::nextFrameIn() const
 {
-    return m_importer.busy() || !m_drops.empty() || m_project->strokeActive() || m_canvasPanel.busy() || m_graphPanel.busy() ||
-           m_navigator.busy();
+    // Imports wake the loop when they finish; a stroke changes nothing while the pen rests.
+    if (m_showCanvas && m_canvasPanel.busy()) return 0.0;
+    double next = Application::kNoFrame;
+    if (m_showGraph)     next = std::min(next, m_graphPanel.nextFrameIn());
+    if (m_showNavigator) next = std::min(next, m_navigator.nextFrameIn());
+    return next;
 }
 
 void UserInterface::renderGpu(WGPUCommandEncoder enc)
@@ -50,7 +55,7 @@ void UserInterface::draw()
 {
     for (const ImageImporter::Imported& i : m_importer.poll(*m_project))
         if (i.placement.target == ImageImporter::Placement::Target::Graph) m_graphPanel.selectOnly(i.node);
-    if (!ImGui::GetIO().WantTextInput) m_actions.dispatch(*m_input, ActionScope::Global);   // a typing field keeps its keys
+    m_actions.dispatch(*m_input, ImGui::GetIO().WantTextInput);   // the frame's shortcuts, all of them, before the panels
     drawMenuBar();
     if (m_showTools) m_toolbox.draw(m_tools, *m_project, m_actions);   // under the menu bar, before the dockspace takes the rest
     drawDockspace();   // must come before the panels that dock into it
@@ -59,7 +64,6 @@ void UserInterface::draw()
     if (m_showToolProperties) m_toolProperties.draw(&m_showToolProperties, m_tools, *m_project);
     // What edits the project (graph, navigator) runs before the canvas, so the canvas draws this
     // frame's state: its outlines and its GPU picture always agree.
-    m_graphPanel.setPointerElsewhere(m_showCanvas && m_canvasPanel.hasPointer());   // last frame's
     if (m_showGraph) { PerfScope perf(Perf::Graph); m_graphPanel.draw(&m_showGraph); }
     if (BoundsI b; m_graphPanel.takeCanvasFrame(b)) m_canvasPanel.frameWorld(b);   // a node double-clicked: go to its pixels
     if (m_showNavigator)      m_navigator.draw(&m_showNavigator, m_tools.canvas());
@@ -131,11 +135,15 @@ namespace {
 
 using DockShares = absl::flat_hash_map<unsigned int, float>;
 
+// A node's size along `axis`: measured, or before the first layout (just loaded from the .ini)
+// the size it was saved with.
+float sizeOf(const ImGuiDockNode* n, int axis) { return n->Size[axis] > 0.0f ? n->Size[axis] : n->SizeRef[axis]; }
+
 // Each split's first-child share, remembered (scaling from last frame's sizes would creep from
 // rounding). Only a splitter the user moved (off by over a pixel) updates it.
 float childShare(const ImGuiDockNode* c0, const ImGuiDockNode* c1, int axis)
 {
-    return c0->Size[axis] / (c0->Size[axis] + c1->Size[axis]);
+    return sizeOf(c0, axis) / (sizeOf(c0, axis) + sizeOf(c1, axis));
 }
 
 void rememberShares(const ImGuiDockNode* node, DockShares& shares)
@@ -175,7 +183,7 @@ void scaleDockTree(ImGuiDockNode* node, ImVec2 size, const DockShares& shares)
     ImGuiDockNode* c1 = node->ChildNodes[1];
     const int axis = node->SplitAxis, across = axis ^ 1;
     ImVec2 s0 = size, s1 = size;
-    if (c0->IsVisible && c1->IsVisible && c0->Size[axis] > 0.0f && c1->Size[axis] > 0.0f) {
+    if (c0->IsVisible && c1->IsVisible && sizeOf(c0, axis) > 0.0f && sizeOf(c1, axis) > 0.0f) {
         const float avail = std::max(size[axis] - ImGui::GetStyle().DockingSeparatorSize, 2.0f);
         const bool flex0 = flexible(c0), flex1 = flexible(c1);
         if (flex0 == flex1) {
@@ -185,7 +193,7 @@ void scaleDockTree(ImGuiDockNode* node, ImVec2 size, const DockShares& shares)
             s1[axis] = std::max(1.0f, avail - s0[axis]);
         } else {
             ImGuiDockNode* kept = flex0 ? c1 : c0;   // the fixed side keeps its size
-            const float k = std::clamp(kept->Size[axis], 1.0f, avail - 1.0f);
+            const float k = std::clamp(sizeOf(kept, axis), 1.0f, avail - 1.0f);
             (kept == c0 ? s0 : s1)[axis] = k;
             (kept == c0 ? s1 : s0)[axis] = avail - k;
         }

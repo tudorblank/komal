@@ -34,7 +34,7 @@ public:
     void forget(NodeId id);
     void refresh(Project& project, double budgetMs);   // once per frame, after drawing
 
-    bool pending() const { return m_pending; }   // stale thumbnails left for later frames
+    double nextFrameIn() const { return m_nextFrameIn; }   // when leftover stale thumbnails get their turn (Application::nextFrameIn)
 
 private:
     static constexpr int    kPageSize    = 2048;
@@ -62,7 +62,7 @@ private:
     WGPUDevice m_device = nullptr;
     WGPUQueue  m_queue  = nullptr;
     std::vector<Page> m_pages;
-    bool m_pending = false;
+    double m_nextFrameIn = 0.0;   // set by refresh()
     absl::flat_hash_map<NodeId, Thumb> m_thumbs;
     absl::flat_hash_set<NodeId> m_requested;   // drawn this frame
     RenderCtx m_render;

@@ -30,7 +30,7 @@ public:
 
     // Before the canvas, so its changes show on the canvas the same frame.
     void draw(bool* open, CanvasNavigation& canvas);
-    bool busy() const { return m_pending; }   // the picture is due a render
+    double nextFrameIn() const { return m_nextFrameIn; }   // when the picture needs a render (Application::nextFrameIn)
 
 private:
     static constexpr int    kMaxPicture  = 1024;          // pixels, either side
@@ -55,7 +55,7 @@ private:
     double   m_renderedAt  = -1.0;
     int      m_wantW = 0, m_wantH = 0;   // the size asked for, and since when
     double   m_wantSince = 0.0;
-    bool     m_pending = false;
+    double   m_nextFrameIn = 0.0;   // set by draw()
     RenderCtx             m_render;
     std::vector<RGBA> m_pixels;
 

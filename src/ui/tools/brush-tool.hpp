@@ -17,8 +17,6 @@ public:
 
     void drawProperties(ToolContext& ctx) override;
     void canvasInput(const CanvasInput& in) override;
-    void drawOverlay(ImDrawList* dl, const OverlayContext& ctx, Vec2 world) const override;
-    bool cursorRing(float zoom, float& radius, bool& erase) const override;   // the brush outline
     void registerActions(ActionRegistry& actions, std::function<bool()> isActive) override;   // [ ] size
 
     bool busy() const override { return m_stroking; }
@@ -29,8 +27,6 @@ public:
 private:
     static constexpr float kMaxDiameter = 1024.0f;
 
-    float cursorDiameter() const;   // world pixels: the size a dab has right now (pen pressure)
-
     ToolColors& m_colors;
     BrushParams m_params;          // colour and mode are filled in when a stroke starts
     std::vector<StrokePoint> m_points;   // this frame's path
@@ -38,5 +34,4 @@ private:
     bool m_stroking = false;
     PointerButton m_strokeButton = PointerButton::Primary;   // the stroke ends when this one is released
     bool          m_strokePen    = false;                    // ... by the device that started it
-    float         m_pressure     = 1.0f;                     // the pen's, for the cursor
 };

@@ -22,7 +22,6 @@ constexpr float kZBackground = -10.0f;   // the checkerboard: under everything
 constexpr float kZOutput   =  0.0f;   // the edit preview takes the output's place
 constexpr float kZOrigin   = -5.0f;   // the "+" on 0, 0: on the checkerboard, under the picture
 constexpr float kZBounds   = 10.0f;
-constexpr float kZTool     = 20.0f;
 
 }
 
@@ -52,13 +51,39 @@ bool CanvasPanel::init(GpuDevice& gpu, Project& project, ToolManager& tools, con
     m_previewFrom->setZ(kZBounds);
     m_previewTo = m_scene.addItem<OutlineItem>(IM_COL32(140, 180, 245, 255), 1.5f);
     m_previewTo->setZ(kZBounds);
-    m_toolOverlay = m_scene.addItem<ToolOverlayItem>(tools);
-    m_toolOverlay->setZ(kZTool);
+
+    m_subscription = project.subscribe([this](const ProjectEvent& e) { onProjectEvent(e); });
+    updateOutlines();
     return true;
+}
+
+void CanvasPanel::onProjectEvent(const ProjectEvent& e)
+{
+    switch (e.type) {
+    case ProjectEventType::PreviewChanged:
+        startPreview();
+        updateOutlines();
+        break;
+    case ProjectEventType::NodeAdded:
+    case ProjectEventType::NodeMoved:
+        break;
+    default:
+        updateOutlines();
+        break;
+    }
+}
+
+void CanvasPanel::setSelection(std::vector<NodeId> ids)
+{
+    if (ids == m_selection) return;
+    m_selection = std::move(ids);
+    updateOutlines();
 }
 
 void CanvasPanel::shutdown()
 {
+    if (m_project && m_subscription) m_project->unsubscribe(m_subscription);
+    m_subscription = 0;
     m_view.shutdown();
     m_scene.shutdown();
     m_output = nullptr;
@@ -66,9 +91,6 @@ void CanvasPanel::shutdown()
     m_preview      = nullptr;
     m_previewFrom  = nullptr;
     m_previewTo    = nullptr;
-    m_toolOverlay = nullptr;
-    m_cursorOverride = nullptr;
-    m_ringCursors.clear();
     if (m_tools) m_tools->canvas() = {};
     m_ready = false;
 }
@@ -77,7 +99,6 @@ void CanvasPanel::draw(bool* open)
 {
     m_visible = false;
     m_window  = nullptr;
-    m_cursorOverride = nullptr;
     m_hasPointer = false;
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
@@ -101,8 +122,7 @@ void CanvasPanel::draw(bool* open)
                                                       ImGuiButtonFlags_MouseButtonRight |
                                                       ImGuiButtonFlags_MouseButtonMiddle);
             handleInput(origin);
-            updatePreview();
-            updateOverlayItems(origin);
+            finishPreview();
 
             ImDrawList* dl = ImGui::GetWindowDrawList();
             dl->AddImage((ImTextureID)(uintptr_t)m_view.texture(), origin, ImVec2(origin.x + avail.x, origin.y + avail.y));
@@ -144,7 +164,7 @@ void CanvasPanel::handleInput(const ImVec2& origin)
     }
     m_hasPointer = hovered || active;
     m_tools->setSpringHand(m_hasPointer && !io.WantTextInput && m_input->isDown(SDLK_SPACE));
-    if (m_hasPointer && !io.WantTextInput) m_actions->dispatch(*m_input, ActionScope::Canvas);   // [ ] brush size, ...
+    if (m_hasPointer) m_actions->claimKeyboard(ActionScope::Canvas, KeyboardClaim::Pointer);   // [ ] brush size, ... next frame
 
     // The rest is the tool's: ImGui decides whether the pointer is ours, SDL gives every sample.
     Tool& tool = m_tools->active();
@@ -154,32 +174,27 @@ void CanvasPanel::handleInput(const ImVec2& origin)
             m_pointer.push_back({ ev, cam.screenToWorld({ ev.x - origin.x, ev.y - origin.y }) });
     tool.canvasInput({ *m_project, cam, mouse, cam.screenToWorld(mouse), m_pointer, *m_input,
                        { m_view.width(), m_view.height() }, hovered, active });
-    // The cursor: a system-drawn ring where the tool has one (no frame of lag), else its ImGui cursor.
-    if (hovered || active) {
-        float radius = 0.0f;
-        bool erase = false;
-        if (tool.cursorRing(cam.zoom, radius, erase)) m_cursorOverride = m_ringCursors.get(radius, erase);
-        ImGui::SetMouseCursor(m_cursorOverride ? ImGuiMouseCursor_Arrow : tool.cursor());
-    }
 }
 
-void CanvasPanel::updatePreview()
+void CanvasPanel::startPreview()
 {
     const EditPreview& pv = m_project->preview();
-    if (pv.active()) {
-        // A drag started (or moved on to another node): plan its GPU picture once.
-        if (!m_previewOutlined && (!m_preview->active() || m_preview->node() != pv.node))
-            m_previewOutlined = !m_preview->begin();
-    } else {
-        m_previewOutlined = false;
-        // The drag ended: keep the preview until the output has caught up (no flash of the old picture).
-        if (m_preview->active() && m_output->settled()) m_preview->end();
-    }
+    if (!pv.active()) { m_previewOutlined = false; return; }   // finishPreview() takes it down
+    // Its GPU picture is planned once per node dragged.
+    if (!m_previewOutlined && (!m_preview->active() || m_preview->node() != pv.node))
+        m_previewOutlined = !m_preview->begin();
+}
+
+void CanvasPanel::finishPreview()
+{
+    // The drag ended: keep the preview until the output has caught up (no flash of the old picture).
+    if (!m_project->preview().active() && m_preview->active() && m_output->settled()) m_preview->end();
     m_output->setSuppressed(m_preview->active() && m_preview->hasResult());
 }
 
-void CanvasPanel::updateOverlayItems(const ImVec2& origin)
+void CanvasPanel::updateOutlines()
 {
+    if (!m_ready) return;
     // Bounds of the nodes selected in the graph; with none selected, of the raster being edited.
     std::vector<BoundsI> outlined;
     for (NodeId id : m_selection)
@@ -213,15 +228,6 @@ void CanvasPanel::updateOverlayItems(const ImVec2& origin)
     if (!from.empty()) m_previewFrom->setPixelBounds(from.minX, from.minY, from.maxX, from.maxY);
     m_previewTo->setVisible(!to.empty());
     if (!to.empty()) m_previewTo->setPixelBounds(to.minX, to.minY, to.maxX, to.maxY);
-
-    // The tool's cursor while the mouse is over the canvas (or holds it).
-    const bool showCursor = ImGui::IsItemHovered() || ImGui::IsItemActive();
-    m_toolOverlay->setVisible(showCursor);
-    if (showCursor) {
-        const ImVec2 m = ImGui::GetIO().MousePos;
-        const Vec2 w = m_view.camera().screenToWorld({ m.x - origin.x, m.y - origin.y });
-        m_toolOverlay->setMouse(w.x, w.y);
-    }
 }
 
 void CanvasPanel::drawHud(ImDrawList* dl, const ImVec2& origin)

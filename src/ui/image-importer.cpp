@@ -1,9 +1,9 @@
 #include "image-importer.hpp"
+#include "core/application.hpp"
 #include "raster/raster-data.hpp"
 
 #include <SDL3/SDL.h>
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstdio>
 
@@ -18,9 +18,7 @@ void ImageImporter::open(std::string path, Placement placement)
         std::lock_guard lock(m_mutex);
         m_queued.push_back({ std::move(path), placement });
     }
-    SDL_Event wake{};   // wake the main loop (it may be idle)
-    wake.type = SDL_EVENT_USER;
-    SDL_PushEvent(&wake);
+    Application::wakeMainLoop();   // it may be asleep
 }
 
 void ImageImporter::showOpenDialog(SDL_Window* window)
@@ -35,6 +33,20 @@ void ImageImporter::showOpenDialog(SDL_Window* window)
     }, this, window, kFilters, 2, nullptr, true);
 }
 
+bool ImageImporter::importOnWorker(Job& j)
+{
+    if (!loadImageFile(j.request.path, j.image, j.error)) return false;
+    int x = 0, y = 0;   // the image's top-left in the world
+    if (j.request.placement.target == Placement::Target::Canvas) {
+        const auto clampWorld = [](float v) { return int(std::clamp(v, float(-TileUtils::kWorldLimit / 2), float(TileUtils::kWorldLimit / 2))); };
+        x = clampWorld(std::round(j.request.placement.x - j.image.width * 0.5f));
+        y = clampWorld(std::round(j.request.placement.y - j.image.height * 0.5f));
+    }
+    tilesFromImage(j.tiles, { j.image.pixels, j.image.width, j.image.height }, x, y);
+    j.image.pixels = {};   // the tiles hold it now
+    return true;
+}
+
 std::vector<ImageImporter::Imported> ImageImporter::poll(Project& project)
 {
     {
@@ -44,16 +56,10 @@ std::vector<ImageImporter::Imported> ImageImporter::poll(Project& project)
             job->request = std::move(r);
             Job* j = job.get();
             j->done = std::async(std::launch::async, [j] {
-                if (!loadImageFile(j->request.path, j->image, j->error)) return false;
-                int x = 0, y = 0;   // the image's top-left in the world
-                if (j->request.placement.target == Placement::Target::Canvas) {
-                    const auto clampWorld = [](float v) { return int(std::clamp(v, float(-TileUtils::kWorldLimit / 2), float(TileUtils::kWorldLimit / 2))); };
-                    x = clampWorld(std::round(j->request.placement.x - j->image.width * 0.5f));
-                    y = clampWorld(std::round(j->request.placement.y - j->image.height * 0.5f));
-                }
-                tilesFromImage(j->tiles, { j->image.pixels, j->image.width, j->image.height }, x, y);
-                j->image.pixels = {};   // the tiles hold it now
-                return true;
+                const bool ok = importOnWorker(*j);
+                j->finished.store(true, std::memory_order_release);
+                Application::wakeMainLoop();   // poll() picks it up
+                return ok;
             });
             m_jobs.push_back(std::move(job));
         }
@@ -62,9 +68,9 @@ std::vector<ImageImporter::Imported> ImageImporter::poll(Project& project)
 
     // In the order they were asked for: the last one opened ends up on top.
     std::vector<Imported> imported;
-    while (!m_jobs.empty() && m_jobs.front()->done.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+    while (!m_jobs.empty() && m_jobs.front()->finished.load(std::memory_order_acquire)) {
         Job& j = *m_jobs.front();
-        if (j.done.get()) {
+        if (j.done.get()) {   // returns at once: the worker is past its last line
             const Placement& p = j.request.placement;
             Project::ImportOptions options;
             if (p.target == Placement::Target::Graph) {   // a node where it was dropped, linked to nothing

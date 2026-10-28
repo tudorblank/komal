@@ -54,6 +54,7 @@ void GraphPanel::paint(const GraphPaint& g, const Hit& hit, ImVec2 canvasMin, Im
     const bool linkHovered = m_drag == Drag::None && (hit.kind == Hit::Kind::Link || hit.kind == Hit::Kind::Insert);
     for (size_t i = 0; i < m_links.size(); ++i) {
         const GraphLink& l = m_links[i];
+        if (!l.shown) continue;
         const ImU32 color = withAlpha(l.mask ? kMaskPort : kImagePort, 220);
         if (l.toMaster) paintFadingLink(g, l.curve, color, linkHovered && hit.index == int(i));
         else            paintLink(g, l.curve, color, linkHovered && hit.index == int(i));
@@ -95,9 +96,6 @@ void GraphPanel::paint(const GraphPaint& g, const Hit& hit, ImVec2 canvasMin, Im
 
     // ---- the pinned master and the navigator, over the graph
     paintOne(GraphPaint{ dl, m_pinned, m_uiScale }, master);
-    m_minimapEdges.clear();
-    for (const GraphLink& l : m_links)
-        if (!l.toMaster) m_minimapEdges.push_back({ l.fromGraph, l.toGraph, l.mask });
     m_minimap.paint(dl, *m_project, m_minimapEdges, m_selection.ids(), m_camera, m_canvasSize, ImGui::GetIO().MousePos,
                     m_drag == Drag::None || m_drag == Drag::Minimap);
 

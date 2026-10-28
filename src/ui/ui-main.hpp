@@ -27,12 +27,12 @@ public:
     void setUiScale(float scale) { m_graphPanel.setUiScale(scale); }
 
     bool quitRequested() const { return m_quit; }
-    // Work that needs frames without new input (imports, tiles, strokes, thumbnails): no idle sleep.
-    bool busy() const;
+    // When the UI next needs a frame without new input (see Application::nextFrameIn): tiles still
+    // syncing, a throttled picture or thumbnail, a hold turning into a gesture.
+    double nextFrameIn() const;
     void setGpuInfo(std::string s) { m_gpuInfo = std::move(s); }
     void setTimings(float acquireMs, float cpuMs) { m_acquireMs = acquireMs; m_cpuMs = cpuMs; }
     void setWindow(SDL_Window* window) { m_window = window; }
-    SDL_Cursor* cursorOverride() const { return m_canvasPanel.cursorOverride(); }   // a tool's system cursor, this frame
     void openFile(std::string path) { m_importer.open(std::move(path)); }   // any thread: File > Import, command line
     // A file dropped at window (x, y): imported if it lands on the canvas or the graph.
     void dropFile(std::string path, float x, float y) { m_drops.push_back({ std::move(path), ImVec2(x, y) }); }
