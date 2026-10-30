@@ -110,7 +110,7 @@ const Tile* Node::fetch(int tx, int ty, RenderCtx& ctx)
     return applyGains(blendOver(wet, dry, ctx), main, ctx);
 }
 
-BoundsI Node::bounds()
+BoundsI Node::bounds() const
 {
     if (m_boundsDirty) {
         BoundsI b;
@@ -124,7 +124,7 @@ BoundsI Node::bounds()
 
 // ---------------------------------------------------------------- signals / masks
 
-void Node::setScale(NodeSignal sig, NodeChannel ch, float v)
+void Node::setScale(GraphKey, NodeSignal sig, NodeChannel ch, float v)
 {
     if (!hasSignal(sig)) return;
     v = std::clamp(v, 0.0f, 1.0f);
@@ -137,7 +137,7 @@ void Node::setScale(NodeSignal sig, NodeChannel ch, float v)
     else changeKnown(footprint(), Bounds::Keep, Evict::Output, [&] { slot = v; });
 }
 
-bool Node::linkMask(NodePtr mask, NodeSignal sig, NodeChannel ch)
+bool Node::linkMask(GraphKey, NodePtr mask, NodeSignal sig, NodeChannel ch)
 {
     if (!hasSignal(sig) || !canDependOn(mask)) return false;
     NodePtr& slot = m_signals[int(sig)].mask[int(ch)];
@@ -152,7 +152,7 @@ bool Node::hasMasks() const
     return false;
 }
 
-bool Node::clearMasksTo(const NodePtr& n)
+bool Node::clearMasksTo(GraphKey, const NodePtr& n)
 {
     if (!n || !usesAsMask(n.get())) return false;
     changeKnown(footprint(), Bounds::Keep, Evict::Output, [&] {
@@ -161,7 +161,7 @@ bool Node::clearMasksTo(const NodePtr& n)
     return true;
 }
 
-void Node::unlinkAllMasks()
+void Node::unlinkAllMasks(GraphKey)
 {
     if (!hasMasks()) return;
     changeKnown(footprint(), Bounds::Keep, Evict::Output, [&] {
@@ -207,18 +207,18 @@ bool Node::dependsOnImpl(const Node* t, absl::flat_hash_set<const Node*>& seen) 
     return false;
 }
 
-void Node::removeFromGraph()
+void Node::removeFromGraph(GraphKey key)
 {
     std::vector<NodePtr> users;   // snapshot: the loop below edits m_listeners
     for (auto& w : m_listeners) if (auto l = w.lock()) users.push_back(std::move(l));
 
     const NodePtr self = shared_from_this();
     for (auto& u : users) {
-        if (u->usesAsInput(this)) u->replaceInputInstance(self, nullptr);
-        u->clearMasksTo(self);
+        if (u->usesAsInput(this)) u->replaceInputInstance(key, self, nullptr);
+        u->clearMasksTo(key, self);
     }
-    detachAllInputs();
-    unlinkAllMasks();
+    detachAllInputs(key);
+    unlinkAllMasks(key);
 }
 
 void Node::dependencyDirty(const Node* from, const TileSet& tiles)

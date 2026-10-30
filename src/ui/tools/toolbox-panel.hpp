@@ -1,26 +1,12 @@
 #pragma once
-
-class ActionRegistry;
-class Project;
-class ToolManager;
-struct CanvasNavigation;
+#include "ui/panel.hpp"
 
 // The Toolbox: a fixed bar of tool buttons under the menu bar (not dockable).
-class ToolboxPanel {
+class ToolboxPanel : public Panel {
 public:
-    void draw(ToolManager& tools, ActionRegistry& actions);   // before the dockspace
-    bool& open() { return m_open; }   // shown (View > Toolbar)
+    PanelInfo info() const override;
+    bool init() override;
+    void draw() override;   // before the dockspace (DockSlot::Toolbar)
 
 private:
-    bool m_open = true;
-};
-
-// The picked tool's settings; switches with the tool.
-class ToolPropertiesPanel {
-public:
-    void draw(ToolManager& tools, Project& project, ActionRegistry& actions, const CanvasNavigation& canvas);
-    bool& open() { return m_open; }   // shown (View > Tool Properties, the window's close button)
-
-private:
-    bool m_open = true;
 };

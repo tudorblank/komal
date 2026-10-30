@@ -1,14 +1,12 @@
 #pragma once
-// Brush strokes: dabs accumulate coverage in a scratch grid, re-applied over the raster's
-// committed pixels into its draft each time. So stroke opacity applies exactly once however many
-// dabs overlap, and paint / erase are plain TileEdit::apply modes.
+// Brush strokes: dabs accumulate coverage in a scratch grid, applied over the raster's pixels
+// once, when the stroke is done. So stroke opacity applies exactly once however many dabs
+// overlap, and paint / erase are plain TileEdit::apply modes.
 //
-//   stroke.begin(params, point);                       // first dab
-//   stroke.moveTo(point);                              // dabs along the segment, spaced by params.spacing
-//   applyStroke(raster, stroke, stroke.takeDirty());   // into the raster's draft
-//   ...
+//   stroke.begin(params, point);                                // first dab
+//   stroke.moveTo(point);                                       // dabs along the segment, spaced by params.spacing
+//   raster.recordEdit([&](RasterEditor& ed) { applyStroke(ed, raster, stroke, tiles); }, summary);   // one commit
 //   stroke.end();
-//   raster.commitDraft();                              // one commit in the raster's history
 //
 // Pressure (1 for a mouse) can scale dab size and flow, interpolated along each segment.
 
@@ -81,5 +79,6 @@ private:
     mutable std::unique_ptr<Tile> m_colored = std::make_unique<Tile>();   // composeTile scratch
 };
 
-// Recomposes `tiles` of the raster's draft: its committed pixels with the stroke applied.
-void applyStroke(RasterData& raster, const BrushStroke& stroke, const TileSet& tiles);
+// Applies the stroke to `tiles` of `raster` through `editor` (open on that raster): each tile
+// becomes its pixels with the stroke over them.
+void applyStroke(RasterEditor& editor, const RasterData& raster, const BrushStroke& stroke, const TileSet& tiles);

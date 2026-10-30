@@ -50,7 +50,16 @@ FetchContent_Declare(stb
     INACTIVITY_TIMEOUT 30
     TIMEOUT 300)
 
-FetchContent_MakeAvailable(SDL3 imgui absl stb)
+# ---------------------------------------------------------------- doctest (the tests)
+# One header: its own CMake files aren't used (SOURCE_SUBDIR holds none).
+FetchContent_Declare(doctest
+    URL https://github.com/doctest/doctest/archive/refs/tags/v2.4.12.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    INACTIVITY_TIMEOUT 30
+    TIMEOUT 300
+    SOURCE_SUBDIR doctest)
+
+FetchContent_MakeAvailable(SDL3 imgui absl stb doctest)
 
 # ---------------------------------------------------------------- wgpu-native
 include(cmake/wgpu-native.cmake)   # defines target: wgpu_native
@@ -70,6 +79,7 @@ embed_file(${GENERATED_DIR}/shader-color.cpp   ${CMAKE_SOURCE_DIR}/src/canvas/sh
 embed_file(${GENERATED_DIR}/shader-preview-signal.cpp ${CMAKE_SOURCE_DIR}/src/canvas/shaders/preview-signal.wgsl kShaderPreviewSignal)
 embed_file(${GENERATED_DIR}/shader-preview-blit.cpp   ${CMAKE_SOURCE_DIR}/src/canvas/shaders/preview-blit.wgsl   kShaderPreviewBlit)
 embed_file(${GENERATED_DIR}/shader-checker.cpp        ${CMAKE_SOURCE_DIR}/src/canvas/shaders/checker.wgsl        kShaderChecker)
+embed_file(${GENERATED_DIR}/shader-preview-stroke.cpp ${CMAKE_SOURCE_DIR}/src/canvas/shaders/preview-stroke.wgsl kShaderPreviewStroke)
 set(GENERATED_SOURCES
     ${GENERATED_DIR}/font-ui.cpp
     ${GENERATED_DIR}/font-numbers.cpp
@@ -78,7 +88,8 @@ set(GENERATED_SOURCES
     ${GENERATED_DIR}/shader-color.cpp
     ${GENERATED_DIR}/shader-preview-signal.cpp
     ${GENERATED_DIR}/shader-preview-blit.cpp
-    ${GENERATED_DIR}/shader-checker.cpp)
+    ${GENERATED_DIR}/shader-checker.cpp
+    ${GENERATED_DIR}/shader-preview-stroke.cpp)
 
 # ---------------------------------------------------------------- imgui target
 add_library(imgui STATIC
@@ -93,13 +104,54 @@ target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/
 target_compile_definitions(imgui PUBLIC IMGUI_IMPL_WEBGPU_BACKEND_WGPU)  # wgpu-native flavour
 target_link_libraries(imgui PUBLIC SDL3::SDL3 wgpu_native)
 
+# ---------------------------------------------------------------- the core
+# The layers below the GPU and the UI (base, raster, node, command, document): the document and
+# everything it's made of. The app and the tests both link it; it runs without a window or a GPU.
+set(CORE_LAYERS base raster node command document)
+set(CORE_SOURCES)
+foreach(layer ${CORE_LAYERS})
+    file(GLOB_RECURSE layer_sources CONFIGURE_DEPENDS src/${layer}/*.cpp src/${layer}/*.hpp)
+    list(APPEND CORE_SOURCES ${layer_sources})
+endforeach()
+add_library(komal-core STATIC ${CORE_SOURCES})
+target_include_directories(komal-core PUBLIC src)
+target_include_directories(komal-core SYSTEM PRIVATE ${stb_SOURCE_DIR})
+target_link_libraries(komal-core PUBLIC SDL3::SDL3 absl::flat_hash_map absl::flat_hash_set absl::hash)
+
 # ---------------------------------------------------------------- the app
 file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS src/*.cpp src/*.hpp)
+list(FILTER APP_SOURCES EXCLUDE REGEX "/src/(base|raster|node|command|document)/")
 add_executable(${PROJECT_NAME} ${APP_SOURCES} ${GENERATED_SOURCES})
 target_include_directories(${PROJECT_NAME} PRIVATE src)
-target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${stb_SOURCE_DIR})
-target_link_libraries(${PROJECT_NAME} PRIVATE imgui SDL3::SDL3 wgpu_native
+target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${stb_SOURCE_DIR})   # the window icon
+target_link_libraries(${PROJECT_NAME} PRIVATE komal-core imgui SDL3::SDL3 wgpu_native
                                               absl::flat_hash_map absl::flat_hash_set absl::hash)
+
+# ---------------------------------------------------------------- the tests
+# Built and run with every build: a failing test fails the build. The canvas's CPU-only blocks
+# (levels of detail) are compiled in from their sources.
+option(KOMAL_TESTS "Build and run the tests with every build" ON)
+if(KOMAL_TESTS)
+    file(GLOB TEST_SOURCES CONFIGURE_DEPENDS tests/*.cpp tests/*.hpp)
+    add_executable(komal-tests ${TEST_SOURCES} src/canvas/tiles/downsample.cpp)
+    target_include_directories(komal-tests SYSTEM PRIVATE ${doctest_SOURCE_DIR})
+    target_link_libraries(komal-tests PRIVATE komal-core)
+    enable_testing()
+    add_test(NAME komal-tests COMMAND komal-tests)
+    add_custom_command(TARGET komal-tests POST_BUILD COMMAND komal-tests --minimal COMMENT "Running the tests" VERBATIM)
+endif()
+
+# The source folders are layers: includes only go down (cmake/check-layers.py lists them). Checked
+# before every build, so the structure can't quietly erode as the app grows.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_custom_target(check-layers
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/cmake/check-layers.py ${CMAKE_SOURCE_DIR}/src
+        COMMENT "Checking that includes only go down the layers"
+        VERBATIM)
+    add_dependencies(komal-core check-layers)
+    add_dependencies(${PROJECT_NAME} check-layers)
+endif()
 
 # ---------------------------------------------------------------- app icon
 # The source is assets/komal-icon.png; cmake/make-icons.py derives the files used here from it.
@@ -148,8 +200,14 @@ endif()
 
 if(MSVC)
     # Sources are UTF-8 (box drawings in comments); keep windows.h's min/max macros away.
-    target_compile_options(${PROJECT_NAME} PRIVATE /utf-8 /Zc:__cplusplus /bigobj)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+    foreach(target komal-core ${PROJECT_NAME})
+        target_compile_options(${target} PRIVATE /utf-8 /Zc:__cplusplus /bigobj)
+        target_compile_definitions(${target} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+    endforeach()
+    if(KOMAL_TESTS)
+        target_compile_options(komal-tests PRIVATE /utf-8 /Zc:__cplusplus /bigobj)
+        target_compile_definitions(komal-tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+    endif()
     set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT ${PROJECT_NAME})
 endif()
 

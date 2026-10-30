@@ -1,4 +1,6 @@
 #include "graph/minimap.hpp"
+#include "document/project.hpp"
+#include "base/palette.hpp"
 #include "graph/style.hpp"
 #include "graph/painter.hpp"
 
@@ -12,14 +14,6 @@ constexpr float kMapMargin  = 12.0f;   // from the canvas edges, points
 constexpr float kMapInset   = 4.0f;    // map content inside the frame
 constexpr float kMapPadding = 60.0f;   // graph units around the nodes
 constexpr float kMinW = 60.0f, kMaxW = 200.0f, kMinH = 45.0f, kMaxH = 150.0f;   // points
-
-constexpr ImU32 kMapBack     = IM_COL32( 14,  14,  14, 210);
-constexpr ImU32 kMapFrame    = IM_COL32( 46,  46,  46, 255);
-constexpr ImU32 kMapNode     = IM_COL32( 78,  78,  78, 255);
-constexpr ImU32 kMapHover    = IM_COL32(140, 180, 245, 255);
-constexpr ImU32 kMapEdge     = IM_COL32( 96,  96,  96, 255);
-constexpr ImU32 kMapMaskEdge = IM_COL32( 70,  70,  70, 255);
-constexpr ImU32 kMapViewport = IM_COL32(140, 180, 245, 255);
 
 }
 
@@ -103,7 +97,7 @@ void GraphMinimap::paint(ImDrawList* dl, const Project& project, const std::vect
         if (!n) continue;
         const ImVec2 a = toMap(s.bounds.Min), b = toMap(s.bounds.Max);
         const float r = std::min(1.5f * m_uiScale, (b.x - a.x) * 0.25f);
-        dl->AddRectFilled(a, b, id == hovered ? kMapHover : kMapNode, r);
+        dl->AddRectFilled(a, b, id == hovered ? kAccent : kMapNode, r);
         const float headerH = std::max(1.0f, (s.header.GetHeight()) * m_k);
         if (b.y - a.y > headerH * 2.0f)
             dl->AddRectFilled(a, ImVec2(b.x, a.y + headerH), headerColor(project, *n), r, ImDrawFlags_RoundCornersTop);
@@ -113,7 +107,7 @@ void GraphMinimap::paint(ImDrawList* dl, const Project& project, const std::vect
     // What the panel shows.
     const ImVec2 v0 = toMap(camera.toGraph(camera.origin()));
     const ImVec2 v1 = toMap(camera.toGraph(ImVec2(camera.origin().x + canvasSize.x, camera.origin().y + canvasSize.y)));
-    dl->AddRect(v0, v1, kMapViewport, 0.0f, 0, 1.5f);
+    dl->AddRect(v0, v1, kAccent, 0.0f, 0, 1.5f);
 
     dl->PopClipRect();
 }

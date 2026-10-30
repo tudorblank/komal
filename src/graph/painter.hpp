@@ -7,7 +7,7 @@
 
 #include <string>
 
-class NodeItemThumbnails;
+class NodeThumbnails;
 
 struct GraphPaint {
     ImDrawList*        dl;
@@ -41,11 +41,11 @@ std::string elide(const GraphPaint& g, const std::string& text, float size, floa
 // A node paints in three layers: boxes and controls, state rings (active, selected, hovered),
 // then ports, so they sit on top of every edge.
 void paintNode(const GraphPaint& g, const Project& project, const Node& n, const NodeItem& item,
-               const NodeItemVisual& visual, NodeItemThumbnails& thumbs);
+               const NodeItemVisual& visual, NodeThumbnails& thumbs);
 void paintNodeOutline(const GraphPaint& g, const NodeItem& item, const NodeItemVisual& visual);
 void paintNodePorts(const GraphPaint& g, const Project& project, const NodeItem& item, const NodeItemVisual& visual);
 // One row of a layer stack; lifted: the row being dragged, floating over the stack.
-void paintLayerRow(const GraphPaint& g, const Node& layer, const ImRect& rect, NodeItemThumbnails& thumbs, bool hot, bool lifted);
+void paintLayerRow(const GraphPaint& g, const Node& layer, const ImRect& rect, NodeThumbnails& thumbs, bool hot, bool lifted);
 
 // Links run between two screen points: out of an output (rightwards) into an input.
 struct LinkCurve { ImVec2 p0, p1, p2, p3; };

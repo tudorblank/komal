@@ -1,5 +1,6 @@
 #pragma once
-#include <webgpu/webgpu.h>
+#include "gfx/gpu-object.hpp"
+
 #include <cstdint>
 
 // What GPU code needs from the GpuDevice, without owning anything.
@@ -15,11 +16,11 @@ WGPUShaderModule createShaderModule(const GpuHandles& ctx, const char* wgsl, con
 
 // A uniform buffer bound alone at binding 0 of a bind group.
 struct GpuUniform {
-    WGPUBuffer    buffer = nullptr;
-    WGPUBindGroup group  = nullptr;
+    GpuObject<WGPUBuffer>    buffer;
+    GpuObject<WGPUBindGroup> group;
 
-    bool create(WGPUDevice device, WGPUBindGroupLayout layout, uint64_t size, const char* label);
+    bool create(WGPUDevice device, WGPUBindGroupLayout layout, uint64_t size, const char* label);   // false on failure (logged)
     void write(WGPUQueue queue, const void* data, uint64_t size) const { wgpuQueueWriteBuffer(queue, buffer, 0, data, size); }
-    void release();
-    explicit operator bool() const { return group != nullptr; }
+    void release() { group.reset(); buffer.reset(); }
+    explicit operator bool() const { return bool(group); }
 };

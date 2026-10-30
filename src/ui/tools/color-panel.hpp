@@ -6,18 +6,20 @@
 // hue survives the colour going grey or black, and follows the colour when something else
 // changes it.
 
-class ActionRegistry;
+#include "ui/panel.hpp"
+
 struct ToolColors;
 
-class ColorPanel {
+class ColorPanel : public Panel {
 public:
-    void draw(ToolColors& colors, ActionRegistry& actions);
-    bool& open() { return m_open; }   // shown (View > Color, the window's close button)
+    PanelInfo info() const override;
+    bool init() override;
+    void draw() override;
 
 private:
     void syncFrom(const float rgb[3]);   // the colour changed elsewhere
     void writeTo(float rgb[3]);          // this panel's HSB, remembered as what it last wrote
-    void drawSwatches(ToolColors& colors, ActionRegistry& actions, float block);
+    void drawSwatches(const ToolColors& colors, ActionRegistry& actions, float block);
     void drawWheel(float size);
     void drawCodes();
     void drawSliders();
@@ -26,5 +28,5 @@ private:
     float m_last[3] = { -1.0f, -1.0f, -1.0f };  // the colour as this panel last saw / wrote it
     enum class WheelDrag : unsigned char { None, Hue, SatBright } m_wheelDrag = WheelDrag::None;
     bool  m_editSecondary = false;              // which colour the wheel edits
-    bool  m_open = true;
+    bool  m_focus = false;                      // color.edit: in front, next draw
 };

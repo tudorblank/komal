@@ -1,5 +1,5 @@
 #include "raster.hpp"
-#include "core/perf.hpp"
+#include "base/perf.hpp"
 
 #include <algorithm>
 
@@ -41,7 +41,7 @@ bool RasterItem::computeVisible(CanvasFrame& frame, const TileRect& visible, con
             if (m_tiles->current(L, key)) return;
             const auto t = TileUtils::unpackKey(key);
             if (pass == 1 && visible.contains(t.x, t.y)) return;
-            if (!m_tiles->build(frame, L, key)) {
+            if (!m_tiles->build(frame.budget(), frame.pipelines, L, key)) {
                 if (pass == 0) m_visiblePending = true;
                 done = false;
                 return;
@@ -69,7 +69,7 @@ bool RasterItem::rebuildInstances(const CanvasFrame& frame, const TileRect& rang
         // Not there yet: the matching part of the nearest coarser level that has it...
         for (int m = L + 1; m < kLevels; ++m) {
             const int up = m - L;
-            const TileKey parent = TilePyramid::parentKey(key, up);
+            const TileKey parent = RasterTiles::parentKey(key, up);
             if (!m_tiles->atlas(m).contains(parent)) {
                 if (m_tiles->current(m, parent)) return;   // empty up there too
                 continue;
@@ -100,22 +100,16 @@ bool RasterItem::prepare(CanvasFrame& frame)
     bool changed = false;
     for (int l = 0; l < kLevels; ++l)   // new pixels in slots this view draws from (another view uploaded them)
         if (m_tiles->revision(l) != m_seenLevel[l] && !m_draw[l].empty()) changed = true;
-    if (!m_tiles->source()) {
-        m_visiblePending = false;
-        if (m_instancesDirty) changed = rebuildInstances(frame, {});   // draws nothing from now on
+    const int level = frame.lodLevel();
+    if (level != m_drawLevel) { m_drawLevel = level; m_instancesDirty = true; }
+    const TileRect visible = rangeAt(frame, level, 0);
+    const TileRect margin  = rangeAt(frame, level, 1);   // panning inside it reuses the instances
+    if (margin != m_drawnRange || m_instancesDirty) m_computeDirty = true;
+    if (m_computeDirty) changed = computeVisible(frame, visible, margin);   // new pixels in old slots count too
+    if (m_instancesDirty || margin != m_drawnRange) {
+        changed |= rebuildInstances(frame, margin);
+        m_drawnRange = margin;
         m_instancesDirty = false;
-    } else {
-        const int level = frame.lodLevel(kLevels);
-        if (level != m_drawLevel) { m_drawLevel = level; m_instancesDirty = true; }
-        const TileRect visible = rangeAt(frame, level, 0);
-        const TileRect margin  = rangeAt(frame, level, 1);   // panning inside it reuses the instances
-        if (margin != m_drawnRange || m_instancesDirty) m_computeDirty = true;
-        if (m_computeDirty) changed = computeVisible(frame, visible, margin);   // new pixels in old slots count too
-        if (m_instancesDirty || margin != m_drawnRange) {
-            changed |= rebuildInstances(frame, margin);
-            m_drawnRange = margin;
-            m_instancesDirty = false;
-        }
     }
     m_seen = m_tiles->revision();
     for (int l = 0; l < kLevels; ++l) m_seenLevel[l] = m_tiles->revision(l);

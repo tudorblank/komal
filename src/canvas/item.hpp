@@ -9,11 +9,12 @@
 //   drawOverlay()  ImGui, screen space, over the canvas: outlines. Never re-renders.
 // Overlay-only items return false from drawsOnGpu(): showing or moving them costs no re-render.
 
-#include "canvas/camera.hpp"
+#include "base/deadline.hpp"
+#include "canvas/fit.hpp"
 #include "canvas/pipelines.hpp"
+#include "document/canvas-camera.hpp"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 
@@ -28,9 +29,8 @@ public:
         float    viewW, viewH;        // view size in points (the camera's units)
         uint32_t pixelW, pixelH;      // the view's target in pixels
     };
-    CanvasFrame(const CanvasPipelines& p, const CanvasCamera& cam, ViewRect visible, Target t, double budgetMs)
-        : pipelines(p), camera(cam), view(visible), target(t),
-          m_deadline(Clock::now() + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double, std::milli>(budgetMs))) {}
+    CanvasFrame(const CanvasPipelines& p, const CanvasCamera& cam, WGPUBindGroup cameraGroup, ViewRect visible, Target t, Deadline budget)
+        : pipelines(p), camera(cam), view(visible), target(t), m_cameraGroup(cameraGroup), m_budget(budget) {}
 
     const CanvasPipelines& pipelines;
     const CanvasCamera&    camera;
@@ -38,25 +38,20 @@ public:
     const Target           target;   // prepare() may record its own passes into target.encoder
 
     // CPU time left for prepare() work this frame, shared by every item.
-    bool inBudget() const { return Clock::now() < m_deadline; }
+    bool inBudget() const { return !m_budget.expired(); }
+    const Deadline& budget() const { return m_budget; }
 
     float pixelsPerPoint() const { return target.viewW > 0.0f ? float(target.pixelW) / target.viewW : 1.0f; }
 
-    // Level of detail for this zoom, 0..levels-1: level L halves L-1, picked so a texel covers
-    // 0.5..1 target pixels (0 when zoomed in).
-    int lodLevel(int levels) const
-    {
-        const float z = camera.zoom * pixelsPerPoint();   // target pixels per world pixel
-        if (z >= 1.0f) return 0;
-        return std::clamp(int(std::floor(std::log2(1.0f / z))), 0, levels - 1);
-    }
+    // Level of detail for this zoom (canvas/fit.hpp): a texel covers 0.5..1 target pixels.
+    int lodLevel() const { return ::lodLevel(camera.zoom * pixelsPerPoint()); }
 
     // Binds `pipeline` and the camera, unless already bound.
     void bind(WGPURenderPassEncoder pass, WGPURenderPipeline pipeline)
     {
         if (pipeline == m_bound) return;
         wgpuRenderPassEncoderSetPipeline(pass, pipeline);
-        wgpuRenderPassEncoderSetBindGroup(pass, 0, camera.bindGroup(), 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(pass, 0, m_cameraGroup, 0, nullptr);
         m_bound = pipeline;
     }
     // Binds a pipeline that brings its own group 0 (no camera).
@@ -67,8 +62,8 @@ public:
     }
 
 private:
-    using Clock = std::chrono::steady_clock;
-    Clock::time_point  m_deadline;
+    WGPUBindGroup      m_cameraGroup;   // the view's camera uniform (bind group 0)
+    Deadline           m_budget;
     WGPURenderPipeline m_bound = nullptr;
 };
 

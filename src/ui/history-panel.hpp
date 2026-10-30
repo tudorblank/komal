@@ -12,16 +12,18 @@
 // Laid out again only when a step is added. A step continues its parent's lane if it's the first
 // step made from there; every later one starts a branch in the lowest lane free from that row down.
 
+#include "document/history.hpp"
+#include "ui/panel.hpp"
+
 #include <cstdint>
 #include <vector>
 
-class ActionRegistry;
-class History;
 
-class HistoryPanel {
+class HistoryPanel : public Panel {
 public:
-    void draw(const History& history, ActionRegistry& actions);
-    bool& open() { return m_open; }   // shown (View > History Tree, the window's close button)
+    PanelInfo info() const override;
+    bool init() override;
+    void draw() override;
 
 private:
     void layout(const History& history);
@@ -29,6 +31,5 @@ private:
     std::vector<int> m_lane;   // per step
     int      m_lanes = 1;
     size_t   m_laidOut = 0;               // steps when last laid out (history only grows)
-    uint32_t m_shownCurrent = 0xFFFFFFFFu;   // the current step when last scrolled to
-    bool     m_open = true;
+    StepId   m_shownCurrent = kNoStep;    // the current step when last scrolled to
 };

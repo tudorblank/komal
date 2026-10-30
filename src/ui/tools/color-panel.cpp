@@ -1,19 +1,21 @@
 #include "color-panel.hpp"
-#include "core/actions.hpp"
+#include "base/math.hpp"
+#include "base/palette.hpp"
+#include "ui/tools/tool-manager.hpp"
+#include "command/actions.hpp"
 #include "ui/theme.hpp"
-#include "ui/panel-titles.hpp"
 #include "ui/tools/tool.hpp"
-#include "ui/widgets.hpp"
+#include "ui/widgets/widgets.hpp"
 
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <utility>
 
 namespace {
 
-constexpr float kPi = 3.14159265358979f;
 constexpr int   kRingSegments = 96;
 
 ImU32 hsv(float h, float s, float v, float a = 1.0f)
@@ -24,8 +26,8 @@ ImU32 hsv(float h, float s, float v, float a = 1.0f)
 }
 
 // The hue at an angle around the ring: red at the top, going clockwise.
-float hueAt(float angle) { return std::fmod(angle / (2.0f * kPi) + 0.25f + 1.0f, 1.0f); }
-float angleOf(float hue) { return (hue - 0.25f) * 2.0f * kPi; }
+float hueAt(float angle) { return std::fmod(angle / kTau + 0.25f + 1.0f, 1.0f); }
+float angleOf(float hue) { return (hue - 0.25f) * kTau; }
 
 }
 
@@ -45,11 +47,27 @@ void ColorPanel::writeTo(float rgb[3])
     std::memcpy(m_last, rgb, sizeof m_last);
 }
 
-void ColorPanel::draw(ToolColors& colors, ActionRegistry& actions)
+PanelInfo ColorPanel::info() const { return { Actions::ViewColor, "Color", DockSlot::RightMiddle }; }
+
+bool ColorPanel::init()
 {
-    if (!m_open) return;
-    if (!Widgets::beginPanel(PanelTitle::kColor, actions, "view.color")) { Widgets::endPanel(); return; }
-    float* fg = m_editSecondary ? colors.background : colors.foreground;   // the colour being edited
+    // From anywhere a colour is shown (the brush's swatch): this panel, opened and in front.
+    ui().actions.add({ .id = Actions::ColorEdit, .title = "Edit Color", .kind = ActionKind::Interface, .run = [this] {
+        if (!isOpen()) ui().actions.run(toggleAction());   // opening is the View toggle's (logged)
+        m_focus = true;
+    } });
+    return true;
+}
+
+void ColorPanel::draw()
+{
+    if (!isOpen()) return;
+    const ToolColors& colors = ui().tools.colors();
+    ActionRegistry& actions = ui().actions;
+    if (std::exchange(m_focus, false)) ImGui::SetNextWindowFocus();
+    const Widgets::PanelWindow window(*this, actions);
+    if (!window) return;
+    const float* fg = m_editSecondary ? colors.background : colors.foreground;   // the colour being edited
     if (std::memcmp(fg, m_last, sizeof m_last) != 0) syncFrom(fg);
 
     // The wheel as large as the panel allows, leaving the swatches' corner free at the side and
@@ -67,7 +85,7 @@ void ColorPanel::draw(ToolColors& colors, ActionRegistry& actions)
     ImGui::SetCursorScreenPos(top);   // the swatches sit in the corner beside the wheel
     drawSwatches(colors, actions, block);
     ImGui::SetCursorScreenPos(below);
-    if (float* now = m_editSecondary ? colors.background : colors.foreground; now != fg) {   // switched to the other colour
+    if (const float* now = m_editSecondary ? colors.background : colors.foreground; now != fg) {   // switched to the other colour
         fg = now;
         syncFrom(fg);
         h0 = m_h, s0 = m_s, v0 = m_v;
@@ -80,12 +98,11 @@ void ColorPanel::draw(ToolColors& colors, ActionRegistry& actions)
     if (m_h != h0 || m_s != s0 || m_v != v0) {   // a control changed the colour: its action writes it
         float rgb[3];
         writeTo(rgb);
-        actions.run("color.set", { { "target", m_editSecondary ? "secondary" : "primary" }, { "r", rgb[0] }, { "g", rgb[1] }, { "b", rgb[2] } });
+        actions.run(Actions::ColorSet, { { "target", m_editSecondary ? "secondary" : "primary" }, { "r", rgb[0] }, { "g", rgb[1] }, { "b", rgb[2] } });
     }
-    Widgets::endPanel();
 }
 
-void ColorPanel::drawSwatches(ToolColors& colors, ActionRegistry& actions, float block)
+void ColorPanel::drawSwatches(const ToolColors& colors, ActionRegistry& actions, float block)
 {
     const ImVec2 p = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton("##swatches", ImVec2(block, block));
@@ -99,7 +116,7 @@ void ColorPanel::drawSwatches(ToolColors& colors, ActionRegistry& actions, float
     const auto inside = [&](ImVec2 a, ImVec2 b) { return m.x >= a.x && m.x <= b.x && m.y >= a.y && m.y <= b.y; };
     const bool overSwap = inside(swap0, swap1);
     if (ImGui::IsItemClicked()) {
-        if (overSwap)                    actions.run("color.swap");
+        if (overSwap)                    actions.run(Actions::ColorSwap);
         else if (inside(front0, front1)) m_editSecondary = false;
         else if (inside(back0, back1))   m_editSecondary = true;
     }
@@ -112,8 +129,8 @@ void ColorPanel::drawSwatches(ToolColors& colors, ActionRegistry& actions, float
     const auto swatch = [&](ImVec2 a, ImVec2 b, const float* rgb, bool edited) {
         dl->AddRectFilled(ImVec2(a.x - 2.0f, a.y - 2.0f), ImVec2(b.x + 2.0f, b.y + 2.0f), panel, 4.0f);   // apart from what's behind
         dl->AddRectFilled(a, b, ImGui::ColorConvertFloat4ToU32(ImVec4(rgb[0], rgb[1], rgb[2], 1.0f)), 3.0f);
-        dl->AddRect(a, b, IM_COL32(0, 0, 0, 200), 3.0f, 0, 1.0f);
-        dl->AddRect(ImVec2(a.x + 1.0f, a.y + 1.0f), ImVec2(b.x - 1.0f, b.y - 1.0f), IM_COL32(255, 255, 255, 36), 2.0f);   // a black one still shows
+        dl->AddRect(a, b, Palette::kDarkRim.packed(), 3.0f, 0, 1.0f);
+        dl->AddRect(ImVec2(a.x + 1.0f, a.y + 1.0f), ImVec2(b.x - 1.0f, b.y - 1.0f), Palette::kLightRim.packed(), 2.0f);   // a black one still shows
         if (edited) dl->AddRect(ImVec2(a.x - 1.5f, a.y - 1.5f), ImVec2(b.x + 1.5f, b.y + 1.5f), accent, 4.0f, 0, 1.5f);
     };
     swatch(back0, back1, colors.background, m_editSecondary);
@@ -164,7 +181,7 @@ void ColorPanel::drawWheel(float size)
     const ImVec2 white = ImGui::GetFontTexUvWhitePixel();
     dl->PrimReserve(kRingSegments * 6, kRingSegments * 4);
     for (int i = 0; i < kRingSegments; ++i) {
-        const float a0 = 2.0f * kPi * float(i) / kRingSegments, a1 = 2.0f * kPi * float(i + 1) / kRingSegments;
+        const float a0 = kTau * float(i) / kRingSegments, a1 = kTau * float(i + 1) / kRingSegments;
         const ImU32 c0 = hsv(hueAt(a0), 1.0f, 1.0f), c1 = hsv(hueAt(a1), 1.0f, 1.0f);
         const ImVec2 d0(std::cos(a0), std::sin(a0)), d1(std::cos(a1), std::sin(a1));
         const ImDrawIdx base = ImDrawIdx(dl->_VtxCurrentIdx);
@@ -183,11 +200,11 @@ void ColorPanel::drawWheel(float size)
     // The square: white -> the pure hue left to right, then darkened towards the bottom.
     const ImU32 pure = hsv(m_h, 1.0f, 1.0f);
     dl->AddRectFilledMultiColor(q0, q1, IM_COL32_WHITE, pure, pure, IM_COL32_WHITE);
-    dl->AddRectFilledMultiColor(q0, q1, IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0), IM_COL32_BLACK, IM_COL32_BLACK);
+    dl->AddRectFilledMultiColor(q0, q1, IM_COL32_BLACK_TRANS, IM_COL32_BLACK_TRANS, IM_COL32_BLACK, IM_COL32_BLACK);
 
     // Markers: rings, light inside dark, readable on any colour.
     const auto marker = [&](ImVec2 at, float r) {
-        dl->AddCircle(at, r + 1.0f, IM_COL32(0, 0, 0, 200), 0, 2.0f);
+        dl->AddCircle(at, r + 1.0f, Palette::kDarkRim.packed(), 0, 2.0f);
         dl->AddCircle(at, r, IM_COL32_WHITE, 0, 1.5f);
     };
     const float ringMid = (inner + outer) * 0.5f, ringR = (outer - inner) * 0.30f;

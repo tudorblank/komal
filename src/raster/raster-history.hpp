@@ -35,8 +35,8 @@ struct TileDelta {
     }
 };
 
-using RasterCommitId = uint32_t;
-constexpr RasterCommitId kNoRasterCommit = 0xFFFFFFFFu;
+enum class RasterCommitId : uint32_t {};   // its place in the history; its own type
+constexpr RasterCommitId kNoRasterCommit{ 0xFFFFFFFFu };
 
 // The commits of one raster, by id. Commits on undone branches stay: history can return to them.
 class RasterHistory {
@@ -47,7 +47,7 @@ public:
         m_commits.push_back(std::move(delta));
         return RasterCommitId(m_commits.size() - 1);
     }
-    TileDelta& at(RasterCommitId id) { return m_commits[id]; }
+    TileDelta& at(RasterCommitId id) { return m_commits[size_t(id)]; }
     size_t size() const { return m_commits.size(); }
     size_t bytes() const
     {

@@ -1,12 +1,16 @@
 #include "image-importer.hpp"
-#include "core/actions.hpp"
-#include "core/application.hpp"
+#include "command/actions.hpp"
+#include "base/frames.hpp"
+#include "base/log.hpp"
 #include "raster/raster-data.hpp"
 
 #include <SDL3/SDL.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <tuple>
+#include <type_traits>
 
 void ImageImporter::open(std::string path)
 {
@@ -19,7 +23,7 @@ void ImageImporter::open(std::string path, Placement placement)
         std::lock_guard lock(m_mutex);
         m_queued.push_back({ std::move(path), placement });
     }
-    Application::wakeMainLoop();   // it may be asleep
+    wakeMainLoop();   // it may be asleep
 }
 
 void ImageImporter::showOpenDialog(SDL_Window* window)
@@ -38,17 +42,17 @@ bool ImageImporter::importOnWorker(Job& j)
 {
     if (!loadImageFile(j.request.path, j.image, j.error)) return false;
     int x = 0, y = 0;   // the image's top-left in the world
-    if (j.request.placement.target == Placement::Target::Canvas) {
+    if (const auto* at = std::get_if<OnCanvas>(&j.request.placement)) {
         const auto clampWorld = [](float v) { return int(std::clamp(v, float(-TileUtils::kWorldLimit / 2), float(TileUtils::kWorldLimit / 2))); };
-        x = clampWorld(std::round(j.request.placement.x - j.image.width * 0.5f));
-        y = clampWorld(std::round(j.request.placement.y - j.image.height * 0.5f));
+        x = clampWorld(std::round(at->x - j.image.width * 0.5f));
+        y = clampWorld(std::round(at->y - j.image.height * 0.5f));
     }
     tilesFromImage(j.tiles, { j.image.pixels, j.image.width, j.image.height }, x, y);
     j.image.pixels = {};   // the tiles hold it now
     return true;
 }
 
-std::vector<ImageImporter::Imported> ImageImporter::poll(ActionRegistry& actions)
+ImageImporter::Polled ImageImporter::poll(ActionRegistry& actions)
 {
     {
         std::lock_guard lock(m_mutex);
@@ -56,11 +60,10 @@ std::vector<ImageImporter::Imported> ImageImporter::poll(ActionRegistry& actions
             auto job = std::make_unique<Job>();
             job->request = std::move(r);
             Job* j = job.get();
-            j->done = std::async(std::launch::async, [j] {
-                const bool ok = importOnWorker(*j);
+            m_workers.post([j] {
+                j->ok = importOnWorker(*j);
                 j->finished.store(true, std::memory_order_release);
-                Application::wakeMainLoop();   // poll() picks it up
-                return ok;
+                wakeMainLoop();   // poll() picks it up
             });
             m_jobs.push_back(std::move(job));
         }
@@ -68,22 +71,27 @@ std::vector<ImageImporter::Imported> ImageImporter::poll(ActionRegistry& actions
     }
 
     // In the order they were asked for: the last one opened ends up on top.
-    std::vector<Imported> imported;
+    Polled out;
     while (!m_jobs.empty() && m_jobs.front()->finished.load(std::memory_order_acquire)) {
         Job& j = *m_jobs.front();
-        if (j.done.get()) {   // returns at once: the worker is past its last line
+        if (j.ok) {
+            // As the action writes it: target, then the point (or the node's position) it names.
             const Placement& p = j.request.placement;
-            static constexpr const char* kTargets[] = { "default", "canvas", "graph" };
-            ActionArgs args{ { "path", j.request.path }, { "name", j.image.name }, { "target", kTargets[int(p.target)] },
-                             { "x", p.x }, { "y", p.y } };
+            const auto [target, x, y] = std::visit([](const auto& at) {
+                using T = std::decay_t<decltype(at)>;
+                if constexpr (std::is_same_v<T, OnCanvas>) return std::tuple{ "canvas", at.x, at.y };
+                else if constexpr (std::is_same_v<T, InGraph>) return std::tuple{ "graph", at.x, at.y };
+                else return std::tuple{ "default", 0.0f, 0.0f };
+            }, p);
+            ActionArgs args{ { "path", j.request.path }, { "name", j.image.name }, { "target", target }, { "x", x }, { "y", y } };
             args.payload = static_cast<const TileGrid*>(&j.tiles);
-            if (const ActionResult r = actions.run("image.import", std::move(args))) imported.push_back({ NodeId(r.made), p });
-            m_lastError.clear();
+            if (const ActionResult r = actions.run(Actions::ImageImport, std::move(args))) out.imported.push_back({ NodeId(r.made), p });
+            else out.failed.push_back(j.image.name + ": the document refused it");
         } else {
-            m_lastError = j.request.path + ": " + j.error;
-            std::fprintf(stderr, "import failed: %s\n", m_lastError.c_str());
+            Log::error("import", "%s: %s", j.request.path.c_str(), j.error.c_str());
+            out.failed.push_back(std::filesystem::path(j.request.path).filename().string() + ": " + j.error);
         }
         m_jobs.erase(m_jobs.begin());
     }
-    return imported;
+    return out;
 }

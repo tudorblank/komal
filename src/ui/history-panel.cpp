@@ -1,13 +1,20 @@
 #include "ui/history-panel.hpp"
-#include "core/actions.hpp"
-#include "core/history.hpp"
-#include "ui/panel-titles.hpp"
-#include "ui/widgets.hpp"
+#include "command/actions.hpp"
+#include "document/project.hpp"
+#include "ui/widgets/widgets.hpp"
 
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+
+namespace {
+
+// Steps are laid out one per row in the order they were made: a step's row is its id.
+uint32_t rowOf(StepId step) { return uint32_t(step); }
+StepId   stepAt(uint32_t row) { return StepId(row); }
+
+}
 
 void HistoryPanel::layout(const History& h)
 {
@@ -19,8 +26,8 @@ void HistoryPanel::layout(const History& h)
     std::vector<int> chainOf(n, 0);
     chains.push_back({ 0, 0 });
     for (uint32_t id = 1; id < n; ++id) {
-        const uint32_t p = h.parent(id);
-        if (h.children(p).front() == id) {
+        const uint32_t p = rowOf(h.parent(stepAt(id)));
+        if (h.children(stepAt(p)).front() == stepAt(id)) {
             chainOf[id] = chainOf[p];
         } else {
             chainOf[id] = int(chains.size());
@@ -47,17 +54,24 @@ void HistoryPanel::layout(const History& h)
     m_laidOut = n;
 }
 
-void HistoryPanel::draw(const History& history, ActionRegistry& actions)
+PanelInfo HistoryPanel::info() const { return { Actions::ViewHistoryTree, "History Tree", DockSlot::RightBottom }; }
+
+bool HistoryPanel::init()
 {
-    if (!m_open) return;
-    if (!Widgets::beginPanel(PanelTitle::kHistoryTree, actions, "view.historyTree")) {
-        Widgets::endPanel();
-        return;
-    }
+    return true;
+}
+
+void HistoryPanel::draw()
+{
+    if (!isOpen()) return;
+    const History& history = ui().project.history();
+    ActionRegistry& actions = ui().actions;
+    const Widgets::PanelWindow window(*this, actions);
+    if (!window) return;
     if (history.size() != m_laidOut) layout(history);
 
     const uint32_t count   = uint32_t(history.size());
-    const uint32_t current = history.current();
+    const uint32_t current = rowOf(history.current());
     const float font  = ImGui::GetFontSize();
     const float rowH  = std::round(font * 1.55f);
     const float laneW = std::round(font * 0.95f);
@@ -69,8 +83,8 @@ void HistoryPanel::draw(const History& history, ActionRegistry& actions)
 
     // Where you are, the way back to the start, and redo's way on.
     std::vector<uint8_t> onPath(count, 0), onRedo(count, 0);
-    for (uint32_t id = current; id != History::kNone; id = history.parent(id)) onPath[id] = 1;
-    for (uint32_t id = history.redoChild(current); id != History::kNone; id = history.redoChild(id)) onRedo[id] = 1;
+    for (StepId s = history.current(); s != kNoStep; s = history.parent(s)) onPath[rowOf(s)] = 1;
+    for (StepId s = history.redoChild(history.current()); s != kNoStep; s = history.redoChild(s)) onRedo[rowOf(s)] = 1;
 
     ImGui::BeginChild("##tree", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
     const ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -83,14 +97,14 @@ void HistoryPanel::draw(const History& history, ActionRegistry& actions)
     const bool hovered = ImGui::IsItemHovered();
     const int hoveredRow = hovered ? int((ImGui::GetIO().MousePos.y - origin.y) / rowH) : -1;
     if (ImGui::IsItemClicked() && hoveredRow >= 0 && hoveredRow < int(count) && uint32_t(hoveredRow) != current)
-        actions.run("history.goTo", { { "node", hoveredRow } });
+        actions.run(Actions::HistoryGoTo, { { "step", hoveredRow } });
 
     // The current step stays in view when it changes (an undo, a jump, a new step).
-    if (current != m_shownCurrent) {
+    if (history.current() != m_shownCurrent) {
         const float top = float(current) * rowH, view = ImGui::GetWindowHeight();
         if (top < ImGui::GetScrollY() || top + rowH > ImGui::GetScrollY() + view)
             ImGui::SetScrollY(std::max(0.0f, top - (view - rowH) * 0.5f));
-        m_shownCurrent = current;
+        m_shownCurrent = history.current();
     }
 
     // Only the rows on screen (and the links passing through them).
@@ -115,7 +129,7 @@ void HistoryPanel::draw(const History& history, ActionRegistry& actions)
 
     // Links: from each step's parent, straight down its own lane, or curving out into a branch's.
     for (uint32_t id = 1; id < count; ++id) {
-        const uint32_t p = history.parent(id);
+        const uint32_t p = rowOf(history.parent(stepAt(id)));
         if (id < first || p > last) continue;
         const ImVec2 a = at(p), b = at(id);
         const ImU32 col = tone(id);
@@ -142,7 +156,7 @@ void HistoryPanel::draw(const History& history, ActionRegistry& actions)
         } else {
             dl->AddCircleFilled(c, dot * 0.85f, other);
         }
-        const HistoryStep& s = history.step(id);
+        const HistoryStep& s = history.step(stepAt(id));
         const float ty = c.y - font * 0.5f;
         dl->AddText(ImVec2(labelX, ty), id == current || onPath[id] ? text : dimText, s.label.c_str());
         char num[16];
@@ -151,5 +165,4 @@ void HistoryPanel::draw(const History& history, ActionRegistry& actions)
         dl->AddText(ImVec2(origin.x + width - nw - font * 0.4f, ty), dimText, num);
     }
     ImGui::EndChild();
-    Widgets::endPanel();
 }

@@ -1,274 +1,140 @@
 #include "ui/graph-panel/panel.hpp"
-#include "core/actions.hpp"
-#include "core/input.hpp"
-#include "core/project.hpp"
-#include "ui/panel-titles.hpp"
+#include "command/actions.hpp"
+#include "command/input.hpp"
+#include "base/perf.hpp"
+#include "canvas/canvas-engine.hpp"
+#include "document/document-actions.hpp"
+#include "document/project.hpp"
 #include "graph/style.hpp"
+#include "ui/widgets/widgets.hpp"
 
 #include <imgui.h>
 #include <algorithm>
+#include <cstdio>
 
 using namespace GraphStyle;
 
 namespace {
 
-constexpr double kThumbBudgetMs  = 3.0;    // per frame
-constexpr float  kLinkHoverPx    = 6.0f;
-constexpr float  kInsertRadiusPx = 10.0f;
 constexpr float  kFrameMargin    = 40.0f;  // points around framed nodes
 
 }
 
-void GraphPanel::init(const CanvasPipelines* pipelines, Project& project, const InputFrame& input, ActionRegistry& actions)
+PanelInfo GraphPanel::info() const { return { Actions::ViewGraph, "Graph", DockSlot::Bottom }; }
+
+bool GraphPanel::init()
 {
-    m_project = &project;
-    m_input   = &input;
-    m_actions = &actions;
-    registerActions(actions);
-    m_thumbs.init(pipelines);
-    m_subscription = project.subscribe([this](const ProjectEvent& e) { onProjectEvent(e); });
-    // The ones made before we listened: every item first, then the links between them.
-    for (const NodePtr& n : project.nodes()) addNodeItem(n->m_meta.id, false);
-    for (const NodePtr& n : project.nodes()) addLinksInto(n->m_meta.id);
+    const Project& project = ui().project;
+    m_scene.init(project);
+    m_menus.init(project, ui().actions);
+    registerActions(ui().actions);
+    return true;
 }
 
 void GraphPanel::shutdown()
 {
-    if (m_project) m_project->unsubscribe(m_subscription);
-    m_project = nullptr;
-    m_thumbs.shutdown();
+    m_scene.shutdown();
 }
 
 void GraphPanel::draw()
 {
-    m_window = nullptr;
-    if (!m_open) return;
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    bool keep = true;
-    const bool shown = ImGui::Begin(PanelTitle::kGraph, &keep, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-    ImGui::PopStyleVar();
-    if (!keep) m_actions->run("view.graph");   // its close button
+    PerfScope perf(Perf::Graph);
+    m_surface.hide();
+    if (!isOpen()) return;
+    const Widgets::PanelWindow window(*this, ui().actions, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse,
+                                      Widgets::PanelWindow::Padding::None);
     const ImVec2 size = ImGui::GetContentRegionAvail();
-    if (!shown || size.x < 1.0f || size.y < 1.0f) { ImGui::End(); return; }
+    if (!window || size.x < 1.0f || size.y < 1.0f) return;
 
     const ImVec2 canvasMin = ImGui::GetCursorScreenPos();
-    m_window    = ImGui::GetCurrentWindowRead();
-    m_canvasMin = canvasMin;
+    m_surface.show(ImGui::GetCurrentWindowRead(), canvasMin, size);
     const ImVec2 canvasMax(canvasMin.x + size.x, canvasMin.y + size.y);
     // One item covers the canvas and owns the mouse while a button is held.
     ImGui::InvisibleButton("##graph", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight |
                                             ImGuiButtonFlags_MouseButtonMiddle);
     const bool hovered = ImGui::IsItemHovered();
     m_canvasActive = ImGui::IsItemActive();
-    m_camera.setFrame(canvasMin, m_uiScale);
-    m_canvasSize = size;
+    m_camera.setFrame(canvasMin, uiScale());
 
     layoutOverlays(canvasMin, canvasMax);
-    if (m_frameOnStart > 0) {
+    if (m_autoFrame && (size.x != m_framedSize.x || size.y != m_framedSize.y || m_scene.itemsRevision() != m_framedItems)) {
         frameNodes(false, size);
-        --m_frameOnStart;
+        m_framedSize  = size;
+        m_framedItems = m_scene.itemsRevision();
     }
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const GraphPaint g = paintContext(dl, m_camera);
     placeLinkCurves(g);
 
     const ImVec2 mouse = ImGui::GetIO().MousePos;
-    const bool tracking = hovered || m_drag != Drag::None;
-    Hit hit = tracking ? hitTest(mouse, g) : Hit{};
+    const bool tracking = hovered || dragging();
+    GraphHit hit = tracking ? hitAt(mouse) : GraphHit{};
     handleMouse(hit, hovered);
     // Its shortcuts next frame: the pointer over it, or focused (a panel with the pointer wins).
-    if (hovered) m_actions->claimKeyboard(ActionScope::Graph, KeyboardClaim::Pointer);
-    else if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) m_actions->claimKeyboard(ActionScope::Graph, KeyboardClaim::Focus);
+    if (hovered) ui().actions.claimKeyboard(ActionScope::Graph, KeyboardClaim::Pointer);
+    else if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) ui().actions.claimKeyboard(ActionScope::Graph, KeyboardClaim::Focus);
 
-    // Input changed the project through its calls, and the items through its events; a drag
+    // Input changed the project through its calls, and the scene through its events; a drag
     // may have moved a gap in a stack.
-    updateStackGaps();
+    updateStackGap();
     layoutOverlays(canvasMin, canvasMax);
     placeLinkCurves(g);
-    hit = tracking ? hitTest(mouse, g) : Hit{};
-    m_hoveredLink = (hit.kind == Hit::Kind::Link || hit.kind == Hit::Kind::Insert) ? hit.index : -1;
+    hit = tracking ? hitAt(mouse) : GraphHit{};
+    m_hoveredLink = hit.link();
     // A link dragged over a stack opens a gap where it would land (laid out from next frame on).
-    m_pendingLayer = {};
-    if (m_drag == Drag::Link)
-        if (const LinkTarget t = linkTarget(hit); t.valid && t.slot.kind == InputSlot::Kind::NewLayer)
-            m_pendingLayer = { t.node, int(t.slot.layer) };
+    if (auto* link = std::get_if<LinkDrag>(&m_drag)) {
+        const LinkTarget t = linkTarget(*link, hit);
+        const auto* gap = t.valid ? t.slot.as<InputSlot::NewLayer>() : nullptr;
+        link->gapStack = gap ? t.node : kNoNodeId;
+        link->gapAt    = gap ? int(gap->at) : -1;
+    }
 
     dl->PushClipRect(canvasMin, canvasMax, true);
     paint(g, hit, canvasMin, canvasMax);
     dl->PopClipRect();
 
-    drawPopups();
-    ImGui::End();
-    m_thumbs.refresh(*m_project, kThumbBudgetMs);
+    m_menus.draw();
 }
 
 bool GraphPanel::dropTarget(const ImGuiWindow* window, ImVec2 screen, ImVec2& nodePos) const
 {
-    if (!m_window || !window || window->RootWindow != m_window) return false;
-    if (screen.x < m_canvasMin.x || screen.y < m_canvasMin.y ||
-        screen.x >= m_canvasMin.x + m_canvasSize.x || screen.y >= m_canvasMin.y + m_canvasSize.y) return false;
+    if (!m_surface.contains(window, screen)) return false;
     const ImVec2 g = m_camera.toGraph(screen);
     nodePos = ImVec2(g.x - kNodeWidth * 0.5f, g.y - kHeaderH * 0.5f);   // header centred on the drop
     return true;
 }
 
-void GraphPanel::selectOnly(NodeId id)
+const NodeSelection& GraphPanel::selection() const
 {
-    m_selection.select(id);
-    bringToFront(id);
+    return ui().project.selection();
 }
 
-// ---------------------------------------------------------------- items
-
-void GraphPanel::onProjectEvent(const ProjectEvent& e)
+void GraphPanel::select(const NodeSelection& next)
 {
-    switch (e.type) {
-    case ProjectEventType::NodeAdded:     addNodeItem(e.node); break;
-    case ProjectEventType::NodeRemoved:   removeNodeItem(e.node); break;
-    case ProjectEventType::NodeMoved:     moveNodeItem(e.node); break;
-    case ProjectEventType::LinkAdded:     addLink(e.source, e.node, e.slot); break;
-    case ProjectEventType::LinkRemoved:   removeLink(e.node, e.slot); break;
-    case ProjectEventType::LayersChanged:
-        layoutNodeItem(e.node);
-        addLinksInto(e.node, true);
-        break;
-    default:   // values, pixels, previews, history: painted as they are
-        break;
-    }
+    if (next == selection()) return;
+    ui().actions.run(Actions::SelectionSet, selectionArgs(next));
 }
 
-void GraphPanel::addNodeItem(NodeId id, bool withLinks)
+void GraphPanel::updateStackGap()
 {
-    const Node* n = m_project->find(id);
-    if (!n || m_items.contains(id)) return;
-    buildNodeItem(*m_project, *n, m_viewStates[id], {}, m_items[id]);
-    m_zOrder.push_back(id);
-    ++m_itemsVersion;
-    if (withLinks) addLinksInto(id);   // made already wired (a reference)
-}
-
-void GraphPanel::removeNodeItem(NodeId id)
-{
-    m_selection.erase(id);
-    m_viewStates.erase(id);
-    m_items.erase(id);
-    m_thumbs.forget(id);
-    std::erase(m_zOrder, id);
-    std::erase(m_gapped, id);
-    std::erase_if(m_links, [&](const GraphLink& l) { return l.from == id || l.to == id; });
-    m_linksMoved = true;
-    ++m_itemsVersion;
-}
-
-void GraphPanel::moveNodeItem(NodeId id)
-{
-    auto it = m_items.find(id);
-    const Node* n = m_project->find(id);
-    if (it == m_items.end() || !n) return;
-    it->second.moveTo(n->m_meta.x, n->m_meta.y);
-    placeLinkEndsOf(id);
-    ++m_itemsVersion;
-}
-
-void GraphPanel::layoutNodeItem(NodeId id)
-{
-    auto it = m_items.find(id);
-    const Node* n = m_project->find(id);
-    if (it == m_items.end() || !n) return;
-    const StackLayout stack = stackLayout(id);
-    buildNodeItem(*m_project, *n, m_viewStates[id], stack, it->second);
-    std::erase(m_gapped, id);
-    if (it->second.stack != StackLayout{}) m_gapped.push_back(id);
-    placeLinkEndsOf(id);
-    ++m_itemsVersion;
-}
-
-void GraphPanel::addLink(NodeId from, NodeId to, const InputSlot& slot)
-{
-    std::erase_if(m_links, [&](const GraphLink& l) { return l.to == to && l.slot == slot; });   // a slot has one source
-    const bool mask = slot.kind == InputSlot::Kind::Mask;
-    if (mask) layoutNodeItem(to);   // a collapsed section shows every masked channel
-    GraphLink l{ from, to, slot, mask, isMaster(to), {}, {}, {} };
-    placeLinkEnds(l);
-    m_links.push_back(l);
-    m_linksMoved = true;
-}
-
-void GraphPanel::removeLink(NodeId to, const InputSlot& slot)
-{
-    std::erase_if(m_links, [&](const GraphLink& l) { return l.to == to && l.slot == slot; });
-    if (slot.kind == InputSlot::Kind::Mask) layoutNodeItem(to);
-    m_linksMoved = true;
-}
-
-void GraphPanel::addLinksInto(NodeId to, bool layersOnly)
-{
-    const Node* n = m_project->find(to);
-    if (!n) return;
-    std::erase_if(m_links, [&](const GraphLink& l) { return l.to == to && (!layersOnly || l.slot.kind == InputSlot::Kind::Layer); });
-    m_linksMoved = true;
-    if (auto* c = dynamic_cast<const CompositorNode*>(n))
-        for (uint32_t i = 0; i < uint32_t(c->layers().size()); ++i) addLink(c->layers()[i]->m_meta.id, to, InputSlot::stackLayer(i));
-    if (layersOnly) return;
-    if (auto* u = dynamic_cast<const UnaryNode*>(n); u && u->input()) addLink(u->input()->m_meta.id, to, InputSlot::input());
-    for (int s = 0; s < kSignalCount; ++s)
-        for (int ch = 0; ch < kChannelCount; ++ch)
-            if (const NodePtr& m = n->signal(NodeSignal(s)).mask[ch])
-                addLink(m->m_meta.id, to, InputSlot::mask(NodeSignal(s), NodeChannel(ch)));
-}
-
-void GraphPanel::placeLinkEnds(GraphLink& l) const
-{
-    const NodeItem* from = item(l.from);
-    const NodeItem* to   = item(l.to);
-    const NodeItemPort* out = from ? from->output() : nullptr;
-    const NodeItemPort* in  = to ? to->input(l.slot) : nullptr;
-    l.shown = out && in;
-    if (out) l.fromGraph = out->pos;
-    if (in)  l.toGraph   = in->pos;
-}
-
-void GraphPanel::placeLinkEndsOf(NodeId id)
-{
-    for (GraphLink& l : m_links)
-        if (l.from == id || l.to == id) placeLinkEnds(l);
-    m_linksMoved = true;
-}
-
-StackLayout GraphPanel::stackLayout(NodeId id) const
-{
-    if (!dynamic_cast<const CompositorNode*>(m_project->find(id))) return {};
-    if (id == m_layerDrag.node && m_layerDrag.lifted) return { m_layerDrag.at, int(m_layerDrag.layer) };
-    if (id == m_pendingLayer.node)                    return { m_pendingLayer.at, -1 };
-    return {};
-}
-
-void GraphPanel::updateStackGaps()
-{
-    const auto check = [&](NodeId id) {
-        const NodeItem* s = item(id);
-        if (s && s->stack != stackLayout(id)) layoutNodeItem(id);
-    };
-    for (NodeId id : std::vector<NodeId>(m_gapped)) check(id);   // copy: laying out edits it
-    check(m_layerDrag.node);
-    check(m_pendingLayer.node);
-}
-
-bool GraphPanel::isMaster(NodeId id) const
-{
-    return id != kNoNodeId && m_project->isMaster(id);
+    // A lifted layer leaves a gap where it would land; so does a link dragged over a stack.
+    const auto* layer = std::get_if<LayerDrag>(&m_drag);
+    const auto* link  = std::get_if<LinkDrag>(&m_drag);
+    if (layer && layer->lifted)                   m_scene.setStackGap(layer->node, { layer->at, int(layer->layer) });
+    else if (link && link->gapStack != kNoNodeId) m_scene.setStackGap(link->gapStack, { link->gapAt, -1 });
+    else                                          m_scene.setStackGap(kNoNodeId, {});
 }
 
 void GraphPanel::layoutOverlays(ImVec2 canvasMin, ImVec2 canvasMax)
 {
     // The master's camera: 100%, its node item's top-right corner at the panel's (less a margin),
     // scrolled when it is taller than the panel.
-    const NodeId master = m_project->master().m_meta.id;
+    const NodeId master = ui().project.master().id();
     m_pinned.zoom = 1.0f;
-    m_pinned.setFrame(canvasMin, m_uiScale);
+    m_pinned.setFrame(canvasMin, uiScale());
     m_pinnedRect = ImRect(FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX);
-    if (const NodeItem* s = item(master)) {
-        const float k = m_pinned.scale(), margin = kPinMargin * m_uiScale;
+    if (const NodeItem* s = m_scene.item(master)) {
+        const float k = m_pinned.scale(), margin = kPinMargin * uiScale();
         const float maxScroll = std::max(0.0f, s->bounds.GetHeight() * k + 2.0f * margin - (canvasMax.y - canvasMin.y));
         m_pinnedScroll = std::clamp(m_pinnedScroll, 0.0f, maxScroll);
         m_pinned.position = ImVec2(s->bounds.Max.x - (canvasMax.x - margin - canvasMin.x) / k,
@@ -276,11 +142,11 @@ void GraphPanel::layoutOverlays(ImVec2 canvasMin, ImVec2 canvasMax)
         m_pinnedRect = ImRect(m_pinned.toScreen(s->bounds.Min), m_pinned.toScreen(s->bounds.Max));
     }
     const std::array<float, 9> key{ canvasMin.x, canvasMin.y, canvasMax.x, canvasMax.y,
-                                    m_pinnedRect.Min.x, m_pinnedRect.Min.y, m_pinnedRect.Max.x, m_pinnedRect.Max.y, m_uiScale };
-    if (key != m_minimapKey || m_itemsVersion != m_minimapVersion) {   // fitted to the items: only when they or its room changed
-        m_minimapKey     = key;
-        m_minimapVersion = m_itemsVersion;
-        m_minimap.layout(m_items, master, canvasMin, canvasMax, m_pinnedRect, m_uiScale);
+                                    m_pinnedRect.Min.x, m_pinnedRect.Min.y, m_pinnedRect.Max.x, m_pinnedRect.Max.y, uiScale() };
+    if (key != m_minimapKey || m_scene.itemsRevision() != m_minimapRevision) {   // fitted to the items: only when they or its room changed
+        m_minimapKey      = key;
+        m_minimapRevision = m_scene.itemsRevision();
+        m_minimap.layout(m_scene.items(), master, canvasMin, canvasMax, m_pinnedRect, uiScale());
     }
 }
 
@@ -288,82 +154,28 @@ void GraphPanel::placeLinkCurves(const GraphPaint& g)
 {
     // Curves are screen space: placed again when a link or either camera moved.
     const ImVec2 a = m_camera.toScreen(ImVec2(0, 0)), b = m_pinned.toScreen(ImVec2(0, 0));
-    const std::array<float, 6> cameras{ a.x, a.y, m_camera.scale(), b.x, b.y, m_uiScale };
-    if (!m_linksMoved && cameras == m_linkCameras) return;
-    if (m_linksMoved) {
+    const std::array<float, 6> cameras{ a.x, a.y, m_camera.scale(), b.x, b.y, uiScale() };
+    const bool linksMoved = m_scene.linksRevision() != m_curvesRevision;
+    if (!linksMoved && cameras == m_linkCameras) return;
+    const std::vector<GraphLink>& links = m_scene.links();
+    if (linksMoved) {
         m_minimapEdges.clear();
-        for (const GraphLink& l : m_links)
+        for (const GraphLink& l : links)
             if (l.shown && !l.toMaster) m_minimapEdges.push_back({ l.fromGraph, l.toGraph, l.mask });
     }
-    m_linksMoved  = false;
-    m_linkCameras = cameras;
-    for (GraphLink& l : m_links)
-        if (l.shown) l.curve = linkCurve(g, cameraFor(l.from).toScreen(l.fromGraph), cameraFor(l.to).toScreen(l.toGraph));
+    m_curvesRevision = m_scene.linksRevision();
+    m_linkCameras    = cameras;
+    m_curves.resize(links.size());
+    for (size_t i = 0; i < links.size(); ++i)
+        if (links[i].shown) m_curves[i] = linkCurve(g, cameraFor(links[i].from).toScreen(links[i].fromGraph), cameraFor(links[i].to).toScreen(links[i].toGraph));
 }
 
-const NodeItem* GraphPanel::item(NodeId id) const
+GraphHit GraphPanel::hitAt(ImVec2 mouse) const
 {
-    auto it = m_items.find(id);
-    return it == m_items.end() ? nullptr : &it->second;
-}
-
-void GraphPanel::bringToFront(NodeId id)
-{
-    std::erase(m_zOrder, id);
-    m_zOrder.push_back(id);
-}
-
-GraphPanel::Hit GraphPanel::hitNode(NodeId id, const NodeItem& s, ImVec2 p, float portR) const
-{
-    ImRect reach = s.bounds;
-    reach.Expand(portR);
-    if (!reach.Contains(p)) return {};
-    // Ports first: they straddle the box edges.
-    for (size_t i = 0; i < s.ports.size(); ++i) {
-        const float dx = p.x - s.ports[i].pos.x, dy = p.y - s.ports[i].pos.y;
-        if (dx * dx + dy * dy <= portR * portR) return { Hit::Kind::Port, id, int(i) };
-    }
-    for (size_t i = 0; i < s.widgets.size(); ++i)
-        if (s.widgets[i].rect.Contains(p)) return { Hit::Kind::Widget, id, int(i) };
-    for (const NodeItemBox& b : s.boxes)
-        if (b.rect.Contains(p)) return { Hit::Kind::Node, id, -1 };
-    return {};
-}
-
-GraphPanel::Hit GraphPanel::hitTest(ImVec2 mouse, const GraphPaint& g) const
-{
-    // The pinned master and the navigator float over everything.
-    const NodeId master = m_project->master().m_meta.id;
-    if (const NodeItem* s = item(master)) {
-        const Hit h = hitNode(master, *s, m_pinned.toGraph(mouse), std::max(kPortHit, g.px(7.0f) / m_pinned.scale()));
-        if (h.kind != Hit::Kind::None) return h;
-    }
-    if (m_minimap.contains(mouse)) return { Hit::Kind::Minimap, kNoNodeId, -1 };
-
-    const ImVec2 p = m_camera.toGraph(mouse);
-    const float portR = std::max(kPortHit, g.px(7.0f) / g.scale());
-    for (auto it = m_zOrder.rbegin(); it != m_zOrder.rend(); ++it) {   // front to back
-        const NodeItem* s = item(*it);
-        if (!s || *it == master) continue;
-        const Hit h = hitNode(*it, *s, p, portR);
-        if (h.kind != Hit::Kind::None) return h;
-    }
-
-    // The insert button of the link hovered last frame sits on top of every link.
-    if (m_hoveredLink >= 0 && m_hoveredLink < int(m_links.size())) {
-        const ImVec2 at = insertPoint(m_links[size_t(m_hoveredLink)], mouse);
-        const float dx = mouse.x - at.x, dy = mouse.y - at.y;
-        if (dx * dx + dy * dy <= g.px(kInsertRadiusPx) * g.px(kInsertRadiusPx)) return { Hit::Kind::Insert, kNoNodeId, m_hoveredLink };
-    }
-    int best = -1;
-    float bestDist = g.px(kLinkHoverPx);
-    for (size_t i = 0; i < m_links.size(); ++i) {
-        if (!m_links[i].shown) continue;
-        const float d = linkDistance(m_links[i].curve, mouse);
-        if (d < bestDist) { bestDist = d; best = int(i); }
-    }
-    if (best >= 0) return { Hit::Kind::Link, kNoNodeId, best };
-    return {};
+    const bool hovering = m_hoveredLink >= 0 && m_hoveredLink < int(m_curves.size());
+    const HitView view{ m_scene, ui().project.master().id(), m_camera, m_pinned, m_minimap, m_curves, uiScale(),
+                        m_hoveredLink, hovering ? insertPoint(m_curves[size_t(m_hoveredLink)], mouse) : ImVec2() };
+    return hitTest(view, mouse);
 }
 
 void GraphPanel::registerActions(ActionRegistry& actions)
@@ -371,25 +183,36 @@ void GraphPanel::registerActions(ActionRegistry& actions)
     // Interface actions: framing, selecting, opening the add menu. Delete runs node.delete (logged).
     const auto graph = ActionScope::Graph;
     const auto ui    = ActionKind::Interface;
-    actions.add({ .id = "graph.delete", .title = "Delete Selected", .kind = ui,
+    actions.add({ .id = Actions::GraphDelete, .title = "Delete Selected", .kind = ui,
                   .shortcuts = { { SDLK_DELETE }, { SDLK_BACKSPACE } }, .scope = graph,
-                  .enabled = [this] { return !m_selection.empty(); }, .run = [this] { deleteSelection(); } });
-    actions.add({ .id = "graph.frameSelected", .title = "Frame Selected", .kind = ui, .shortcuts = { { SDLK_F } }, .scope = graph,
-                  .run = [this] { frameNodes(!m_selection.empty(), m_canvasSize); } });
-    actions.add({ .id = "graph.frameAll", .title = "Frame All", .kind = ui, .shortcuts = { { SDLK_HOME } }, .scope = graph,
-                  .run = [this] { frameNodes(false, m_canvasSize); } });
-    actions.add({ .id = "graph.selectAll", .title = "Select All", .kind = ui, .shortcuts = { { SDLK_A, ModPrimary } }, .scope = graph,
+                  .enabled = [this] { return !selection().empty(); }, .run = [this] { deleteSelection(); } });
+    actions.add({ .id = Actions::GraphFrameSelected, .title = "Frame Selected", .kind = ui, .shortcuts = { { SDLK_F } }, .scope = graph,
+                  .run = [this] { m_autoFrame = false; frameNodes(!selection().empty(), m_surface.size()); } });
+    actions.add({ .id = Actions::GraphFrameAll, .title = "Frame All", .kind = ui, .shortcuts = { { SDLK_HOME } }, .scope = graph,
+                  .run = [this] { m_autoFrame = false; frameNodes(false, m_surface.size()); } });
+    actions.add({ .id = Actions::GraphSelectAll, .title = "Select All", .kind = ui, .shortcuts = { { SDLK_A, ModPrimary } }, .scope = graph,
                   .run = [this] {
-                      GraphSelection::Set all;
-                      for (const auto& [id, s] : m_items)
-                          if (!isMaster(id)) all.insert(id);
-                      m_selection.assign(std::move(all));
+                      NodeSelection::Set all;
+                      for (const auto& [id, s] : m_scene.items())
+                          if (!m_scene.isMaster(id)) all.insert(id);
+                      select(selection().withIds(std::move(all)));
                   } });
-    actions.add({ .id = "graph.addNode", .title = "Add Node...", .kind = ui, .shortcuts = { { SDLK_A, ModShift } }, .scope = graph,
-                  .run = [this] {
-                      PendingAdd add;
-                      add.at = m_camera.toGraph(ImGui::GetIO().MousePos);
-                      openAdd(add, NodeMenu::Fit::Any);
+    actions.add({ .id = Actions::GraphAddNode, .title = "Add Node...", .kind = ui, .shortcuts = { { SDLK_A, ModShift } }, .scope = graph,
+                  .run = [this] { m_menus.openAdd(GraphMenus::Free{}, m_camera.toGraph(ImGui::GetIO().MousePos)); } });
+    // nodes: the ones to show (none given: the selection), where their output is on the canvas.
+    actions.add({ .id = Actions::GraphShowInCanvas, .title = "Show in Canvas", .kind = ui, .args = { Arg::ids("nodes").optional() },
+                  .mouse = "Double-click", .scope = graph,
+                  .run = [this](const ActionArgs& a) {
+                      std::vector<NodeId> ids;
+                      if (a.has("nodes")) for (int64_t id : a.list("nodes")) ids.push_back(NodeId(id));
+                      else ids = selection().list();
+                      showInCanvas(ids);
+                  } });
+    // node: the one to rename (none given: the one selected), in a field at the mouse.
+    actions.add({ .id = Actions::GraphRename, .title = "Rename...", .kind = ui, .args = { Arg::id("node").optional() }, .scope = graph,
+                  .run = [this](const ActionArgs& a) {
+                      const NodeId id = a.has("node") ? NodeId(a.integer("node")) : selection().single();
+                      return m_menus.openValue(GraphMenus::Rename{ id });
                   } });
 }
 
@@ -397,29 +220,28 @@ void GraphPanel::showInCanvas(const std::vector<NodeId>& ids)
 {
     BoundsI b;
     for (NodeId id : ids)
-        if (Node* n = m_project->find(id)) b.expand(n->bounds());   // a Move: where it moved them to
-    if (m_showInCanvas) m_showInCanvas(b);
+        if (const Node* n = ui().project.find(id)) b.expand(n->bounds());   // a Move: where it moved them to
+    ui().actions.run(Actions::CanvasFrame, { { "minX", b.minX }, { "minY", b.minY }, { "maxX", b.maxX }, { "maxY", b.maxY } });
 }
 
 void GraphPanel::deleteSelection()
 {
-    const std::vector<NodeId> ids(m_selection.ids().begin(), m_selection.ids().end());
-    m_actions->run("node.delete", { { "nodes", ids } });   // the master is skipped; the rest heal the links around them
+    ui().actions.run(Actions::NodeDelete, { { "nodes", selection().list() } });   // the master is skipped; the rest heal the links around them
 }
 
 void GraphPanel::frameNodes(bool selectionOnly, ImVec2 canvasSize)
 {
     ImRect r;
     bool any = false;
-    for (const auto& [id, s] : m_items) {
-        if (isMaster(id) || (selectionOnly && !m_selection.contains(id))) continue;
+    for (const auto& [id, s] : m_scene.items()) {
+        if (m_scene.isMaster(id) || (selectionOnly && !selection().contains(id))) continue;
         if (any) r.Add(s.bounds); else r = s.bounds;
         any = true;
     }
     // Into the part the pinned master leaves free, if that leaves enough.
     ImVec2 area = canvasSize;
     if (!m_pinnedRect.IsInverted()) {
-        const float covered = m_camera.origin().x + canvasSize.x - m_pinnedRect.Min.x + kPinMargin * m_uiScale;
+        const float covered = m_camera.origin().x + canvasSize.x - m_pinnedRect.Min.x + kPinMargin * uiScale();
         if (canvasSize.x - covered > canvasSize.x * 0.4f) area.x -= covered;
     }
     if (any) m_camera.frame(r.Min, r.Max, area, kFrameMargin);

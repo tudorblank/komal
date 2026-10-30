@@ -1,5 +1,7 @@
 #include "view.hpp"
-#include "core/perf.hpp"
+#include "base/palette.hpp"
+#include "base/perf.hpp"
+#include "gfx/render-pass.hpp"
 
 #include <cmath>
 
@@ -8,12 +10,13 @@ bool CanvasView::init(CanvasScene& scene)
     m_scene = &scene;
     const CanvasPipelines& p = scene.pipelines();
     m_target.init(p.ctx.device, p.ctx.targetFormat);
-    return m_camera.create(p.ctx, p.cameraLayout);
+    m_queue = p.ctx.queue;
+    return m_cameraUniform.create(p.ctx.device, p.cameraLayout, sizeof(Mat4::m), "Canvas Camera");
 }
 
 void CanvasView::shutdown()
 {
-    m_camera.release();
+    m_cameraUniform.release();
     m_target.shutdown();
 }
 
@@ -31,12 +34,13 @@ bool CanvasView::resize(float width, float height, float pixelScaleX, float pixe
     return true;
 }
 
-void CanvasView::render(WGPUCommandEncoder enc, double budgetMs)
+void CanvasView::render(WGPUCommandEncoder enc, const Deadline& budget)
 {
     if (!m_scene || !m_target.view() || m_width <= 0.0f || m_height <= 0.0f) return;
     PerfScope perf(Perf::CanvasPrepare);
 
-    CanvasFrame frame(m_scene->pipelines(), m_camera, visibleWorld(), { enc, m_width, m_height, m_target.width(), m_target.height() }, budgetMs);
+    CanvasFrame frame(m_scene->pipelines(), m_camera, m_cameraUniform.group, visibleWorld(),
+                      { enc, m_width, m_height, m_target.width(), m_target.height() }, budget);
     const bool itemsChanged = m_scene->prepare(frame);
     const bool viewChanged  = m_targetNew || m_camera.pan.x != m_renderedPan.x || m_camera.pan.y != m_renderedPan.y ||
                               m_camera.zoom != m_renderedZoom || m_camera.rotation != m_renderedRotation || m_width != m_renderedW || m_height != m_renderedH;
@@ -44,30 +48,20 @@ void CanvasView::render(WGPUCommandEncoder enc, double budgetMs)
     if (!viewChanged && !contentChanged && !m_holding) return;
 
     // Hold the last complete picture until the visible content has fully caught up.
-    if (!viewChanged && m_holdAllowed && !m_scene->settled()) {
-        const auto now = std::chrono::steady_clock::now();
-        if (!m_holding) { m_holding = true; m_holdStart = now; }
-        if (std::chrono::duration<double>(now - m_holdStart).count() < kMaxHoldSeconds) return;
+    if (!viewChanged && !m_scene->settled()) {
+        if (!m_holding) { m_holding = true; m_holdEnd = Deadline::in(kMaxHoldMs); }
+        if (!m_holdEnd.expired()) return;
     }
     m_holding = false;
 
-    m_camera.upload(m_width, m_height);
+    const Mat4 viewProj = m_camera.viewProj(m_width, m_height);
+    m_cameraUniform.write(m_queue, viewProj.m, sizeof(viewProj.m));
 
-    WGPURenderPassColorAttachment ca{};
-    ca.view       = m_target.view();
-    ca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
-    ca.loadOp     = WGPULoadOp_Clear;
-    ca.storeOp    = WGPUStoreOp_Store;
-    ca.clearValue = { clearColor[0], clearColor[1], clearColor[2], clearColor[3] };
-
-    WGPURenderPassDescriptor rp{};
-    rp.label                = sv("Canvas Pass");
-    rp.colorAttachmentCount = 1;
-    rp.colorAttachments     = &ca;
-    WGPURenderPassEncoder pass = wgpuCommandEncoderBeginRenderPass(enc, &rp);
-    m_scene->drawGpu(pass, frame);
-    wgpuRenderPassEncoderEnd(pass);
-    wgpuRenderPassEncoderRelease(pass);
+    {
+        const auto clear = Palette::kCanvasBackground.floats();
+        const GpuRenderPass pass(enc, m_target.view(), GpuRenderPass::Load::Clear, "Canvas Pass", clear.data());
+        m_scene->drawGpu(pass, frame);
+    }
 
     m_renderedRevision = m_scene->revision();
     m_renderedPan  = m_camera.pan;

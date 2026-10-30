@@ -13,6 +13,16 @@ struct PreviewSignalParams {
 static_assert(sizeof(PreviewSignalParams) == 112);
 constexpr int kPreviewMaskTextures = 12;
 
+// Uniform of the preview stroke pass (preview-stroke.wgsl): the brush over a raster's pixels.
+struct PreviewStrokeParams {
+    float   color[4];    // premultiplied
+    float   opacity;     // applied once to the whole stroke
+    int32_t erase;       // erases instead of painting
+    int32_t keepAlpha;   // the raster's transparency stays (alpha locked)
+    int32_t pad;
+};
+static_assert(sizeof(PreviewStrokeParams) == 32);
+
 // Uniform of a solid rectangle (color.wgsl).
 struct RectParams {
     float model[16];   // unit quad centred on the origin -> world rectangle
@@ -28,36 +38,42 @@ struct CheckerParams {
     float pad;
 };
 static_assert(sizeof(CheckerParams) == 48);
+CheckerParams pictureChecker(float originX, float originY);   // a small picture's (thumbnails, the navigator), from that corner
 
-// The layouts and pipelines every item kind of a canvas scene draws with, shared. Items own
-// only their data (buffers, textures, bind groups).
+// The layouts and pipelines every item kind of a canvas scene draws with, shared (and owned: each
+// a GpuObject). Items own only their data (buffers, textures, bind groups).
 struct CanvasPipelines {
     GpuHandles ctx;
 
-    WGPUBindGroupLayout cameraLayout = nullptr;   // group 0 of world-space pipelines: mat4 viewProj
+    GpuObject<WGPUBindGroupLayout> cameraLayout;   // group 0 of world-space pipelines: mat4 viewProj
 
     // Checkerboard background: full-screen, no camera. Group 0: CheckerParams. No blending.
-    WGPUBindGroupLayout checkerLayout   = nullptr;
-    WGPURenderPipeline  checkerPipeline = nullptr;
+    GpuObject<WGPUBindGroupLayout> checkerLayout;
+    GpuObject<WGPURenderPipeline>  checkerPipeline;
 
     // Solid rectangles. Group 1: RectParams.
-    WGPUBindGroupLayout colorLayout   = nullptr;
-    WGPURenderPipeline  colorPipeline = nullptr;
+    GpuObject<WGPUBindGroupLayout> colorLayout;
+    GpuObject<WGPURenderPipeline>  colorPipeline;
 
     // Raster tiles, premultiplied. Group 1: page texture + sampler; vertex buffer 0: ChunkInstance.
-    WGPUBindGroupLayout atlasLayout   = nullptr;
-    WGPURenderPipeline  atlasPipeline = nullptr;
-    WGPUSampler         atlasSampler  = nullptr;   // nearest: pixels stay crisp squares
+    GpuObject<WGPUBindGroupLayout> atlasLayout;
+    GpuObject<WGPURenderPipeline>  atlasPipeline;
+    GpuObject<WGPUSampler>         atlasSampler;   // nearest: pixels stay crisp squares
 
     // Edit previews: full-screen passes over view-sized textures, read 1:1 (textureLoad).
     //   signal: one node's signals. Group 0: PreviewSignalParams; group 1: Wet, Dry, 12 masks
     //           (signal * 4 + channel). No blending.
+    //   stroke: a stroke's coverage over a raster's pixels. Group 0: PreviewStrokeParams; group 1:
+    //           the pixels, the coverage. No blending.
     //   blit:   one texture over the target, premultiplied. Group 0: the texture.
-    WGPUBindGroupLayout previewParamsLayout   = nullptr;
-    WGPUBindGroupLayout previewTexturesLayout = nullptr;
-    WGPURenderPipeline  previewSignalPipeline = nullptr;
-    WGPUBindGroupLayout blitLayout            = nullptr;
-    WGPURenderPipeline  blitPipeline          = nullptr;
+    GpuObject<WGPUBindGroupLayout> previewParamsLayout;
+    GpuObject<WGPUBindGroupLayout> previewTexturesLayout;
+    GpuObject<WGPURenderPipeline>  previewSignalPipeline;
+    GpuObject<WGPUBindGroupLayout> previewStrokeLayout;
+    GpuObject<WGPUBindGroupLayout> previewStrokeTexturesLayout;
+    GpuObject<WGPURenderPipeline>  previewStrokePipeline;
+    GpuObject<WGPUBindGroupLayout> blitLayout;
+    GpuObject<WGPURenderPipeline>  blitPipeline;
 
     bool create(const GpuHandles& context);
     void release();

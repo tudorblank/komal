@@ -1,4 +1,5 @@
 #include "handles.hpp"
+#include "base/log.hpp"
 
 WGPUShaderModule createShaderModule(const GpuHandles& ctx, const char* wgsl, const char* label)
 {
@@ -19,8 +20,11 @@ bool GpuUniform::create(WGPUDevice device, WGPUBindGroupLayout layout, uint64_t 
     bd.label = sv(label);
     bd.size  = size;
     bd.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
-    buffer = wgpuDeviceCreateBuffer(device, &bd);
-    if (!buffer) return false;
+    buffer.reset(wgpuDeviceCreateBuffer(device, &bd));
+    if (!buffer) {
+        Log::error("gpu", "%s: no uniform buffer", label);
+        return false;
+    }
 
     WGPUBindGroupEntry e{};
     e.binding = 0;
@@ -31,12 +35,10 @@ bool GpuUniform::create(WGPUDevice device, WGPUBindGroupLayout layout, uint64_t 
     gd.layout     = layout;
     gd.entryCount = 1;
     gd.entries    = &e;
-    group = wgpuDeviceCreateBindGroup(device, &gd);
-    return group != nullptr;
-}
-
-void GpuUniform::release()
-{
-    if (group)  { wgpuBindGroupRelease(group); group  = nullptr; }
-    if (buffer) { wgpuBufferRelease(buffer);   buffer = nullptr; }
+    group.reset(wgpuDeviceCreateBindGroup(device, &gd));
+    if (!group) {
+        Log::error("gpu", "%s: no bind group", label);
+        release();
+    }
+    return bool(group);
 }

@@ -1,6 +1,7 @@
 #include "pipelines.hpp"
 #include "canvas/tiles/atlas.hpp"   // ChunkInstance layout
-#include "gfx/math.hpp"
+#include "base/math.hpp"
+#include "base/palette.hpp"
 
 #include <cstddef>
 #include <initializer_list>
@@ -10,6 +11,7 @@ extern const unsigned char kShaderColor[];           // generated from shaders/*
 extern const unsigned char kShaderTexture[];
 extern const unsigned char kShaderPreviewSignal[];
 extern const unsigned char kShaderPreviewBlit[];
+extern const unsigned char kShaderPreviewStroke[];
 extern const unsigned char kShaderChecker[];
 
 namespace {
@@ -68,7 +70,7 @@ struct PipelineDesc {
 
 WGPURenderPipeline makePipeline(const GpuHandles& ctx, const PipelineDesc& d)
 {
-    WGPUShaderModule module = createShaderModule(ctx, reinterpret_cast<const char*>(d.wgsl), d.label);
+    const GpuObject<WGPUShaderModule> module{ createShaderModule(ctx, reinterpret_cast<const char*>(d.wgsl), d.label) };
     if (!module) return nullptr;
 
     WGPUColorTargetState target{};
@@ -86,7 +88,7 @@ WGPURenderPipeline makePipeline(const GpuHandles& ctx, const PipelineDesc& d)
     pld.label                = sv(d.label);
     pld.bindGroupLayoutCount = d.groups.size();
     pld.bindGroupLayouts     = d.groups.data();
-    WGPUPipelineLayout layout = wgpuDeviceCreatePipelineLayout(ctx.device, &pld);
+    const GpuObject<WGPUPipelineLayout> layout{ wgpuDeviceCreatePipelineLayout(ctx.device, &pld) };
 
     WGPURenderPipelineDescriptor rpd{};
     rpd.label               = sv(d.label);
@@ -101,24 +103,32 @@ WGPURenderPipeline makePipeline(const GpuHandles& ctx, const PipelineDesc& d)
     rpd.multisample.count   = 1;
     rpd.multisample.mask    = 0xFFFFFFFFu;
     rpd.fragment            = &fs;
-    WGPURenderPipeline pipeline = wgpuDeviceCreateRenderPipeline(ctx.device, &rpd);
-
-    wgpuPipelineLayoutRelease(layout);
-    wgpuShaderModuleRelease(module);
-    return pipeline;
+    return wgpuDeviceCreateRenderPipeline(ctx.device, &rpd);   // the layout and module go with this scope
 }
 
+}
+
+CheckerParams pictureChecker(float originX, float originY)
+{
+    CheckerParams c{};
+    const auto dark = Palette::kPictureCheckerA.floats(), light = Palette::kPictureCheckerB.floats();
+    for (int i = 0; i < 3; ++i) { c.colorA[i] = dark[i]; c.colorB[i] = light[i]; }
+    c.colorA[3] = c.colorB[3] = 1.0f;
+    c.origin[0] = originX;
+    c.origin[1] = originY;
+    c.cell      = Palette::kPictureChecker;
+    return c;
 }
 
 bool CanvasPipelines::create(const GpuHandles& context)
 {
     ctx = context;
     constexpr auto kFullscreen = WGPUPrimitiveTopology_TriangleList;
-    cameraLayout = uniformLayout(ctx, "Canvas Camera Layout", WGPUShaderStage_Vertex, sizeof(Mat4::m));
+    cameraLayout.reset(uniformLayout(ctx, "Canvas Camera Layout", WGPUShaderStage_Vertex, sizeof(Mat4::m)));
 
     // ---- solid rectangles
-    colorLayout   = uniformLayout(ctx, "Rect Layout", WGPUShaderStage_Vertex | WGPUShaderStage_Fragment, sizeof(RectParams));
-    colorPipeline = makePipeline(ctx, { "color.wgsl", kShaderColor, { cameraLayout, colorLayout }, &kStraight });
+    colorLayout.reset(uniformLayout(ctx, "Rect Layout", WGPUShaderStage_Vertex | WGPUShaderStage_Fragment, sizeof(RectParams)));
+    colorPipeline.reset(makePipeline(ctx, { "color.wgsl", kShaderColor, { cameraLayout, colorLayout }, &kStraight }));
 
     // ---- atlas tiles
     WGPUSamplerDescriptor sd{};
@@ -130,7 +140,7 @@ bool CanvasPipelines::create(const GpuHandles& context)
     sd.addressModeV  = WGPUAddressMode_ClampToEdge;
     sd.addressModeW  = WGPUAddressMode_ClampToEdge;
     sd.maxAnisotropy = 1;
-    atlasSampler = wgpuDeviceCreateSampler(ctx.device, &sd);
+    atlasSampler.reset(wgpuDeviceCreateSampler(ctx.device, &sd));
 
     WGPUBindGroupLayoutEntry entries[2]{};
     entries[0].binding               = 0;
@@ -144,7 +154,7 @@ bool CanvasPipelines::create(const GpuHandles& context)
     ld.label      = sv("Atlas Page Layout");
     ld.entryCount = 2;
     ld.entries    = entries;
-    atlasLayout = wgpuDeviceCreateBindGroupLayout(ctx.device, &ld);
+    atlasLayout.reset(wgpuDeviceCreateBindGroupLayout(ctx.device, &ld));
 
     const WGPUVertexAttribute attribs[5] = {
         { WGPUVertexFormat_Float32x2, offsetof(ChunkInstance, center),   0 },
@@ -158,31 +168,32 @@ bool CanvasPipelines::create(const GpuHandles& context)
     instances.stepMode       = WGPUVertexStepMode_Instance;
     instances.attributeCount = 5;
     instances.attributes     = attribs;
-    atlasPipeline = makePipeline(ctx, { "texture.wgsl", kShaderTexture, { cameraLayout, atlasLayout }, &kPremultiplied, &instances });
+    atlasPipeline.reset(makePipeline(ctx, { "texture.wgsl", kShaderTexture, { cameraLayout, atlasLayout }, &kPremultiplied, &instances }));
 
     // ---- full-screen passes
-    checkerLayout   = uniformLayout(ctx, "Checker Layout", WGPUShaderStage_Fragment, sizeof(CheckerParams));
-    checkerPipeline = makePipeline(ctx, { "checker.wgsl", kShaderChecker, { checkerLayout }, nullptr, nullptr, kFullscreen });
+    checkerLayout.reset(uniformLayout(ctx, "Checker Layout", WGPUShaderStage_Fragment, sizeof(CheckerParams)));
+    checkerPipeline.reset(makePipeline(ctx, { "checker.wgsl", kShaderChecker, { checkerLayout }, nullptr, nullptr, kFullscreen }));
 
-    previewParamsLayout   = uniformLayout(ctx, "Preview Params Layout", WGPUShaderStage_Fragment, sizeof(PreviewSignalParams));
-    previewTexturesLayout = textureLayout(ctx, "Preview Textures Layout", 2 + kPreviewMaskTextures);
-    previewSignalPipeline = makePipeline(ctx, { "preview-signal.wgsl", kShaderPreviewSignal,
-                                                { previewParamsLayout, previewTexturesLayout }, nullptr, nullptr, kFullscreen });
+    previewParamsLayout.reset(uniformLayout(ctx, "Preview Params Layout", WGPUShaderStage_Fragment, sizeof(PreviewSignalParams)));
+    previewTexturesLayout.reset(textureLayout(ctx, "Preview Textures Layout", 2 + kPreviewMaskTextures));
+    previewSignalPipeline.reset(makePipeline(ctx, { "preview-signal.wgsl", kShaderPreviewSignal,
+                                                { previewParamsLayout, previewTexturesLayout }, nullptr, nullptr, kFullscreen }));
 
-    blitLayout   = textureLayout(ctx, "Blit Layout", 1);
-    blitPipeline = makePipeline(ctx, { "preview-blit.wgsl", kShaderPreviewBlit, { blitLayout }, &kPremultiplied, nullptr, kFullscreen });
+    previewStrokeLayout.reset(uniformLayout(ctx, "Preview Stroke Layout", WGPUShaderStage_Fragment, sizeof(PreviewStrokeParams)));
+    previewStrokeTexturesLayout.reset(textureLayout(ctx, "Preview Stroke Textures Layout", 2));
+    previewStrokePipeline.reset(makePipeline(ctx, { "preview-stroke.wgsl", kShaderPreviewStroke,
+                                                { previewStrokeLayout, previewStrokeTexturesLayout }, nullptr, nullptr, kFullscreen }));
+
+    blitLayout.reset(textureLayout(ctx, "Blit Layout", 1));
+    blitPipeline.reset(makePipeline(ctx, { "preview-blit.wgsl", kShaderPreviewBlit, { blitLayout }, &kPremultiplied, nullptr, kFullscreen }));
 
     return cameraLayout && colorLayout && colorPipeline && atlasLayout && atlasPipeline && atlasSampler &&
-           previewParamsLayout && previewTexturesLayout && previewSignalPipeline && blitLayout && blitPipeline &&
+           previewParamsLayout && previewTexturesLayout && previewSignalPipeline && previewStrokeLayout && previewStrokeTexturesLayout &&
+           previewStrokePipeline && blitLayout && blitPipeline &&
            checkerLayout && checkerPipeline;
 }
 
 void CanvasPipelines::release()
 {
-    for (WGPURenderPipeline* p : { &checkerPipeline, &blitPipeline, &previewSignalPipeline, &atlasPipeline, &colorPipeline })
-        if (*p) { wgpuRenderPipelineRelease(*p); *p = nullptr; }
-    for (WGPUBindGroupLayout* l : { &checkerLayout, &blitLayout, &previewTexturesLayout, &previewParamsLayout, &atlasLayout,
-                                    &colorLayout, &cameraLayout })
-        if (*l) { wgpuBindGroupLayoutRelease(*l); *l = nullptr; }
-    if (atlasSampler) { wgpuSamplerRelease(atlasSampler); atlasSampler = nullptr; }
+    *this = CanvasPipelines{};   // every handle released
 }

@@ -1,8 +1,8 @@
 #include "device.hpp"
+#include "base/log.hpp"
 
 #include <SDL3/SDL.h>
 #include <webgpu/wgpu.h>
-#include <cstdio>
 #include <cstring>
 #include <cstdlib>
 
@@ -80,8 +80,8 @@ void destroySurfaceView(void* platformView)
 void logSv(const char* tag, WGPUStringView m)
 {
     if (!m.data) return;
-    if (m.length == WGPU_STRLEN) std::fprintf(stderr, "[wgpu] %s: %s\n", tag, m.data);
-    else std::fprintf(stderr, "[wgpu] %s: %.*s\n", tag, (int)m.length, m.data);
+    if (m.length == WGPU_STRLEN) Log::info("wgpu", "%s: %s", tag, m.data);
+    else Log::info("wgpu", "%s: %.*s", tag, (int)m.length, m.data);
 }
 
 struct AdapterRequest { WGPUAdapter adapter = nullptr; };
@@ -115,10 +115,10 @@ bool isSrgb(WGPUTextureFormat f)
 bool GpuDevice::init(SDL_Window* window)
 {
     m_instance = wgpuCreateInstance(nullptr);
-    if (!m_instance) { std::fprintf(stderr, "wgpuCreateInstance failed\n"); return false; }
+    if (!m_instance) { Log::error("gpu", "wgpuCreateInstance failed"); return false; }
 
     m_surface = createSurface(m_instance, window, &m_surfaceView);
-    if (!m_surface) { std::fprintf(stderr, "Surface creation failed\n"); return false; }
+    if (!m_surface) { Log::error("gpu", "surface creation failed"); return false; }
 
     // ---- adapter (wgpu-native completes this synchronously with AllowSpontaneous)
     AdapterRequest areq;
@@ -276,28 +276,8 @@ bool GpuDevice::acquire(GpuFrame& f)
     return true;
 }
 
-void GpuDevice::beginSurfacePass(GpuFrame& f, const float clear[4])
-{
-    WGPURenderPassColorAttachment ca{};
-    ca.view       = f.view;
-    ca.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED;
-    ca.loadOp     = WGPULoadOp_Clear;
-    ca.storeOp    = WGPUStoreOp_Store;
-    ca.clearValue = { clear[0], clear[1], clear[2], clear[3] };
-
-    WGPURenderPassDescriptor rp{};
-    rp.colorAttachmentCount = 1;
-    rp.colorAttachments     = &ca;
-    f.pass = wgpuCommandEncoderBeginRenderPass(f.encoder, &rp);
-}
-
 void GpuDevice::present(GpuFrame& f)
 {
-    if (f.pass) {
-        wgpuRenderPassEncoderEnd(f.pass);
-        wgpuRenderPassEncoderRelease(f.pass);
-    }
-
     WGPUCommandBufferDescriptor cdesc{};
     WGPUCommandBuffer cmd = wgpuCommandEncoderFinish(f.encoder, &cdesc);
     wgpuCommandEncoderRelease(f.encoder);

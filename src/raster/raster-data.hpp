@@ -1,14 +1,10 @@
 #pragma once
-// A raster: committed pixels (sparse tiles + bounds), the draft an edit in progress paints into,
-// and its own history. RasterEditor is the one way to change committed pixels.
-//
-// Long edits (a stroke) go to the draft: reads show it over the committed tiles, so everything
-// downstream updates live, and commitDraft() turns it into one commit.
 
 #include "raster/raster-history.hpp"
 #include "raster/tile-grid.hpp"
 
 #include <exception>
+#include <functional>
 #include <memory>
 #include <span>
 #include <vector>
@@ -21,8 +17,8 @@ struct EditSummary {
 };
 
 // === RASTER DATA === //
-using RasterId = uint32_t;
-constexpr RasterId kNoRasterId = 0xFFFFFFFFu;
+enum class RasterId : uint32_t {};   // its own type: never mixed up with another number
+constexpr RasterId kNoRasterId{ 0xFFFFFFFFu };
 class RasterEditor;
 
 class RasterData {
@@ -32,43 +28,23 @@ public:
     RasterData& operator=(const RasterData&) = delete;
     RasterId id() const { return m_id; }
 
-    // ---- read: what the raster shows (the draft over the committed tiles)
-    const Tile* getReadTile(int tx, int ty) const
-    {
-        if (!m_draftOn) return m_grid.getReadTile(tx, ty);
-        if (const Tile* d = m_draft.getReadTile(tx, ty)) return d;
-        if (m_draftCleared.contains(TileUtils::packKey(tx, ty))) return nullptr;
-        return m_grid.getReadTile(tx, ty);
-    }
+    // ---- read
+    const Tile* getReadTile(int tx, int ty) const { return m_grid.getReadTile(tx, ty); }
     // valid between edits only (an open RasterEditor makes them stale)
     BoundsI getBounds() const
     {
         assert(!m_pendingEdits);
-        BoundsI b = m_bounds;
-        if (m_draftOn) b.expand(m_draftBounds);
-        return b;
+        return m_bounds;
     }
-
-    // ---- read: the committed pixels only
-    const Tile* committedTile(int tx, int ty) const { return m_grid.getReadTile(tx, ty); }
     TileReader reader() const { return m_grid.reader(); }
     template<class F> void forEachTile(F&& f) const { m_grid.forEachRead(std::forward<F>(f)); }
     size_t tileCount() const { assert(!m_pendingEdits); return m_grid.size(); }
     uint64_t revision() const { return m_revision; }   // bumps on every commit that changed something
 
-    // ---- draft: an edit in progress
-    bool hasDraft() const { return m_draftOn; }
-    template<class F> void forEachDraftTile(F&& f) const   // f(tx, ty): every tile the draft covers
-    {
-        m_draft.forEachRead([&](int tx, int ty, const Tile&) { f(tx, ty); });
-        for (TileKey k : m_draftCleared) { const auto t = TileUtils::unpackKey(k); f(t.x, t.y); }
-    }
-    void setDraftTile(int tx, int ty, const Tile* tile);   // the raster shows `tile` there (null: nothing)
-    TileSet discardDraft();                                // back to the committed pixels; the tiles it covered
-    // The draft becomes the committed pixels, as one commit (kNoRasterCommit if nothing changed).
-    RasterCommitId commitDraft(EditSummary* summary = nullptr);
-
     // ---- history
+    // An edit through a RasterEditor (the one way pixels change), recorded: one commit, which
+    // flip() undoes and redoes (kNoRasterCommit if nothing changed).
+    RasterCommitId recordEdit(const std::function<void(RasterEditor&)>& body, EditSummary& summary);
     const RasterHistory& history() const { return m_history; }
     EditSummary flip(RasterCommitId id);   // undoes the commit, or redoes it if it is undone
 
@@ -76,12 +52,8 @@ private:
     friend class RasterEditor;
 
     RasterId m_id;
-    TileGrid m_grid;      // committed
-    BoundsI  m_bounds;    // of the committed pixels
-    TileGrid m_draft;     // draft tiles with something in them
-    TileSet  m_draftCleared;   // draft tiles that show nothing
-    BoundsI  m_draftBounds;
-    bool     m_draftOn = false;
+    TileGrid m_grid;
+    BoundsI  m_bounds;    // of the pixels
     RasterHistory m_history;
     RasterEditor* m_editor = nullptr;
     bool     m_pendingEdits = false;
@@ -299,10 +271,10 @@ public:
             t->settle();
             if (t->isEmpty()) { m_r.m_grid.freeTile(tx, ty); continue; }
 
-#ifndef NDEBUG
+    #ifndef NDEBUG
             const RGBA* px = t->getReadAll();
             for (int i = 0; i < Tile::kPixels; ++i) assert(canonical(px[i]) == px[i]);
-#endif
+    #endif
             const BoundsI& lb = t->bounds();
             const int wMinX = TileUtils::tileToWorld(tx, lb.minX), wMaxX = TileUtils::tileToWorld(tx, lb.maxX);
             const int wMinY = TileUtils::tileToWorld(ty, lb.minY), wMaxY = TileUtils::tileToWorld(ty, lb.maxY);
@@ -383,7 +355,7 @@ inline void lift(TileReader& src, const BoundsI& rect, TileGrid& out)
         const auto [tx, ty] = TileUtils::unpackKey(e.key);
 
         std::unique_ptr<Tile> now;   // what's there right now
-        if (const Tile* cur = r.committedTile(tx, ty)) {
+        if (const Tile* cur = r.getReadTile(tx, ty)) {
             now = std::make_unique<Tile>();
             now->copyFrom(*cur);
         }
@@ -395,59 +367,21 @@ inline void lift(TileReader& src, const BoundsI& rect, TileGrid& out)
     return ed.commit();
 }
 
-// ---- RasterData: draft and history
+// ---- RasterData: history
 
-inline void RasterData::setDraftTile(int tx, int ty, const Tile* tile)
+inline RasterCommitId RasterData::recordEdit(const std::function<void(RasterEditor&)>& body, EditSummary& summary)
 {
-    m_draftOn = true;
-    const TileKey key = TileUtils::packKey(tx, ty);
-    if (tile && !tile->isEmpty()) {
-        Tile& d = m_draft.writeOrCreateTile(tx, ty);
-        d.copyFrom(*tile);
-        d.settle();
-        m_draftCleared.erase(key);
-        const BoundsI& lb = d.bounds();
-        m_draftBounds.expand(TileUtils::tileToWorld(tx, lb.minX), TileUtils::tileToWorld(ty, lb.minY));
-        m_draftBounds.expand(TileUtils::tileToWorld(tx, lb.maxX), TileUtils::tileToWorld(ty, lb.maxY));
-    } else {
-        m_draft.freeTile(tx, ty);
-        m_draftCleared.insert(key);
-    }
-}
-
-inline TileSet RasterData::discardDraft()
-{
-    TileSet covered;
-    forEachDraftTile([&](int tx, int ty) { covered.insert(TileUtils::packKey(tx, ty)); });
-    m_draft.clear();
-    m_draftCleared.clear();
-    m_draftBounds.reset();
-    m_draftOn = false;
-    return covered;
-}
-
-inline RasterCommitId RasterData::commitDraft(EditSummary* summary)
-{
-    if (!m_draftOn) return kNoRasterCommit;
     TileDelta delta;
-    EditSummary s;
     {
         RasterEditor ed(*this);
         ed.record(&delta);
-        m_draft.forEachRead([&](int tx, int ty, const Tile& t) { ed.applyTile(tx, ty, t, { 255, CompositeMode::Replace }); });
-        for (TileKey k : m_draftCleared) {
-            const auto t = TileUtils::unpackKey(k);
-            ed.eraseTile(t.x, t.y);
-        }
-        s = ed.commit();
+        body(ed);
+        summary = ed.commit();
     }
-    (void)discardDraft();   // it is the committed pixels now
-    if (summary) *summary = std::move(s);
     return m_history.add(std::move(delta));
 }
 
 inline EditSummary RasterData::flip(RasterCommitId id)
 {
-    assert(!m_draftOn && "finish the edit in progress first");
     return applyStep(*this, m_history.at(id));
 }

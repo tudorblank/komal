@@ -1,4 +1,5 @@
 #include "theme.hpp"
+#include "base/palette.hpp"
 #include <imgui.h>
 
 extern const unsigned char kFontUi[];        // generated, see embed_file() in CMakeLists.txt
@@ -55,7 +56,8 @@ void applyUiStyle(float scale)
     s.FrameBorderSize   = 0.0f;
 
     const auto grey = [](float v, float a = 1.0f) { return ImVec4(v, v, v, a); };
-    const ImVec4 accent(0.55f, 0.71f, 0.96f, 1.00f);   // #8CB4F5
+    const auto [ar, ag, ab, aa] = Palette::kAccent.floats();
+    const ImVec4 accent(ar, ag, ab, aa);
     const auto tint = [&](float a) { return ImVec4(accent.x, accent.y, accent.z, a); };
 
     ImVec4* c = s.Colors;

@@ -193,12 +193,14 @@ bool BrushStroke::composeTile(Tile& out, const Tile* original, int tx, int ty) c
     return !out.isEmpty();
 }
 
-void applyStroke(RasterData& raster, const BrushStroke& stroke, const TileSet& tiles)
+void applyStroke(RasterEditor& editor, const RasterData& raster, const BrushStroke& stroke, const TileSet& tiles)
 {
     auto composed = std::make_unique<Tile>();
     for (TileKey key : tiles) {
         const auto [tx, ty] = TileUtils::unpackKey(key);
-        const bool any = stroke.composeTile(*composed, raster.committedTile(tx, ty), tx, ty);
-        raster.setDraftTile(tx, ty, any ? composed.get() : nullptr);   // null: erased down to nothing
+        if (stroke.composeTile(*composed, raster.getReadTile(tx, ty), tx, ty))   // read before it's written
+            editor.applyTile(tx, ty, *composed, { 255, CompositeMode::Replace });
+        else
+            editor.eraseTile(tx, ty);   // erased down to nothing
     }
 }

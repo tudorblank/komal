@@ -6,10 +6,9 @@
 
 class OriginItem : public CanvasItem {
 public:
-    explicit OriginItem(float r = 1.0f, float g = 1.0f, float b = 1.0f, float a = 0.45f);
+    explicit OriginItem(Color8 color = Palette::kOriginMark);
     ~OriginItem() override { releaseGpu(); }
 
-    void setColor(float r, float g, float b, float a);
     void setArm(float points);   // from the centre to each end, on screen
 
     bool prepare(CanvasFrame& frame) override;

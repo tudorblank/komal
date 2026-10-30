@@ -7,11 +7,12 @@
 
 struct SDL_Window;
 
+// One frame's swapchain image and the encoder everything records into (acquire() to present()).
+// The surface pass is a GpuRenderPass on `view`.
 struct GpuFrame {
     WGPUSurfaceTexture      surfaceTexture{};
     WGPUTextureView         view    = nullptr;
     WGPUCommandEncoder      encoder = nullptr;
-    WGPURenderPassEncoder   pass    = nullptr;
     uint32_t                width = 0, height = 0; // swapchain image size in pixels
 };
 
@@ -20,13 +21,10 @@ public:
     bool init(SDL_Window* window);
     void shutdown();
 
-    // gpuframe lifecycle
     void resize(int pixelW, int pixelH); // reconfigures the surface if changed (or suboptimal)
     bool acquire(GpuFrame& f);           // swapchain image + encoder; blocks until an image is free (vsync)
-    void beginSurfacePass(GpuFrame& f, const float clearRGBA[4]); // 'pass' draws into the swapchain image
-    void present(GpuFrame& f);           // one submit for the whole frame, then present
+    void present(GpuFrame& f);           // one submit for the whole frame (every pass ended), then present
 
-    // device getters
     WGPUDevice        device()        const { return m_device; }
     WGPUQueue         queue()         const { return m_queue; }
     WGPUTextureFormat surfaceFormat() const { return m_format; }
@@ -35,7 +33,6 @@ public:
     uint32_t    frameLatency()    const { return m_frameLatency; }
 
 private:
-    // internals
     void configureSurface();
     WGPUInstance m_instance = nullptr;
     WGPUSurface  m_surface  = nullptr;
@@ -44,7 +41,6 @@ private:
     WGPUDevice   m_device   = nullptr;
     WGPUQueue    m_queue    = nullptr;
     WGPUTextureFormat m_format = WGPUTextureFormat_Undefined;
-    // trackers
     int  m_width = 0, m_height = 0;
     bool m_surfaceStale = false;    // got suboptimal image: reconfigure next frame
     std::string m_adapterInfo;

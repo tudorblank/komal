@@ -1,11 +1,11 @@
 #pragma once
 // The canvas as a scene of items, like QGraphicsScene / QGraphicsItem:
-//   CanvasScene   owns the items and their shared GPU state (CanvasPipelines)
+//   CanvasScene   owns the items; they draw with the engine's CanvasPipelines
 //   CanvasItem    one thing on the canvas, with z order and visibility (item.hpp)
 //   CanvasView    a camera + render target looking at a scene (view.hpp)
 // A view re-renders only when an item, the camera or the size changed.
 //
-//   RectItem* r = scene.addItem<RectItem>(x, y, w, h, r, g, b, a);   // owned until removeItem()
+//   OutlineItem* o = scene.addItem<OutlineItem>(Palette::kAccent);   // owned by the scene
 
 #include "canvas/item.hpp"
 
@@ -15,9 +15,8 @@
 
 class CanvasScene {
 public:
-    bool init(const GpuHandles& ctx);              // with its own pipelines
-    bool init(const CanvasPipelines& shared);      // with another scene's (which must outlive it)
-    void shutdown();   // releases every item's GPU resources and its own pipelines
+    bool init(const CanvasPipelines& pipelines);   // the engine's (CanvasEngine), which outlive it
+    void shutdown();   // releases every item's GPU resources
     ~CanvasScene() { shutdown(); }
 
     const CanvasPipelines& pipelines() const { return *m_pipelines; }
@@ -30,7 +29,6 @@ public:
         adopt(std::move(item));
         return raw;
     }
-    void removeItem(CanvasItem* item);
     const std::vector<std::unique_ptr<CanvasItem>>& items() const { return m_items; }
 
     // Bumps whenever the scene looks different (views compare it with what they rendered).
@@ -48,8 +46,7 @@ private:
     void touch() { ++m_revision; }
     void sortIfNeeded();
 
-    CanvasPipelines        m_ownPipelines;
-    const CanvasPipelines* m_pipelines = &m_ownPipelines;
+    const CanvasPipelines* m_pipelines = nullptr;
     std::vector<std::unique_ptr<CanvasItem>> m_items;   // z order once sorted
     uint64_t m_revision  = 1;
     uint64_t m_nextOrder = 0;

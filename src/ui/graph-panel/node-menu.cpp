@@ -1,6 +1,6 @@
 #include "ui/graph-panel/node-menu.hpp"
 
-#include "ui/widgets.hpp"
+#include "ui/widgets/widgets.hpp"
 
 #include <imgui.h>
 #include <cctype>
@@ -10,20 +10,6 @@
 namespace {
 
 constexpr const char* kPopup = "##add-node";
-
-struct NodeTypeInfo {
-    NodeType    type;
-    const char* name;
-    const char* hint;
-    bool        hasInput;
-};
-
-constexpr NodeTypeInfo kTypes[] = {
-    { NodeType::Raster,     "Raster",     "pixels you paint",          false },
-    { NodeType::Reference,  "Reference",  "another view of its input", true  },
-    { NodeType::Move,       "Move",       "shifts its input",          true  },
-    { NodeType::Compositor, "Compositor", "stacks layers",             true  },
-};
 
 bool matches(const char* name, const char* search)
 {
@@ -57,10 +43,10 @@ bool NodeMenu::draw(NodeType& picked)
     if (m_justOpened) { ImGui::SetKeyboardFocusHere(); m_justOpened = false; }
     Widgets::searchField("##search", "Search...", m_search, sizeof m_search, ImGui::GetFontSize() * 12.0f);
 
-    std::vector<const NodeTypeInfo*> items;
-    for (const NodeTypeInfo& t : kTypes) {
-        if (m_fit == Fit::NeedsInput && !t.hasInput) continue;   // every type has an output
-        if (matches(t.name, m_search)) items.push_back(&t);
+    std::vector<const NodeKind*> items;
+    for (const NodeKind& k : nodeKinds()) {
+        if (m_fit == Fit::NeedsInput && k.inputs == InputShape::None) continue;   // every kind has an output
+        if (matches(k.label, m_search)) items.push_back(&k);
     }
     // ImGui's keys: the search field owns the text focus.
     if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) ++m_highlight;
@@ -71,7 +57,7 @@ bool NodeMenu::draw(NodeType& picked)
     bool done = false;
     if (items.empty()) ImGui::TextDisabled("No match");
     for (size_t i = 0; i < items.size(); ++i) {
-        if (ImGui::Selectable(items[i]->name, int(i) == m_highlight)) { picked = items[i]->type; done = true; }
+        if (ImGui::Selectable(items[i]->label, int(i) == m_highlight)) { picked = items[i]->type; done = true; }
         ImGui::SameLine(ImGui::GetFontSize() * 7.0f);
         ImGui::TextDisabled("%s", items[i]->hint);
     }

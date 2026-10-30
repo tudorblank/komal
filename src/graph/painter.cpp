@@ -1,6 +1,8 @@
 #include "graph/painter.hpp"
+#include "base/math.hpp"
+#include "document/project.hpp"
 #include "graph/style.hpp"
-#include "graph/node-item/thumbnails.hpp"
+#include "canvas/node-thumbnails.hpp"
 
 #include <algorithm>
 #include <cfloat>
@@ -11,7 +13,6 @@ using namespace GraphStyle;
 
 namespace {
 
-constexpr float kPi = 3.14159265358979f;
 
 // Font sizes are baked in steps that grow with the size, rounded up so text is never
 // rendered from a smaller bake than the screen needs.
@@ -43,7 +44,7 @@ void drawLockIcon(const GraphPaint& g, const ImRect& r, bool locked, bool hovere
     // Shackle: closed sits in the body, open is lifted and swung.
     const float rr = w * 0.26f, lift = locked ? 0.0f : h * 0.12f;
     const ImVec2 c(a.x + w * 0.5f, bodyTop - lift);
-    g.dl->PathArcTo(c, rr, kPi, locked ? 2.0f * kPi : 1.75f * kPi, 12);
+    g.dl->PathArcTo(c, rr, kPi, locked ? kTau : 1.75f * kPi, 12);
     g.dl->PathStroke(col, 0, std::max(1.0f, w * 0.13f));
     if (locked) g.dl->AddLine(ImVec2(c.x - rr, c.y), ImVec2(c.x - rr, bodyTop), col, std::max(1.0f, w * 0.13f));
 }
@@ -72,12 +73,12 @@ void drawArrow(const GraphPaint& g, ImVec2 center, float size, bool down, ImU32 
     else      g.dl->AddTriangleFilled(ImVec2(c.x - s * 0.55f, c.y - s), ImVec2(c.x + s * 0.6f, c.y), ImVec2(c.x - s * 0.55f, c.y + s), col);
 }
 
-void drawThumb(const GraphPaint& g, const ImRect& r, NodeId id, NodeItemThumbnails& thumbs, float textSize)
+void drawThumb(const GraphPaint& g, const ImRect& r, NodeId id, NodeThumbnails& thumbs, float textSize)
 {
     const ImVec2 a = g.at(r.Min), b = g.at(r.Max);
     g.dl->AddRectFilled(ImVec2(a.x - g.px(1), a.y - g.px(1)), ImVec2(b.x + g.px(1), b.y + g.px(1)), kBorder);
     g.dl->AddRectFilled(a, b, kInset);
-    NodeItemThumbnails::View v;
+    NodeThumbnails::View v;
     if (!thumbs.get(id, v)) return;
     if (v.empty) {
         textCentered(g, r, textSize, kDimText, "Empty");
@@ -125,14 +126,7 @@ std::string elide(const GraphPaint& g, const std::string& text, float size, floa
 
 ImU32 headerColor(const Project& project, const Node& n)
 {
-    if (project.isMaster(n.m_meta.id)) return kHeaderOutput;
-    switch (n.m_meta.type) {
-    case NodeType::Raster:     return kHeaderRaster;
-    case NodeType::Reference:  return kHeaderReference;
-    case NodeType::Move:       return kHeaderMove;
-    case NodeType::Compositor: return kHeaderCompositor;
-    }
-    return kHeaderRaster;
+    return project.isMaster(n.id()) ? kHeaderOutput : nodeKind(n.type()).header.packed();
 }
 
 void paintPort(const GraphPaint& g, ImVec2 graphPos, ImU32 color, bool connected, bool hovered, bool placeholder)
@@ -140,33 +134,31 @@ void paintPort(const GraphPaint& g, ImVec2 graphPos, ImU32 color, bool connected
     const ImVec2 c = g.at(graphPos);
     float r = std::max(kPortRadius * g.scale(), g.px(3.0f));
     if (hovered) r *= 1.3f;
-    if (placeholder) color = (color & 0x00FFFFFFu) | (150u << IM_COL32_A_SHIFT);
+    if (placeholder) color = withAlpha(color, kPlaceholderAlpha);
     g.dl->AddCircleFilled(c, r + g.px(1.5f), kPortRing);
     g.dl->AddCircleFilled(c, r, color);
     if (!connected) g.dl->AddCircleFilled(c, r * 0.5f, kBody);   // hollow: nothing linked
 }
 
 void paintNode(const GraphPaint& g, const Project& project, const Node& n, const NodeItem& item,
-               const NodeItemVisual& visual, NodeItemThumbnails& thumbs)
+               const NodeItemVisual& visual, NodeThumbnails& thumbs)
 {
     ImDrawList* dl = g.dl;
     const float s  = g.scale();
     const float r  = kRounding * s;
     const float bw = g.px(1.0f);
-    const NodeId id = n.m_meta.id;
-    const auto widgetHovered = [&](NodeItemControl c, uint32_t layer = 0, NodeSignal sig = NodeSignal::Main, NodeChannel ch = NodeChannel::A) {
-        const auto match = [&](int i) {
-            if (i < 0) return false;
-            const NodeItemWidget& w = item.widgets[size_t(i)];
-            return w.control == c && w.layer == layer && w.signal == sig && w.channel == ch;
-        };
+    const NodeId id = n.id();
+    const auto widgetHovered = [&](const NodeItemControl& c) {
+        const auto match = [&](int i) { return i >= 0 && item.widgets[size_t(i)].control == c; };
         return match(visual.hoveredWidget) || match(visual.activeWidget);
     };
+    const NodeSettings settings = n.settings();
 
     // A value being dragged shows its previewed value (the graph only gets it on release).
     const auto scaleOf = [&](NodeSignal sig, NodeChannel ch) {
-        const EditPreview& pv = project.preview();
-        return pv.isScale(id, sig, ch) ? pv.scale : n.signal(sig).scale[int(ch)];
+        const EditPreview* pv = project.preview();
+        if (const std::optional<float> v = pv ? pv->scaleOf(id, sig, ch) : std::nullopt) return *v;
+        return n.signal(sig).scale[int(ch)];
     };
 
     // ---- boxes ("floating" parts): shadow, border (the box grown outwards), body, header band
@@ -184,62 +176,53 @@ void paintNode(const GraphPaint& g, const Project& project, const Node& n, const
     }
 
     // ---- header
-    const std::string title = elide(g, n.m_meta.label, kTitleText, kNodeWidth - 2.0f * kPad);
+    const std::string title = elide(g, n.label(), kTitleText, kNodeWidth - 2.0f * kPad);
     textInRow(g, item.header.Min.x + kPad, item.header, kTitleText, kTitleColor, title.c_str());
 
     // ---- body: I/O labels, raster toggles, thumbnail
-    if (item.ioRow.GetHeight() > 0.0f) {
+    if (item.ioRow) {
+        const ImRect& io = *item.ioRow;
         if (item.output()) {
             const float w = textWidth(g, kSmallText, "Output");
-            textInRow(g, item.ioRow.Max.x - kPad - 4.0f - w, item.ioRow, kSmallText, kDimText, "Output");
+            textInRow(g, io.Max.x - kPad - 4.0f - w, io, kSmallText, kDimText, "Output");
         }
         if (item.input(InputSlot::input()))
-            textInRow(g, item.ioRow.Min.x + kPad + 4.0f, item.ioRow, kSmallText, kDimText, "Input");
-        for (const NodeItemWidget& w : item.widgets) {
-            if (w.control == NodeItemControl::Lock)
-                drawLockIcon(g, w.rect, static_cast<const RasterRootNode&>(n).locked(), widgetHovered(NodeItemControl::Lock));
-            if (w.control == NodeItemControl::LockAlpha)
-                drawAlphaLockIcon(g, w.rect, static_cast<const RasterRootNode&>(n).alphaLocked(), widgetHovered(NodeItemControl::LockAlpha));
-        }
+            textInRow(g, io.Min.x + kPad + 4.0f, io, kSmallText, kDimText, "Input");
     }
-    if (item.thumb.GetWidth() > 0.0f) drawThumb(g, item.thumb, id, thumbs, kText);
+    if (item.thumb) drawThumb(g, *item.thumb, id, thumbs, kText);
 
-    // ---- Move offset
-    if (auto* m = dynamic_cast<const MoveNode*>(&n)) {
-        static const char* kAxis[2] = { "Offset X", "Offset Y" };
-        const int value[2] = { m->shownX(), m->shownY() };
-        for (int axis = 0; axis < 2; ++axis) {
-            const ImRect& row = item.offsetRow[axis];
-            textInRow(g, row.Min.x + kPad, row, kText, kTextColor, kAxis[axis]);
-            for (const NodeItemWidget& w : item.widgets) {
-                if (w.control != (axis == 0 ? NodeItemControl::OffsetX : NodeItemControl::OffsetY)) continue;
-                const bool hot = widgetHovered(w.control);
-                dl->AddRectFilled(g.at(w.rect.Min), g.at(w.rect.Max), hot ? kRowHovered : kInset, 3.0f * s);
-                char buf[24];
-                std::snprintf(buf, sizeof buf, "%d px", value[axis]);
-                textCentered(g, w.rect, kText, kTextColor, buf);
-            }
+    // ---- its kind's settings: the controls on its rows
+    for (const NodeItemPropertyRow& row : item.properties) textInRow(g, row.rect.Min.x + kPad, row.rect, kText, kTextColor, row.label);
+    const OffsetEdit* dragged = project.preview() ? project.preview()->offsetOf(id) : nullptr;   // shown as dragged
+    for (const NodeItemWidget& w : item.widgets) {
+        if (const auto* raster = std::get_if<RasterSettings>(&settings)) {
+            if (w.as<LockControl>())      drawLockIcon(g, w.rect, raster->locked, widgetHovered(w.control));
+            if (w.as<LockAlphaControl>()) drawAlphaLockIcon(g, w.rect, raster->alphaLocked, widgetHovered(w.control));
+        }
+        const auto* offset = w.as<OffsetControl>();
+        const auto* move   = std::get_if<MoveSettings>(&settings);
+        if (offset && move) {
+            const int value = offset->axis == 0 ? (dragged ? dragged->x : move->x) : (dragged ? dragged->y : move->y);
+            dl->AddRectFilled(g.at(w.rect.Min), g.at(w.rect.Max), widgetHovered(w.control) ? kRowHovered : kInset, 3.0f * s);
+            char buf[24];
+            std::snprintf(buf, sizeof buf, "%d px", value);
+            textCentered(g, w.rect, kText, kTextColor, buf);
         }
     }
 
     // ---- layer stack
-    if (auto* c = dynamic_cast<const CompositorNode*>(&n)) {
-        for (const NodeItemLayerRow& row : item.layers) {
-            const ImVec2 a = g.at(row.rect.Min), b = g.at(row.rect.Max);
-            switch (row.kind) {
-            case NodeItemLayerRow::Kind::Gap:     // where the dragged link or layer lands
-                dl->AddRectFilled(a, b, (kAccent & ~IM_COL32_A_MASK) | (36u << IM_COL32_A_SHIFT), 3.0f * s);
-                dl->AddRect(a, b, kAccent, 3.0f * s, 0, g.px(1.5f));
-                break;
-            case NodeItemLayerRow::Kind::Empty:   // a stack with nothing in it yet
-                dl->AddRectFilled(a, b, kInset, 3.0f * s);
-                dl->AddRect(a, b, IM_COL32(255, 255, 255, 28), 3.0f * s, 0, bw);
-                textCentered(g, row.rect, kSmallText, kDimText, "Drop nodes here");
-                break;
-            case NodeItemLayerRow::Kind::Layer:
-                paintLayerRow(g, *c->layers()[row.layer], row.rect, thumbs, widgetHovered(NodeItemControl::Layer, row.layer), false);
-                break;
-            }
+    const std::vector<NodePtr> layers = NodeInputs::of(n).layers;
+    for (const NodeItemLayerRow& row : item.layers) {
+        const ImVec2 a = g.at(row.rect.Min), b = g.at(row.rect.Max);
+        if (row.as<NodeItemLayerRow::Gap>()) {           // where the dragged link or layer lands
+            dl->AddRectFilled(a, b, kGapFill, 3.0f * s);
+            dl->AddRect(a, b, kAccent, 3.0f * s, 0, g.px(1.5f));
+        } else if (row.as<NodeItemLayerRow::Empty>()) {  // a stack with nothing in it yet
+            dl->AddRectFilled(a, b, kInset, 3.0f * s);
+            dl->AddRect(a, b, kEmptyStack, 3.0f * s, 0, bw);
+            textCentered(g, row.rect, kSmallText, kDimText, "Drop nodes here");
+        } else if (const auto* layer = row.as<NodeItemLayerRow::Layer>(); layer && layer->index < layers.size()) {
+            paintLayerRow(g, *layers[layer->index], row.rect, thumbs, widgetHovered(LayerControl{ layer->index }), false);
         }
     }
 
@@ -247,7 +230,7 @@ void paintNode(const GraphPaint& g, const Project& project, const Node& n, const
     static const char* kSignalName[kSignalCount] = { "Main", "Dry", "Wet" };   // NodeSignal order
     static const char* kChannelName[kChannelCount] = { "A", "R", "G", "B" };
     for (const NodeItemSectionRow& sec : item.sections) {
-        const bool hot = widgetHovered(NodeItemControl::SectionToggle, 0, sec.signal);
+        const bool hot = widgetHovered(SectionControl{ sec.signal });
         drawArrow(g, ImVec2(sec.rect.Min.x + 12.0f, sec.rect.GetCenter().y), 7.0f, sec.expanded, hot ? kTitleColor : kDimText);
         textInRow(g, sec.rect.Min.x + 21.0f, sec.rect, kText, hot ? kTitleColor : kTextColor, kSignalName[int(sec.signal)]);
         if (Node::gainByte(scaleOf(sec.signal, NodeChannel::A)) == 0) {
@@ -257,7 +240,7 @@ void paintNode(const GraphPaint& g, const Project& project, const Node& n, const
     }
     for (const NodeItemChannelRow& row : item.channels) {
         const float v   = scaleOf(row.signal, row.channel);
-        const bool  hot = widgetHovered(NodeItemControl::Scale, 0, row.signal, row.channel);
+        const bool  hot = widgetHovered(ScaleControl{ row.signal, row.channel });
         const float cy  = g.at(row.track.GetCenter()).y;
         const float x0  = g.at(row.track.Min).x, x1 = g.at(row.track.Max).x;
         const float xv  = x0 + (x1 - x0) * v;
@@ -277,24 +260,24 @@ void paintNode(const GraphPaint& g, const Project& project, const Node& n, const
 
 }
 
-void paintLayerRow(const GraphPaint& g, const Node& layer, const ImRect& rect, NodeItemThumbnails& thumbs, bool hot, bool lifted)
+void paintLayerRow(const GraphPaint& g, const Node& layer, const ImRect& rect, NodeThumbnails& thumbs, bool hot, bool lifted)
 {
     ImDrawList* dl = g.dl;
     const float s = g.scale(), bw = g.px(1.0f);
     const ImVec2 a = g.at(rect.Min), b = g.at(rect.Max);
-    if (lifted) dl->AddRectFilled(ImVec2(a.x, a.y + g.px(2.0f)), ImVec2(b.x, b.y + g.px(5.0f)), IM_COL32(0, 0, 0, 90), 3.0f * s);
+    if (lifted) dl->AddRectFilled(ImVec2(a.x, a.y + g.px(2.0f)), ImVec2(b.x, b.y + g.px(5.0f)), kLiftShadow, 3.0f * s);
     dl->AddRectFilled(a, b, hot || lifted ? kRowHovered : kRow, 3.0f * s);
     if (lifted) dl->AddRect(a, b, kAccent, 3.0f * s, 0, g.px(1.5f));
     const ImRect thumb = layerThumbRect(rect);
-    drawThumb(g, thumb, layer.m_meta.id, thumbs, kSmallText);
+    drawThumb(g, thumb, layer.id(), thumbs, kSmallText);
 
     // Blend mode chip: the node system composites Normal (over) only, for now.
     const ImRect chip(rect.Max.x - 52.0f, rect.GetCenter().y - 8.0f, rect.Max.x - 6.0f, rect.GetCenter().y + 8.0f);
-    dl->AddRect(g.at(chip.Min), g.at(chip.Max), IM_COL32(255, 255, 255, 50), 2.0f * s, 0, bw);
+    dl->AddRect(g.at(chip.Min), g.at(chip.Max), kChipEdge, 2.0f * s, 0, bw);
     textCentered(g, chip, kSmallText, kDimText, "Normal");
 
     const float nameX = thumb.Max.x + 6.0f;
-    const std::string name = elide(g, layer.m_meta.label, kSmallText, chip.Min.x - 4.0f - nameX);
+    const std::string name = elide(g, layer.label(), kSmallText, chip.Min.x - 4.0f - nameX);
     textInRow(g, nameX, rect, kSmallText, kTextColor, name.c_str());
 }
 
@@ -373,14 +356,14 @@ float linkNearest(const LinkCurve& c, ImVec2 p)  { return nearestOnLink(c, p).t;
 void paintLink(const GraphPaint& g, const LinkCurve& c, ImU32 color, bool highlight)
 {
     const float w = g.px(kLinkWidth) * std::clamp(g.camera.zoom, 0.6f, 1.6f);
-    if (highlight) g.dl->AddBezierCubic(c.p0, c.p1, c.p2, c.p3, IM_COL32(255, 255, 255, 70), w + g.px(4.0f));
+    if (highlight) g.dl->AddBezierCubic(c.p0, c.p1, c.p2, c.p3, kLinkGlow, w + g.px(4.0f));
     g.dl->AddBezierCubic(c.p0, c.p1, c.p2, c.p3, color, w);
 }
 
 void paintFadingLink(const GraphPaint& g, const LinkCurve& c, ImU32 color, bool highlight)
 {
     const float w = g.px(kLinkWidth) * std::clamp(g.camera.zoom, 0.6f, 1.6f);
-    if (highlight) g.dl->AddBezierCubic(c.p0, c.p1, c.p2, c.p3, IM_COL32(255, 255, 255, 50), w + g.px(4.0f));
+    if (highlight) g.dl->AddBezierCubic(c.p0, c.p1, c.p2, c.p3, kFadingGlow, w + g.px(4.0f));
 
     // The curve as a polyline, with the distance along it at each point.
     constexpr int kSteps = 64;
@@ -413,7 +396,7 @@ void paintFadingLink(const GraphPaint& g, const LinkCurve& c, ImU32 color, bool 
         poly[n++] = at(d1);
         const float t = (d0 + d1) * 0.5f / total;   // 0 at the source, 1 at the master
         const int a = int(float(alpha) * (1.0f - 0.7f * t));
-        g.dl->AddPolyline(poly, n, (color & ~IM_COL32_A_MASK) | (ImU32(a) << IM_COL32_A_SHIFT), ImDrawFlags_None, w);
+        g.dl->AddPolyline(poly, n, withAlpha(color, uint8_t(a)), ImDrawFlags_None, w);
     }
 }
 
@@ -421,9 +404,9 @@ void paintInsertButton(const GraphPaint& g, ImVec2 p, bool hovered)
 {
     const float r = g.px(9.0f);
     g.dl->AddCircleFilled(p, r + g.px(1.0f), kPortRing);
-    g.dl->AddCircleFilled(p, r, hovered ? kAccent : IM_COL32(44, 44, 44, 255));
-    g.dl->AddCircle(p, r, IM_COL32(220, 220, 220, 255), 0, g.px(1.5f));
+    g.dl->AddCircleFilled(p, r, hovered ? kAccent : kInsertFill);
+    g.dl->AddCircle(p, r, kInsertRim, 0, g.px(1.5f));
     const float a = r * 0.5f, t = g.px(1.8f);
-    g.dl->AddLine(ImVec2(p.x - a, p.y), ImVec2(p.x + a, p.y), IM_COL32(240, 240, 240, 255), t);
-    g.dl->AddLine(ImVec2(p.x, p.y - a), ImVec2(p.x, p.y + a), IM_COL32(240, 240, 240, 255), t);
+    g.dl->AddLine(ImVec2(p.x - a, p.y), ImVec2(p.x + a, p.y), kInsertPlus, t);
+    g.dl->AddLine(ImVec2(p.x, p.y - a), ImVec2(p.x, p.y + a), kInsertPlus, t);
 }

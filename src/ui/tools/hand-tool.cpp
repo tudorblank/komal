@@ -1,6 +1,6 @@
 #include "hand-tool.hpp"
-#include "core/project.hpp"
-#include "ui/widgets.hpp"
+#include "document/project.hpp"
+#include "ui/widgets/widgets.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -22,27 +22,26 @@ void HandTool::drawIcon(ImDrawList* dl, ImVec2 c, float size, ImU32 color) const
 
 void HandTool::drawProperties(ToolContext& ctx)
 {
-    CanvasCamera* cam = ctx.canvas.camera;
-    if (!cam) {
+    const Vec2 viewport = ctx.project.canvasViewport();
+    if (viewport.x <= 0.0f || viewport.y <= 0.0f) {
         ImGui::TextDisabled("The canvas is hidden.");
         return;
     }
-    const Vec2 center = { ctx.canvas.viewW * 0.5f, ctx.canvas.viewH * 0.5f };
+    // Zooms about the canvas's middle.
+    const CanvasCamera& cam = ctx.project.canvasCamera();
+    const auto zoomTo = [&](float zoom) { ctx.actions.run(Actions::CanvasZoom, { { "factor", zoom / cam.zoom } }); };
 
-    float percent = cam->zoom * 100.0f;
+    float percent = cam.zoom * 100.0f;
     if (Widgets::sliderRow("Zoom", percent, CanvasCamera::kMinZoom * 100.0f, CanvasCamera::kMaxZoom * 100.0f, "%.0f%%", true, 100.0f))
-        cam->zoomAt(center, percent / 100.0f / cam->zoom);
+        zoomTo(percent / 100.0f);
 
-    if (Widgets::button("100%")) cam->zoomAt(center, 1.0f / cam->zoom);
+    if (Widgets::button("100%")) zoomTo(1.0f);
     Widgets::sameRow();
-    if (Widgets::button("Fit on screen")) {
-        const BoundsI b = ctx.project.master().bounds();
-        if (!b.empty()) cam->frame(float(b.minX), float(b.minY), float(b.maxX + 1), float(b.maxY + 1), ctx.canvas.viewW, ctx.canvas.viewH);
-    }
+    if (Widgets::button("Fit on screen")) ctx.actions.run(Actions::CanvasFrameAll);   // F on the canvas
 
     ImGui::Spacing();
-    ImGui::TextDisabled("LMB drag pan   Space: hand from any tool");
-    ImGui::TextDisabled("MMB drag / wheel pan   Ctrl+wheel zoom");
+    Widgets::hint(ctx.actions, { "LMB drag pan   Space: hand from any tool" });
+    Widgets::hint(ctx.actions, { "MMB drag / wheel pan   ", PrimaryKey{}, "+wheel zoom" });
 }
 
 void HandTool::canvasInput(const CanvasInput& in)
@@ -63,8 +62,8 @@ void HandTool::canvasInput(const CanvasInput& in)
         }
         if (isPen(ev.device) != m_dragPen || (!up && ev.type != PointerEvent::Type::Move)) continue;
         if (up && ev.button != PointerButton::Primary) continue;
-        in.camera.pan.x += ev.x - m_last.x;
-        in.camera.pan.y += ev.y - m_last.y;
+        if (ev.x != m_last.x || ev.y != m_last.y)
+            in.actions.run(Actions::CanvasPan, { { "dx", ev.x - m_last.x }, { "dy", ev.y - m_last.y } });
         m_last = { ev.x, ev.y };
         if (up) m_dragging = false;
     }

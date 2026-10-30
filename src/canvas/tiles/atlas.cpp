@@ -5,46 +5,22 @@
 
 // ---------------------------------------------------------------- pages
 
-AtlasPages::Page AtlasPages::createPage(const CanvasPipelines& p)
-{
-    Page page;
-    WGPUTextureDescriptor td{};
-    td.label         = sv("Atlas Page");
-    td.dimension     = WGPUTextureDimension_2D;
-    td.size          = { (uint32_t)kPageSize, (uint32_t)kPageSize, 1 };
-    td.format        = WGPUTextureFormat_RGBA8Unorm;
-    td.usage         = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst;
-    td.mipLevelCount = 1;
-    td.sampleCount   = 1;
-    page.texture = wgpuDeviceCreateTexture(p.ctx.device, &td);
-    page.view    = wgpuTextureCreateView(page.texture, nullptr);
-
-    WGPUBindGroupEntry entries[2]{};
-    entries[0].binding     = 0;
-    entries[0].textureView = page.view;
-    entries[1].binding     = 1;
-    entries[1].sampler     = p.atlasSampler;
-    WGPUBindGroupDescriptor gd{};
-    gd.label      = sv("Atlas Page Bind Group");
-    gd.layout     = p.atlasLayout;
-    gd.entryCount = 2;
-    gd.entries    = entries;
-    page.bindGroup = wgpuDeviceCreateBindGroup(p.ctx.device, &gd);
-
-    page.freeSlots.resize(kSlotsTotal);
-    for (int i = 0; i < kSlotsTotal; ++i) page.freeSlots[i] = uint16_t(kSlotsTotal - 1 - i);
-    return page;
-}
-
 AtlasPages::Slot AtlasPages::allocate(const CanvasPipelines& p)
 {
-    auto page = std::find_if(m_pages.begin(), m_pages.end(), [](const Page& pg) { return !pg.freeSlots.empty(); });
-    if (page == m_pages.end()) {
-        m_pages.push_back(createPage(p));
-        page = m_pages.end() - 1;
+    const Slot s = m_slots.allocate(p.ctx.device);
+    while (m_bindGroups.size() < m_slots.pageCount()) {   // a new page: its bind group
+        WGPUBindGroupEntry entries[2]{};
+        entries[0].binding     = 0;
+        entries[0].textureView = m_slots.texture(int(m_bindGroups.size())).view();
+        entries[1].binding     = 1;
+        entries[1].sampler     = p.atlasSampler;
+        WGPUBindGroupDescriptor gd{};
+        gd.label      = sv("Atlas Page Bind Group");
+        gd.layout     = p.atlasLayout;
+        gd.entryCount = 2;
+        gd.entries    = entries;
+        m_bindGroups.emplace_back(wgpuDeviceCreateBindGroup(p.ctx.device, &gd));
     }
-    const Slot s{ int(page - m_pages.begin()), page->freeSlots.back() };
-    page->freeSlots.pop_back();
     return s;
 }
 
@@ -63,8 +39,8 @@ void AtlasPages::upload(const CanvasPipelines& p, Slot s, const RGBA* pixels)
     }
 
     WGPUTexelCopyTextureInfo dst{};
-    dst.texture = m_pages[s.page].texture;
-    dst.origin  = { uint32_t((s.slot % kSlotsPerRow) * S), uint32_t((s.slot / kSlotsPerRow) * S), 0 };
+    dst.texture = m_slots.texture(s.page).texture();
+    dst.origin  = { uint32_t(m_slots.originX(s)), uint32_t(m_slots.originY(s)), 0 };
     WGPUTexelCopyBufferLayout layout{};
     layout.bytesPerRow  = S * sizeof(RGBA);
     layout.rowsPerImage = S;
@@ -72,32 +48,10 @@ void AtlasPages::upload(const CanvasPipelines& p, Slot s, const RGBA* pixels)
     wgpuQueueWriteTexture(p.ctx.queue, &dst, m_staging.data(), m_staging.size() * sizeof(RGBA), &layout, &size);
 }
 
-void AtlasPages::free(Slot s)
-{
-    if (s.page >= 0 && s.page < int(m_pages.size())) m_pages[s.page].freed.push_back(uint16_t(s.slot));
-}
-
-void AtlasPages::freeNow(Slot s)
-{
-    if (s.page >= 0 && s.page < int(m_pages.size())) m_pages[s.page].freeSlots.push_back(uint16_t(s.slot));
-}
-
-void AtlasPages::recycle()
-{
-    for (Page& page : m_pages) {
-        page.freeSlots.insert(page.freeSlots.end(), page.freed.begin(), page.freed.end());
-        page.freed.clear();
-    }
-}
-
 void AtlasPages::release()
 {
-    for (Page& page : m_pages) {
-        if (page.bindGroup) wgpuBindGroupRelease(page.bindGroup);
-        if (page.view)      wgpuTextureViewRelease(page.view);
-        if (page.texture)   wgpuTextureRelease(page.texture);
-    }
-    m_pages.clear();
+    m_bindGroups.clear();   // before the textures they bind
+    m_slots.release();
 }
 
 // ---------------------------------------------------------------- atlases
@@ -134,7 +88,7 @@ void TileAtlas::release()
 void TileDrawList::begin(const TileAtlas& atlas)
 {
     m_atlas = &atlas;
-    m_building.assign(atlas.m_pages->m_pages.size(), {});
+    m_building.assign(atlas.m_pages->pageCount(), {});
 }
 
 bool TileDrawList::add(TileKey key, float x, float y, float size, float subX, float subY, float subSize)
@@ -149,8 +103,9 @@ bool TileDrawList::add(TileKey key, float x, float y, float size, float subX, fl
     inst.center[1]   = y + size * 0.5f;
     inst.scale[0]    = size;
     inst.scale[1]    = size;
-    inst.uvOffset[0] = (float((c.slot % P::kSlotsPerRow) * P::kSlotStride + P::kGutter) + subX * N) / P::kPageSize;
-    inst.uvOffset[1] = (float((c.slot / P::kSlotsPerRow) * P::kSlotStride + P::kGutter) + subY * N) / P::kPageSize;
+    const SlotPages& slots = m_atlas->m_pages->m_slots;
+    inst.uvOffset[0] = (float(slots.originX(c) + P::kGutter) + subX * N) / P::kPageSize;
+    inst.uvOffset[1] = (float(slots.originY(c) + P::kGutter) + subY * N) / P::kPageSize;
     inst.uvScale[0]  = subSize * N / P::kPageSize;
     inst.uvScale[1]  = subSize * N / P::kPageSize;
     m_building[c.page].push_back(inst);
@@ -159,7 +114,7 @@ bool TileDrawList::add(TileKey key, float x, float y, float size, float subX, fl
 
 bool TileDrawList::end(const CanvasPipelines& p, float opacity)
 {
-    const size_t pages = m_atlas ? m_atlas->m_pages->m_pages.size() : 0;
+    const size_t pages = m_atlas ? m_atlas->m_pages->pageCount() : 0;
     m_building.resize(pages);
     if (m_pages.size() < pages) m_pages.resize(pages);
     bool changed = false;
@@ -175,9 +130,9 @@ bool TileDrawList::end(const CanvasPipelines& p, float opacity)
             if (!page.buffer) {
                 WGPUBufferDescriptor bd{};
                 bd.label = sv("Atlas Page Instances");
-                bd.size  = sizeof(ChunkInstance) * AtlasPages::kSlotsTotal;
+                bd.size  = sizeof(ChunkInstance) * size_t(m_atlas->m_pages->m_slots.slotsPerPage());
                 bd.usage = WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst;
-                page.buffer = wgpuDeviceCreateBuffer(p.ctx.device, &bd);
+                page.buffer.reset(wgpuDeviceCreateBuffer(p.ctx.device, &bd));
             }
             wgpuQueueWriteBuffer(p.ctx.queue, page.buffer, 0, inst.data(), inst.size() * sizeof(ChunkInstance));
         }
@@ -191,12 +146,12 @@ bool TileDrawList::end(const CanvasPipelines& p, float opacity)
 void TileDrawList::draw(WGPURenderPassEncoder pass) const
 {
     if (!m_atlas) return;
-    const std::vector<AtlasPages::Page>& atlasPages = m_atlas->m_pages->m_pages;
-    const size_t pages = std::min(m_pages.size(), atlasPages.size());
+    const std::vector<GpuObject<WGPUBindGroup>>& bindGroups = m_atlas->m_pages->m_bindGroups;
+    const size_t pages = std::min(m_pages.size(), bindGroups.size());
     for (size_t i = 0; i < pages; ++i) {
         const Page& page = m_pages[i];
         if (page.instances.empty()) continue;
-        wgpuRenderPassEncoderSetBindGroup(pass, 1, atlasPages[i].bindGroup, 0, nullptr);
+        wgpuRenderPassEncoderSetBindGroup(pass, 1, bindGroups[i], 0, nullptr);
         wgpuRenderPassEncoderSetVertexBuffer(pass, 0, page.buffer, 0, page.instances.size() * sizeof(ChunkInstance));
         wgpuRenderPassEncoderDraw(pass, 4, (uint32_t)page.instances.size(), 0, 0);
     }
@@ -209,8 +164,6 @@ bool TileDrawList::empty() const
 
 void TileDrawList::release()
 {
-    for (Page& page : m_pages)
-        if (page.buffer) wgpuBufferRelease(page.buffer);
     m_pages.clear();
     m_building.clear();
     m_atlas = nullptr;

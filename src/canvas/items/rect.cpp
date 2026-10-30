@@ -1,10 +1,10 @@
 #include "rect.hpp"
-#include "gfx/math.hpp"
+#include "base/math.hpp"
 
 #include <cstring>
 
-RectItem::RectItem(float x, float y, float w, float h, float r, float g, float b, float a)
-    : m_x(x), m_y(y), m_w(w), m_h(h), m_color{ r, g, b, a } {}
+RectItem::RectItem(float x, float y, float w, float h, Color8 color)
+    : m_x(x), m_y(y), m_w(w), m_h(h), m_color(color) {}
 
 void RectItem::setRect(float x, float y, float w, float h)
 {
@@ -14,11 +14,10 @@ void RectItem::setRect(float x, float y, float w, float h)
     update();
 }
 
-void RectItem::setColor(float r, float g, float b, float a)
+void RectItem::setColor(Color8 color)
 {
-    const float c[4] = { r, g, b, a };
-    if (std::memcmp(c, m_color, sizeof c) == 0) return;
-    std::memcpy(m_color, c, sizeof c);
+    if (color.packed() == m_color.packed()) return;
+    m_color = color;
     m_upload = true;
     update();
 }
@@ -27,7 +26,7 @@ bool RectItem::prepare(CanvasFrame& frame)
 {
     const CanvasPipelines& p = frame.pipelines;
     if (!m_uniform) {
-        m_uniform.create(p.ctx.device, p.colorLayout, sizeof(RectParams), "Rect");
+        if (!m_uniform.create(p.ctx.device, p.colorLayout, sizeof(RectParams), "Rect")) return false;   // drawn once there's memory
         m_upload = true;
     }
     if (!m_upload) return false;
@@ -35,7 +34,8 @@ bool RectItem::prepare(CanvasFrame& frame)
     const Mat4 model = Mat4::translateScale(m_x + m_w * 0.5f, m_y + m_h * 0.5f, m_w, m_h);
     RectParams data{};
     std::memcpy(data.model, model.m, sizeof data.model);
-    std::memcpy(data.color, m_color, sizeof data.color);
+    const auto color = m_color.floats();   // straight
+    std::memcpy(data.color, color.data(), sizeof data.color);
     m_uniform.write(p.ctx.queue, &data, sizeof data);
     m_upload = false;
     return true;

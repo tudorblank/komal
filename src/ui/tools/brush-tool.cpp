@@ -1,10 +1,10 @@
 #include "brush-tool.hpp"
-#include "core/document-actions.hpp"
-#include "core/project.hpp"
+#include "document/document-actions.hpp"
+#include "document/project.hpp"
 #include "canvas/scene.hpp"
-#include "ui/panel-titles.hpp"
 #include "ui/theme.hpp"
-#include "ui/widgets.hpp"
+#include "ui/tools/tool-manager.hpp"
+#include "ui/widgets/widgets.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -28,28 +28,28 @@ void BrushTool::drawProperties(ToolContext& ctx)
     const Metrics m = metrics();
     ActionRegistry& actions = ctx.actions;
     // Each control edits a copy; a change runs the setting's action (which writes it here).
-    const auto row = [&](const char* label, const char* action, float value, float min, float max, const char* format, bool log = false) {
+    const auto row = [&](const char* label, ActionId action, float value, float min, float max, const char* format, bool log = false) {
         if (sliderRow(label, value, min, max, format, log)) actions.run(action, { { "value", value } });
     };
 
     rowLabel("Mode");
-    if (radio("Paint", !m_erase)) actions.run("brush.mode", { { "erase", false } });
+    if (radio("Paint", !m_erase)) actions.run(Actions::BrushMode, { { "erase", false } });
     nextGroup();
-    if (radio("Erase", m_erase)) actions.run("brush.mode", { { "erase", true } });
+    if (radio("Erase", m_erase)) actions.run(Actions::BrushMode, { { "erase", true } });
 
-    row("Size", "brush.size", m_params.diameter, 1.0f, kMaxDiameter, "%.0f px", true);
-    row("Hardness", "brush.hardness", m_params.hardness, 0.0f, 1.0f, "%.2f");
-    row("Opacity", "brush.opacity", m_params.opacity / 255.0f, 0.0f, 1.0f, "%.2f");
-    row("Flow", "brush.flow", m_params.flow, 0.01f, 1.0f, "%.2f");
-    row("Spacing", "brush.spacing", m_params.spacing, 0.02f, 1.0f, "%.2f");
+    row("Size", Actions::BrushSize, m_params.diameter, 1.0f, kMaxDiameter, "%.0f px", true);
+    row("Hardness", Actions::BrushHardness, m_params.hardness, 0.0f, 1.0f, "%.2f");
+    row("Opacity", Actions::BrushOpacity, m_params.opacity / 255.0f, 0.0f, 1.0f, "%.2f");
+    row("Flow", Actions::BrushFlow, m_params.flow, 0.01f, 1.0f, "%.2f");
+    row("Spacing", Actions::BrushSpacing, m_params.spacing, 0.02f, 1.0f, "%.2f");
 
     // The primary colour: swatch (opens the Color panel), hex, alpha.
     const float* fg = m_colors.foreground;
     const auto setColor = [&](const float (&c)[4]) {
-        actions.run("color.set", { { "target", "primary" }, { "r", c[0] }, { "g", c[1] }, { "b", c[2] }, { "a", c[3] } });
+        actions.run(Actions::ColorSet, { { "target", "primary" }, { "r", c[0] }, { "g", c[1] }, { "b", c[2] }, { "a", c[3] } });
     };
     rowLabel("Color");
-    if (swatch("##swatch", fg)) ImGui::SetWindowFocus(PanelTitle::kColor);
+    if (swatch("##swatch", fg)) actions.run(Actions::ColorEdit);
     sameRow();
     float c[4] = { fg[0], fg[1], fg[2], fg[3] };
     if (hexField("##hex", c, stretchWidth(m.fieldWidth))) setColor(c);
@@ -60,19 +60,57 @@ void BrushTool::drawProperties(ToolContext& ctx)
         setColor(c);
     }
 
-    const auto toggle = [&](const char* label, const char* action, bool value, const char* tip) {
+    const auto toggle = [&](const char* label, ActionId action, bool value, const char* tip) {
         if (checkbox(label, value)) actions.run(action, { { "on", value } });
         ImGui::SetItemTooltip("%s", tip);
     };
     rowLabel("Edges");
-    toggle("Antialiased", "brush.antialias", m_params.antialias, "Off: hard pixels (diameter 1 = single pixels).");
+    toggle("Antialiased", Actions::BrushAntialias, m_params.antialias, "Off: hard pixels (diameter 1 = single pixels).");
     rowLabel("Pressure");
-    toggle("Size", "brush.pressureSize", m_params.pressureSize, "Pen pressure scales the brush size.");
+    toggle("Size", Actions::BrushPressureSize, m_params.pressureSize, "Pen pressure scales the brush size.");
     nextGroup();
-    toggle("Flow", "brush.pressureFlow", m_params.pressureFlow, "Pen pressure scales how much each dab adds.");
+    toggle("Flow", Actions::BrushPressureFlow, m_params.pressureFlow, "Pen pressure scales how much each dab adds.");
 
     ImGui::Spacing();
-    ImGui::TextDisabled("LMB / pen paint   RMB / pen eraser erase   [ ] size");
+    hint(actions, { "LMB / pen paint   RMB / pen eraser erase   ", Actions::BrushSmaller, " ", Actions::BrushBigger, " size" });
+}
+
+void BrushTool::registerActions(ActionRegistry& actions, ToolManager& tools)
+{
+    using K = ActionKind;
+    actions.add({ .id = Actions::ToolEraser, .title = "Eraser", .kind = K::AppState, .shortcuts = { { SDLK_E } },
+                  .enabled = [&tools] { return !tools.active().busy(); },
+                  .run = [this, &tools, &actions] {
+                      tools.select(*this, actions);
+                      m_erase = true;
+                  } });
+
+    // Set from Tool Properties: a slider drag or a held key logs once, with where it ended. The
+    // ranges are the settings' own: a value outside one is refused before it gets here.
+    const auto setting = [&actions](ActionId id, const char* title, ArgSpec arg, auto apply) {
+        actions.add({ .id = id, .title = title, .kind = K::AppState, .args = { std::move(arg) }, .coalesce = true, .run = std::move(apply) });
+    };
+    BrushParams& bp = m_params;
+    setting(Actions::BrushSize,     "Brush Size",     Arg::number("value", 1.0, kMaxDiameter), [&bp](const ActionArgs& a) { bp.diameter = float(a.number("value")); });
+    setting(Actions::BrushHardness, "Brush Hardness", Arg::number("value", 0.0, 1.0),  [&bp](const ActionArgs& a) { bp.hardness = float(a.number("value")); });
+    setting(Actions::BrushOpacity,  "Brush Opacity",  Arg::number("value", 0.0, 1.0),  [&bp](const ActionArgs& a) { bp.opacity = uint8_t(a.number("value") * 255.0 + 0.5); });
+    setting(Actions::BrushFlow,     "Brush Flow",     Arg::number("value", 0.01, 1.0), [&bp](const ActionArgs& a) { bp.flow = float(a.number("value")); });
+    setting(Actions::BrushSpacing,  "Brush Spacing",  Arg::number("value", 0.02, 1.0), [&bp](const ActionArgs& a) { bp.spacing = float(a.number("value")); });
+    setting(Actions::BrushAntialias,    "Antialiased Edges", Arg::flag("on"), [&bp](const ActionArgs& a) { bp.antialias = a.flag("on"); });
+    setting(Actions::BrushPressureSize, "Pressure Size",     Arg::flag("on"), [&bp](const ActionArgs& a) { bp.pressureSize = a.flag("on"); });
+    setting(Actions::BrushPressureFlow, "Pressure Flow",     Arg::flag("on"), [&bp](const ActionArgs& a) { bp.pressureFlow = a.flag("on"); });
+    setting(Actions::BrushMode,     "Brush Mode",     Arg::flag("erase"), [this](const ActionArgs& a) { m_erase = a.flag("erase"); });
+
+    // [ and ] while the brush is the canvas's tool: keys for brush.size (which logs where it ended).
+    const auto active = [this, &tools] { return &tools.active() == this; };
+    actions.add({ .id = Actions::BrushBigger, .title = "Bigger Brush", .kind = K::Interface, .shortcuts = { { SDLK_RIGHTBRACKET } },
+                  .scope = ActionScope::Canvas, .repeats = true, .enabled = active, .run = [this, &actions] {
+                      actions.run(Actions::BrushSize, { { "value", std::min(kMaxDiameter, std::round(m_params.diameter * 1.25f + 0.5f)) } });
+                  } });
+    actions.add({ .id = Actions::BrushSmaller, .title = "Smaller Brush", .kind = K::Interface, .shortcuts = { { SDLK_LEFTBRACKET } },
+                  .scope = ActionScope::Canvas, .repeats = true, .enabled = active, .run = [this, &actions] {
+                      actions.run(Actions::BrushSize, { { "value", std::max(1.0f, std::round(m_params.diameter / 1.25f)) } });
+                  } });
 }
 
 void BrushTool::canvasInput(const CanvasInput& in)
@@ -82,7 +120,7 @@ void BrushTool::canvasInput(const CanvasInput& in)
         if (m_stroking && !m_points.empty()) {
             ActionArgs path;
             path.payload = std::span<const StrokePoint>(m_points);
-            in.actions.updateGesture("brush.stroke", path);
+            in.actions.updateGesture(Actions::BrushStroke, path);
             m_strokePoints += int(m_points.size());
         }
         m_points.clear();
@@ -106,7 +144,7 @@ void BrushTool::canvasInput(const CanvasInput& in)
             ActionArgs args{ { "raster", in.project.activeRasterId() }, { "mode", erase ? "erase" : "paint" },
                              { "size", start.params.diameter }, { "color", color }, { "device", isPen(ev.device) ? "pen" : "mouse" } };
             args.payload = start;
-            m_stroking = in.actions.beginGesture("brush.stroke", std::move(args));
+            m_stroking = in.actions.beginGesture(Actions::BrushStroke, std::move(args));
             m_strokeButton = ev.button;
             m_strokePen    = isPen(ev.device);
             m_strokePoints = 1;
@@ -134,5 +172,5 @@ void BrushTool::cancel(ActionRegistry& actions)
 {
     if (!m_stroking) return;
     m_stroking = false;
-    actions.endGesture("brush.stroke", { { "points", m_strokePoints } });
+    actions.endGesture(Actions::BrushStroke, { { "points", m_strokePoints } });
 }

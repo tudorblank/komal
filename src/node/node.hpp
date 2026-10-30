@@ -22,18 +22,36 @@
 #include <span>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 class Node;
 using NodePtr = std::shared_ptr<Node>;
-using NodeId  = uint32_t;   // assigned by the Project, never reused
-constexpr NodeId kNoNodeId = 0;
+enum class NodeId : uint32_t {};   // assigned by the Project, never reused; its own type: never mixed up with another number
+constexpr NodeId kNoNodeId{};
 
 enum class NodeType    : uint8_t { Raster, Reference, Move, Compositor };
 enum class NodeSignal  : uint8_t { Main, Dry, Wet };
 enum class NodeChannel : uint8_t { A, R, G, B };
 constexpr int kSignalCount  = 3;
 constexpr int kChannelCount = 4;
+
+// A kind's own settings, beyond its signals and links: one struct per kind that has any. The node
+// owns them (Node::settings / setSettings); history snapshots them and the graph's controls show
+// them without knowing node classes. A kind with new settings adds its struct here.
+struct NoSettings {
+    bool operator==(const NoSettings&) const = default;
+};
+struct RasterSettings {
+    bool locked      = false;   // no pixel edits at all
+    bool alphaLocked = false;   // edits keep every pixel's alpha
+    bool operator==(const RasterSettings&) const = default;
+};
+struct MoveSettings {
+    int x = 0, y = 0;           // the offset, whole pixels (TileUtils::inWorld)
+    bool operator==(const MoveSettings&) const = default;
+};
+using NodeSettings = std::variant<NoSettings, RasterSettings, MoveSettings>;
 
 struct SignalChannels {
     float   scale[kChannelCount] = { 1, 1, 1, 1 };   // A, R, G, B in 0..1
@@ -114,6 +132,14 @@ private:
 enum class Bounds { Keep, Recompute };
 enum class Evict  { Output, All };
 
+// The right to change the graph: every call that edits a node takes one. Only the Project makes
+// them, and lends one to the blocks it edits the graph through. Anyone may read a node; nobody
+// else can change one.
+class GraphKey {
+    GraphKey() = default;
+    friend class Project;
+};
+
 // ============================ NODE ============================
 class Node : public std::enable_shared_from_this<Node> {
 public:
@@ -122,23 +148,29 @@ public:
     Node(const Node&) = delete;
     Node& operator=(const Node&) = delete;
 
-    struct Meta {
-        NodeId      id = kNoNodeId;
-        NodeType    type = NodeType::Raster;
-        std::string label;
-        float       x = 0, y = 0;   // position in the node editor
-    };
-    Meta m_meta;
+    // ---------- identity: the document names and places nodes
+    virtual NodeType type() const = 0;
+    NodeId id() const { return m_id; }
+    const std::string& label() const { return m_label; }
+    float x() const { return m_x; }   // position in the node editor
+    float y() const { return m_y; }
+    void setId(GraphKey, NodeId id) { m_id = id; }
+    void setLabel(GraphKey, std::string label) { m_label = std::move(label); }
+    void setPosition(GraphKey, float x, float y) { m_x = x; m_y = y; }
+
+    // ---------- its kind's own settings (NodeSettings)
+    virtual NodeSettings settings() const { return NoSettings{}; }
+    virtual void setSettings(GraphKey, const NodeSettings&) {}   // its own kind's struct (validated by the caller)
 
     // ---------- what a subclass implements (raw signals; the base applies gains and masks)
     virtual bool hasDryWet() const { return false; }   // effect nodes
     virtual std::span<const NodePtr> inputs() const { return {}; }
-    virtual BoundsI wetBounds() = 0;
+    virtual BoundsI wetBounds() const = 0;
     virtual const Tile* fetchWet(int tx, int ty, RenderCtx& ctx) = 0;
     virtual void wetFootprint(TileSet& out) = 0;
     virtual void mapInputTiles(const TileSet& in, TileSet& out) const { out.insert(in.begin(), in.end()); }
 
-    virtual BoundsI dryBounds() { return {}; }   // default: dry adds nothing
+    virtual BoundsI dryBounds() const { return {}; }   // default: dry adds nothing
     virtual const Tile* fetchDry(int, int, RenderCtx&) { return nullptr; }
     virtual void dryFootprint(TileSet&) {}
 
@@ -147,7 +179,7 @@ public:
     const Tile* fetch(int tx, int ty, RenderCtx& ctx);
 
     // ---------- bounds / footprint
-    BoundsI bounds();
+    BoundsI bounds() const;   // cached until something changes them
     void addFootprint(TileSet& out) { if (wetOn()) wetFootprint(out); if (dryOn()) dryFootprint(out); }
     TileSet footprint() { TileSet t; addFootprint(t); return t; }
 
@@ -163,15 +195,15 @@ public:
     bool isPassthrough() const
     { return signal(NodeSignal::Main).isIdentity() && signal(NodeSignal::Wet).isIdentity() && !dryOn(); }
 
-    void setScale(NodeSignal sig, NodeChannel ch, float v);         // ignored for a signal the node lacks
-    bool linkMask(NodePtr mask, NodeSignal sig, NodeChannel ch);   // nullptr unlinks; false: cycle, or no such signal
+    void setScale(GraphKey, NodeSignal sig, NodeChannel ch, float v);         // ignored for a signal the node lacks
+    bool linkMask(GraphKey, NodePtr mask, NodeSignal sig, NodeChannel ch);   // nullptr unlinks; false: cycle, or no such signal
     bool hasMasks() const;
-    bool clearMasksTo(const NodePtr& n);   // drops every mask slot that points at n
-    void unlinkAllMasks();
+    bool clearMasksTo(GraphKey, const NodePtr& n);   // drops every mask slot that points at n
+    void unlinkAllMasks(GraphKey);
 
     // ---------- graph
-    virtual void replaceInputInstance(const NodePtr&, const NodePtr&) {}
-    virtual void detachAllInputs() {}
+    virtual void replaceInputInstance(GraphKey, const NodePtr&, const NodePtr&) {}
+    virtual void detachAllInputs(GraphKey) {}
     std::vector<NodePtr> allDeps() const;   // inputs and masks
     bool usesAsInput(const Node* n) const;
     bool usesAsMask(const Node* n) const;
@@ -183,10 +215,7 @@ public:
     // long as the reader keeps it.
     std::shared_ptr<TileWatch> watchOutput();
 
-    void removeFromGraph();   // when deleting: users drop it, it drops its inputs and masks
-
-    // Dirty tiles from a dependency (raster edits enter the graph here).
-    void dependencyDirty(const Node* from, const TileSet& tiles);
+    void removeFromGraph(GraphKey);   // when deleting: users drop it, it drops its inputs and masks
 
     static uint8_t gainByte(float v) { return uint8_t(std::clamp(int(v * 255.0f + 0.5f), 0, 255)); }
 
@@ -200,9 +229,15 @@ protected:
     void invalidateBounds();
 
 private:
+    // Dirty tiles from a dependency (raster edits enter the graph here).
+    void dependencyDirty(const Node* from, const TileSet& tiles);
+
+    NodeId      m_id = kNoNodeId;
+    std::string m_label;
+    float       m_x = 0, m_y = 0;
     std::array<SignalChannels, kSignalCount> m_signals;
-    bool     m_boundsDirty = true;
-    BoundsI  m_bounds;
+    mutable bool    m_boundsDirty = true;
+    mutable BoundsI m_bounds;
     uint64_t m_revision = 0;
     std::vector<std::weak_ptr<Node>> m_listeners;   // nodes that use this one (input or mask)
     std::vector<std::weak_ptr<TileWatch>> m_watches;   // readers outside the graph
@@ -222,10 +257,3 @@ private:
 
 // The top-level fetch: resets the context, then renders tile (tx, ty) of `n`.
 inline const Tile* renderTile(Node& n, int tx, int ty, RenderCtx& ctx) { ctx.beginTile(); return n.fetch(tx, ty, ctx); }
-
-// Eyedropper / hit test. Use a context other than the one rendering tiles.
-inline RGBA pixelAt(Node& n, int wx, int wy, RenderCtx& ctx)
-{
-    const Tile* t = renderTile(n, TileUtils::worldToTile(wx), TileUtils::worldToTile(wy), ctx);
-    return t ? t->getReadPx(TileUtils::worldToLocal(wx), TileUtils::worldToLocal(wy)) : transparent();
-}

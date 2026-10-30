@@ -1,23 +1,15 @@
 #pragma once
-// The Info window: the GPU and display, frame timings, the pen as last reported, and the perf
-// counters (ms per frame, smoothed and worst of the last second).
+// The Info window: the GPU and display, the pen as last reported, and the perf counters (frame
+// timings among them: ms per frame, smoothed and worst of the last second).
 
-#include <string>
-#include <utility>
+#include "ui/panel.hpp"
 
-class ActionRegistry;
-struct InputFrame;
 
-class InfoPanel {
+class InfoPanel : public Panel {
 public:
-    void draw(const InputFrame& input, ActionRegistry& actions);
-    bool& open() { return m_open; }   // shown (View > Info)
-
-    void setGpuInfo(std::string s) { m_gpuInfo = std::move(s); }
-    void setTimings(float acquireMs, float cpuMs) { m_acquireMs = acquireMs; m_cpuMs = cpuMs; }
+    PanelInfo info() const override;
+    bool init() override;
+    void draw() override;
 
 private:
-    std::string m_gpuInfo;
-    float m_acquireMs = 0, m_cpuMs = 0;
-    bool  m_open = false;   // on demand
 };

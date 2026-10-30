@@ -5,6 +5,7 @@
 // which tiles go in; views decide where they're drawn.
 
 #include "canvas/pipelines.hpp"
+#include "gfx/slot-pages.hpp"
 #include "raster/tile.hpp"
 
 #include <absl/container/flat_hash_map.h>
@@ -19,48 +20,35 @@ struct ChunkInstance {
     float opacity;
 };
 
-// Pages of tile slots, shared by any number of atlases.
+// Pages of tile slots (SlotPages), each with the bind group the atlas pipeline samples it
+// through; shared by any number of atlases.
 class AtlasPages {
 public:
-    struct Slot { int page = -1, slot = -1; };
-
-    AtlasPages() = default;
-    ~AtlasPages() { release(); }
-    AtlasPages(const AtlasPages&) = delete;
-    AtlasPages& operator=(const AtlasPages&) = delete;
+    using Slot = SlotPages::Slot;
 
     Slot allocate(const CanvasPipelines& p);
     void upload(const CanvasPipelines& p, Slot s, const RGBA* pixels);
     // Reused only after recycle(): a view that drew it this frame still reads it.
-    void free(Slot s);
-    void freeNow(Slot s);   // no view drew it this frame
-    void recycle();         // freed slots back in use; once a frame, before any view builds its draw
-    void release();         // the GPU resources; the atlases on these pages must be cleared first
+    void free(Slot s)    { m_slots.free(s); }
+    void freeNow(Slot s) { m_slots.freeNow(s); }   // no view drew it this frame
+    void recycle()       { m_slots.recycle(); }    // once a frame, before any view builds its draw
+    void release();      // the GPU resources; the atlases on these pages must be cleared first
 
-    size_t pageCount() const { return m_pages.size(); }
+    size_t pageCount() const { return m_slots.pageCount(); }
 
 private:
     friend class TileDrawList;
 
     // A 1 px gutter repeats each tile's edge, so sampling on a tile border never reads the next slot.
-    static constexpr int kGutter      = 1;
-    static constexpr int kPageSize    = 2048;   // 16 MB of RGBA8, 961 tiles
-    static constexpr int kSlotStride  = Tile::kSize + 2 * kGutter;
-    static constexpr int kSlotsPerRow = kPageSize / kSlotStride;
-    static constexpr int kSlotsTotal  = kSlotsPerRow * kSlotsPerRow;
+    static constexpr int kGutter     = 1;
+    static constexpr int kSlotStride = Tile::kSize + 2 * kGutter;
+    static constexpr int kPageSize   = 2048;   // 16 MB of RGBA8, 961 tiles
 
-    struct Page {
-        WGPUTexture     texture   = nullptr;
-        WGPUTextureView view      = nullptr;
-        WGPUBindGroup   bindGroup = nullptr;   // texture + sampler
-        std::vector<uint16_t> freeSlots;       // popped from the back: low slots first
-        std::vector<uint16_t> freed;           // until recycle()
-    };
-
-    Page createPage(const CanvasPipelines& p);
-
-    std::vector<Page> m_pages;
-    std::vector<RGBA> m_staging;   // tile + gutter, one upload per tile
+    SlotPages m_slots{ { .slotWidth = kSlotStride, .slotHeight = kSlotStride, .pageSize = kPageSize,
+                         .format = WGPUTextureFormat_RGBA8Unorm,
+                         .usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst, .label = "Atlas Page" } };
+    std::vector<GpuObject<WGPUBindGroup>> m_bindGroups;   // per page: its texture and the sampler
+    std::vector<RGBA> m_staging;                          // tile + gutter, one upload per tile
 };
 
 // Tiles by key, in the slots of its own pages or shared ones.
@@ -111,7 +99,7 @@ public:
 
 private:
     struct Page {
-        WGPUBuffer buffer = nullptr;
+        GpuObject<WGPUBuffer> buffer;
         std::vector<ChunkInstance> instances;   // what the buffer holds now
     };
     const TileAtlas* m_atlas = nullptr;

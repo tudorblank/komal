@@ -6,13 +6,10 @@
 // ============================ RASTER ROOT ============================
 std::shared_ptr<RasterRootNode> RasterRootNode::create(RasterData& r)
 {
-    auto n = std::make_shared<RasterRootNode>(Private{}, r);
-    n->m_meta.type  = NodeType::Raster;
-    n->m_meta.label = "Raster";
-    return n;
+    return std::make_shared<RasterRootNode>(Private{}, r);
 }
 
-EditSummary RasterRootNode::edit(const std::function<void(RasterEditor&)>& body)
+EditSummary RasterRootNode::edit(GraphKey, const std::function<void(RasterEditor&)>& body)
 {
     RasterEditor ed(*m_raster);
     try {
@@ -26,33 +23,15 @@ EditSummary RasterRootNode::edit(const std::function<void(RasterEditor&)>& body)
     return s;
 }
 
-void RasterRootNode::draft(const std::function<TileSet(RasterData&)>& body)
+RasterCommitId RasterRootNode::recordEdit(GraphKey, const std::function<void(RasterEditor&)>& body)
 {
-    const BoundsI before = m_raster->getBounds();
-    const TileSet changed = body(*m_raster);
-    if (m_raster->getBounds() != before) invalidateBounds();
-    emitDirty(changed, Evict::All);
-}
-
-RasterCommitId RasterRootNode::commitDraft()
-{
-    // What the raster shows doesn't change (it already showed the draft): only its bounds can,
-    // where the draft erased down to nothing.
-    const BoundsI before = m_raster->getBounds();
-    const RasterCommitId commit = m_raster->commitDraft();
-    if (m_raster->getBounds() != before) invalidateBounds();
+    EditSummary s;
+    const RasterCommitId commit = m_raster->recordEdit(body, s);
+    publish(s);
     return commit;
 }
 
-void RasterRootNode::discardDraft()
-{
-    const BoundsI before = m_raster->getBounds();
-    const TileSet covered = m_raster->discardDraft();
-    if (m_raster->getBounds() != before) invalidateBounds();
-    emitDirty(covered, Evict::All);
-}
-
-void RasterRootNode::flip(RasterCommitId commit)
+void RasterRootNode::flip(GraphKey, RasterCommitId commit)
 {
     publish(m_raster->flip(commit));
 }
@@ -65,7 +44,6 @@ void RasterRootNode::wetFootprint(TileSet& out)
         m_fpRev = m_raster->revision();
     }
     out.insert(m_fp.begin(), m_fp.end());
-    if (m_raster->hasDraft()) m_raster->forEachDraftTile([&](int tx, int ty) { out.insert(TileUtils::packKey(tx, ty)); });
 }
 
 void RasterRootNode::publish(const EditSummary& s)
@@ -76,7 +54,7 @@ void RasterRootNode::publish(const EditSummary& s)
 }
 
 // ============================ ONE INPUT ============================
-bool UnaryNode::setInput(NodePtr in)
+bool UnaryNode::setInput(GraphKey, NodePtr in)
 {
     if (in == m_input) return true;
     if (!canDependOn(in)) return false;
@@ -84,45 +62,21 @@ bool UnaryNode::setInput(NodePtr in)
     return true;
 }
 
-std::shared_ptr<ReferenceNode> ReferenceNode::create(NodePtr target)
+std::shared_ptr<ReferenceNode> ReferenceNode::create()
 {
-    auto n = std::make_shared<ReferenceNode>(Private{});
-    n->m_meta.type  = NodeType::Reference;
-    n->m_meta.label = "Reference";
-    if (target) n->setInput(std::move(target));
-    return n;
+    return std::make_shared<ReferenceNode>(Private{});
 }
 
 std::shared_ptr<MoveNode> MoveNode::create()
 {
-    auto n = std::make_shared<MoveNode>(Private{});
-    n->m_meta.type  = NodeType::Move;
-    n->m_meta.label = "Move";
-    return n;
+    return std::make_shared<MoveNode>(Private{});
 }
 
-TileSet MoveNode::setOffset(int x, int y)
+TileSet MoveNode::setOffset(GraphKey, int x, int y)
 {
     assert(TileUtils::inWorld(x) && TileUtils::inWorld(y));
     if (x == m_x && y == m_y) return {};
     return change([&] { m_x = x; m_y = y; });
-}
-
-void MoveNode::previewOffset(int x, int y)
-{
-    if (m_previewing && x == m_px && y == m_py) return;
-    m_previewing = true;
-    m_px = x;
-    m_py = y;
-    invalidateBounds();
-}
-
-void MoveNode::endPreview()
-{
-    if (!m_previewing) return;
-    m_previewing = false;
-    invalidateBounds();
-    emitDirty(footprint(), Evict::All);   // reads during the drag were culled by the previewed bounds
 }
 
 void MoveNode::wetFootprint(TileSet& out)
@@ -170,13 +124,10 @@ const Tile* MoveNode::fetchWet(int tx, int ty, RenderCtx& ctx)
 // ============================ COMPOSITOR ============================
 std::shared_ptr<CompositorNode> CompositorNode::create()
 {
-    auto n = std::make_shared<CompositorNode>(Private{});
-    n->m_meta.type  = NodeType::Compositor;
-    n->m_meta.label = "Compositor";
-    return n;
+    return std::make_shared<CompositorNode>(Private{});
 }
 
-bool CompositorNode::addLayerAt(NodePtr in, size_t index)
+bool CompositorNode::addLayerAt(GraphKey, NodePtr in, size_t index)
 {
     if (!in || !canDependOn(in) || has(in)) return false;
     TileSet dirty;
@@ -186,7 +137,7 @@ bool CompositorNode::addLayerAt(NodePtr in, size_t index)
     return true;
 }
 
-void CompositorNode::removeLayer(size_t i)
+void CompositorNode::removeLayer(GraphKey, size_t i)
 {
     if (i >= m_layers.size()) return;
     TileSet dirty;
@@ -194,7 +145,7 @@ void CompositorNode::removeLayer(size_t i)
     changeKnown(dirty, Bounds::Recompute, Evict::All, [&] { m_layers.erase(m_layers.begin() + i); });
 }
 
-TileSet CompositorNode::moveLayer(size_t from, size_t to)
+TileSet CompositorNode::moveLayer(GraphKey, size_t from, size_t to)
 {
     if (from >= m_layers.size() || to >= m_layers.size() || from == to) return {};
     // Only tiles where the moved layer overlaps the layers it crosses can change.
@@ -211,7 +162,7 @@ TileSet CompositorNode::moveLayer(size_t from, size_t to)
     });
 }
 
-void CompositorNode::replaceInputInstance(const NodePtr& o, const NodePtr& n)
+void CompositorNode::replaceInputInstance(GraphKey, const NodePtr& o, const NodePtr& n)
 {
     auto it = std::find(m_layers.begin(), m_layers.end(), o);
     if (o == n || it == m_layers.end() || !canDependOn(n)) return;
@@ -222,7 +173,7 @@ void CompositorNode::replaceInputInstance(const NodePtr& o, const NodePtr& n)
     changeKnown(dirty, Bounds::Recompute, Evict::All, [&] { if (n && !dup) *it = n; else m_layers.erase(it); });
 }
 
-void CompositorNode::detachAllInputs()
+void CompositorNode::detachAllInputs(GraphKey)
 {
     if (m_layers.empty()) return;
     TileSet dirty;
@@ -230,14 +181,14 @@ void CompositorNode::detachAllInputs()
     changeKnown(dirty, Bounds::Recompute, Evict::All, [&] { m_layers.clear(); });
 }
 
-BoundsI CompositorNode::wetBounds()
+BoundsI CompositorNode::wetBounds() const
 {
     BoundsI r;
     for (auto& l : m_layers) r.expand(l->bounds());
     return r;
 }
 
-void CompositorNode::enableCache(bool on)
+void CompositorNode::enableCache(GraphKey, bool on)
 {
     if (on == m_cacheOn) return;
     m_cacheOn = on;

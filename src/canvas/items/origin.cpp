@@ -1,14 +1,7 @@
 #include "origin.hpp"
 
-OriginItem::OriginItem(float r, float g, float b, float a)
-    : m_horizontal(0.0f, 0.0f, 0.0f, 0.0f, r, g, b, a), m_vertical(0.0f, 0.0f, 0.0f, 0.0f, r, g, b, a) {}
-
-void OriginItem::setColor(float r, float g, float b, float a)
-{
-    m_horizontal.setColor(r, g, b, a);
-    m_vertical.setColor(r, g, b, a);
-    update();
-}
+OriginItem::OriginItem(Color8 color)
+    : m_horizontal(0.0f, 0.0f, 0.0f, 0.0f, color), m_vertical(0.0f, 0.0f, 0.0f, 0.0f, color) {}
 
 void OriginItem::setArm(float points)
 {

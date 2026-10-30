@@ -2,17 +2,10 @@
 
 #include <algorithm>
 
-bool CanvasScene::init(const GpuHandles& ctx)
+bool CanvasScene::init(const CanvasPipelines& pipelines)
 {
-    m_pipelines = &m_ownPipelines;
-    m_ready = m_ownPipelines.create(ctx);
-    return m_ready;
-}
-
-bool CanvasScene::init(const CanvasPipelines& shared)
-{
-    m_pipelines = &shared;
-    m_ready = shared.atlasPipeline != nullptr;
+    m_pipelines = &pipelines;
+    m_ready = bool(pipelines.atlasPipeline);
     return m_ready;
 }
 
@@ -20,8 +13,6 @@ void CanvasScene::shutdown()
 {
     for (auto& item : m_items) item->releaseGpu();
     m_items.clear();
-    m_ownPipelines.release();
-    m_pipelines = &m_ownPipelines;
     m_ready = false;
 }
 
@@ -32,16 +23,6 @@ void CanvasScene::adopt(std::unique_ptr<CanvasItem> item)
     m_items.push_back(std::move(item));
     m_sortDirty = true;
     if (m_items.back()->drawsOnGpu()) touch();
-}
-
-void CanvasScene::removeItem(CanvasItem* item)
-{
-    auto it = std::find_if(m_items.begin(), m_items.end(), [&](const auto& p) { return p.get() == item; });
-    if (it == m_items.end()) return;
-    const bool gpu = (*it)->drawsOnGpu();
-    (*it)->releaseGpu();
-    m_items.erase(it);   // removal keeps the order sorted
-    if (gpu) touch();
 }
 
 void CanvasScene::sortIfNeeded()

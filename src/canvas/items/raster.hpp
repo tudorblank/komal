@@ -2,20 +2,21 @@
 #include "canvas/item.hpp"
 #include "canvas/tiles/raster-tiles.hpp"
 
-// A compositor's output in one view, drawn at the level of detail that matches the zoom (a texel
-// covers 0.5..1 screen pixels), so zoomed out it reads a few coarse tiles. The tiles are shared
-// (RasterTiles): this item builds the ones it shows and keeps its own draw lists.
+// A node's output in one view, drawn at the level of detail that matches the zoom (a texel covers
+// 0.5..1 screen pixels), so zoomed out it reads a few coarse tiles. The tiles are shared
+// (RasterTiles, from the engine's TileCache): this item builds the ones it shows and keeps its
+// own draw lists.
 //
 // Lazy: a level's tiles are built only once they're on screen, within the frame budget. A
 // missing tile is drawn from a coarser level, or the finer tiles under it, so zooming never
 // shows holes; the old picture stays until the new one replaces it.
 class RasterItem : public CanvasItem {
 public:
-    explicit RasterItem(RasterTiles& tiles) : m_tiles(&tiles) {}
+    explicit RasterItem(std::shared_ptr<RasterTiles> tiles) : m_tiles(std::move(tiles)) {}
     ~RasterItem() override { releaseGpu(); }
 
     void setOpacity(float opacity);
-    // Keeps catching up with the source but draws nothing (EditPreviewItem shows it meanwhile).
+    // Keeps catching up with the source but draws nothing (a preview shows it meanwhile).
     void setSuppressed(bool suppressed);
 
     int  drawLevel()   const { return m_drawLevel; }
@@ -34,7 +35,7 @@ private:
     bool computeVisible(CanvasFrame& frame, const TileRect& visible, const TileRect& margin);
     bool rebuildInstances(const CanvasFrame& frame, const TileRect& range);
 
-    RasterTiles* m_tiles;
+    std::shared_ptr<RasterTiles> m_tiles;
     TileDrawList m_draw[kLevels];         // per level, what this view draws from its atlas
     uint64_t     m_seen = 0;              // the tiles' revision the draw was built from
     uint64_t     m_seenLevel[kLevels] = {};   // each level's, as last rendered

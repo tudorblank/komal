@@ -3,10 +3,10 @@
 #include <cmath>
 #include <cstring>
 
-void CheckerItem::setColors(const float a[3], const float b[3])
+void CheckerItem::setColors(Color8 a, Color8 b)
 {
-    std::memcpy(m_colorA, a, sizeof m_colorA);
-    std::memcpy(m_colorB, b, sizeof m_colorB);
+    m_colorA = a;
+    m_colorB = b;
     m_dirty = true;
     update();
 }
@@ -30,7 +30,8 @@ bool CheckerItem::prepare(CanvasFrame& frame)
     // In target pixels: the origin moves with the camera, the square size is fixed on screen.
     const float pixelsPerPoint = frame.pixelsPerPoint();
     CheckerParams u{};
-    for (int i = 0; i < 3; ++i) { u.colorA[i] = m_colorA[i]; u.colorB[i] = m_colorB[i]; }
+    const auto a = m_colorA.floats(), b = m_colorB.floats();
+    for (int i = 0; i < 3; ++i) { u.colorA[i] = a[i]; u.colorB[i] = b[i]; }
     u.colorA[3] = u.colorB[3] = 1.0f;
     u.origin[0] = frame.camera.pan.x * pixelsPerPoint;
     u.origin[1] = frame.camera.pan.y * pixelsPerPoint;

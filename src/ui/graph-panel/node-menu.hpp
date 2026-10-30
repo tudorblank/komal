@@ -1,7 +1,8 @@
 #pragma once
-// The add-node menu: a focused search field over the node types that fit. Enter or click picks.
+// The add-node menu: a focused search field over the node kinds that fit (node-kinds.hpp). Enter
+// or click picks.
 
-#include "node/node.hpp"
+#include "node/node-kinds.hpp"
 
 class NodeMenu {
 public:
