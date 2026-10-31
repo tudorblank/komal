@@ -24,7 +24,7 @@ public:
     // When ImGui next changes what it draws by itself (base/frames.hpp), from public state only:
     // now while events wait, ticking while a tooltip may still appear or the caret blinks, at the
     // key repeat rate while a key is held in a field.
-    double nextFrameIn(Clock::TimePoint frameStart, const InputFrame& input) const;
+    Clock::Seconds nextFrameIn(Clock::TimePoint frameStart, const InputFrame& input) const;
 
 private:
     static constexpr size_t kMaxHeld = 1024;   // a backlog past this (a long stall) goes in at once

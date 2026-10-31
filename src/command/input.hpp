@@ -1,5 +1,5 @@
 #pragma once
-// Input reaches the app two ways, from the same SDL events (Application::processEvents):
+// Input reaches the app two ways, from the same platform events (app/: Application, InputCollector):
 //
 //   ImGui (Application)      widgets, windows, docking, text; and who has the pointer: a panel
 //                            owns it while ImGui says its item is hovered or held
@@ -8,9 +8,7 @@
 //                            (ActionRegistry, dispatched once a frame); held keys (Space for the hand)
 //
 // Widgets read ImGui only; tools read the InputFrame only, and only while their panel owns the
-// pointer.
-
-#include <SDL3/SDL_events.h>
+// pointer. Nothing here knows the platform: the app turns its events into these.
 
 #include <cstdint>
 #include <vector>
@@ -36,8 +34,24 @@ struct PointerEvent {
     float         x = 0.0f, y = 0.0f;                  // window coordinates (points, like ImGui's)
     float         pressure = 1.0f;                     // 0..1; a mouse is always 1
     float         tiltX = 0.0f, tiltY = 0.0f;          // degrees, -90..90; 0 for a mouse
-    uint64_t      timeNs   = 0;                        // SDL timestamp
+    uint64_t      timeNs   = 0;                        // the platform's timestamp
 };
+
+// A key, by what it types in the keyboard's layout (not by where it sits). The keys the app can
+// bind or read; any other is Unknown.
+enum class Key : uint8_t {
+    Unknown,
+    A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
+    Num0, Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9,
+    Space, Enter, Escape, Tab, Backspace, Delete, Insert, Home, End, PageUp, PageDown,
+    Left, Right, Up, Down,
+    LeftBracket, RightBracket, Minus, Equals, Comma, Period, Slash, Backslash, Semicolon, Apostrophe, Grave,
+    F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
+    LeftCtrl, RightCtrl, LeftShift, RightShift, LeftAlt, RightAlt, LeftSuper, RightSuper,
+    Count
+};
+const char* keyName(Key key);   // as help text shows it: "Z", "Delete", "["
+bool isModifierKey(Key key);    // Ctrl, Shift, Alt, Super (either side)
 
 // Modifier keys, left and right alike.
 enum KeyMod : uint8_t {
@@ -54,18 +68,18 @@ enum KeyMod : uint8_t {
 };
 
 struct KeyEvent {
-    SDL_Keycode  key      = SDLK_UNKNOWN;        // by the keyboard layout (what the key types)
-    SDL_Scancode scancode = SDL_SCANCODE_UNKNOWN; // by position on the keyboard
-    uint8_t      mods     = ModNone;             // KeyMod flags held with it
-    bool         down     = true;
-    bool         repeat   = false;               // the OS's key repeat, while held
-    uint64_t     timeNs   = 0;
+    Key      key    = Key::Unknown;
+    uint8_t  mods   = ModNone;   // KeyMod flags held with it
+    bool     down   = true;
+    bool     repeat = false;     // the OS's key repeat, while held
+    uint64_t timeNs = 0;
 };
 
-// A key with an exact set of modifiers: Shortcut{ SDLK_Z, ModPrimary | ModShift }.
+// A key with an exact set of modifiers: Shortcut{ Key::Z, ModPrimary | ModShift }.
 struct Shortcut {
-    SDL_Keycode key;
-    uint8_t     mods = ModNone;
+    Key     key  = Key::Unknown;
+    uint8_t mods = ModNone;
+    bool operator==(const Shortcut&) const = default;
 };
 
 // one frame worth of input
@@ -74,7 +88,7 @@ struct InputFrame {
 
     std::vector<KeyEvent> keys;          // in the order they happened
     uint8_t mods = ModNone;              // modifiers held now
-    std::vector<SDL_Keycode> held;       // keys held now
+    std::vector<Key> held;               // keys held now
 
     // Pointer buttons held now, a bit per PointerButton (1 << button). The pen's tip is its Primary.
     uint8_t mouseButtons = 0;
@@ -82,12 +96,12 @@ struct InputFrame {
     bool anyButtonHeld() const { return mouseButtons != 0 || penButtons != 0; }
     bool buttonHeld(PointerDevice device, PointerButton b) const
     {
-        return ((device == PointerDevice::Mouse ? mouseButtons : penButtons) >> uint8_t(b)) & 1u;
+        return ((unsigned(device == PointerDevice::Mouse ? mouseButtons : penButtons) >> unsigned(b)) & 1u) != 0;
     }
 
     // Went down this frame with exactly these modifiers (repeats count only if asked).
     bool pressed(Shortcut s, bool repeats = false) const;
-    bool isDown(SDL_Keycode key) const;
+    bool isDown(Key key) const;
 
     // The pen as it was last reported (not reset between frames).
     struct Pen {
@@ -98,19 +112,4 @@ struct InputFrame {
         float tiltX = 0.0f, tiltY = 0.0f;
     } pen;
     PointerDevice lastDevice = PointerDevice::Mouse;
-};
-
-// Turns SDL events into InputFrames. Feed it every event, in order, as it arrives.
-class InputCollector {
-public:
-    void beginFrame();                  // before the frame's events
-    void handle(const SDL_Event& e);
-    const InputFrame& frame() const { return m_frame; }
-
-private:
-    void push(PointerEvent ev);
-    void releaseAll();   // focus lost: what was held is released elsewhere, never here
-    PointerEvent penEvent(PointerEvent::Type type, float x, float y, uint64_t timeNs) const;
-
-    InputFrame m_frame;
 };

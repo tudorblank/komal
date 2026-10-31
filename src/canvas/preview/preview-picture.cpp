@@ -15,7 +15,7 @@ PreviewPicture::Result PreviewPicture::render(const Preview& preview, NodeId nod
 
     const PictureFit fit = fitInto(b, maxW, maxH);
     const uint32_t w = fit.width, h = fit.height;
-    const PreviewSpace space = PreviewSpace::fitted(b, w, h);
+    const PreviewSpace space = PreviewSpace::fitted(b, fit);
     if (!m_renderer.render(preview, space, p, enc, budget))
         return m_renderer.ready() && m_has ? Result::Unchanged : Result::Waiting;
 
@@ -51,8 +51,7 @@ PreviewPicture::Result PreviewPicture::render(const Preview& preview, NodeId nod
         wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
     }
 
-    m_w = w;
-    m_h = h;
+    m_fit = fit;
     m_bounds = b;
     m_has = true;
     return Result::Rendered;

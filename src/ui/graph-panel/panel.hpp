@@ -33,7 +33,7 @@ public:
     bool init() override;   // node thumbnails: the canvas engine's
     void shutdown() override;
     void draw() override;
-    double nextFrameIn() const override;
+    Clock::Seconds nextFrameIn() const override;
     // A file dropped at `screen` (`window` topmost): true if it lands on the graph, with the
     // position for a new node centred under it.
     bool dropTarget(const ImGuiWindow* window, ImVec2 screen, ImVec2& nodePos) const;

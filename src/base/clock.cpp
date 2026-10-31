@@ -6,7 +6,7 @@ const Clock::TimePoint kStart = Clock::now();
 
 }
 
-double Clock::seconds()
+Clock::Seconds Clock::sinceStart()
 {
-    return Clock::msSince(kStart) / 1000.0;
+    return Clock::since(kStart);
 }

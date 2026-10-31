@@ -23,7 +23,7 @@ bool CheckerItem::prepare(CanvasFrame& frame)
 {
     const CanvasPipelines& p = frame.pipelines;
     if (!m_uniform) {
-        m_uniform.create(p.ctx.device, p.checkerLayout, sizeof(CheckerParams), "Checker");
+        if (!m_uniform.create(p.ctx.device, p.checkerLayout, sizeof(CheckerParams), "Checker")) return false;   // logged; no checker
         m_dirty = true;
     }
 
@@ -31,7 +31,7 @@ bool CheckerItem::prepare(CanvasFrame& frame)
     const float pixelsPerPoint = frame.pixelsPerPoint();
     CheckerParams u{};
     const auto a = m_colorA.floats(), b = m_colorB.floats();
-    for (int i = 0; i < 3; ++i) { u.colorA[i] = a[i]; u.colorB[i] = b[i]; }
+    for (size_t i = 0; i < 3; ++i) { u.colorA[i] = a[i]; u.colorB[i] = b[i]; }
     u.colorA[3] = u.colorB[3] = 1.0f;
     u.origin[0] = frame.camera.pan.x * pixelsPerPoint;
     u.origin[1] = frame.camera.pan.y * pixelsPerPoint;

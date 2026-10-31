@@ -1,4 +1,4 @@
-#include "canvas/preview/preview-plan.hpp"
+#include "document/preview-plan.hpp"
 #include "document/project.hpp"
 #include "node/node-kinds.hpp"
 
@@ -30,14 +30,7 @@ bool PreviewPlan::build(const Project& project, const EditPreview& edit)
 
     // Everything downstream of the edit, through inputs and masks.
     m_reached[edited.get()] = -1;
-    for (bool grew = true; grew;) {
-        grew = false;
-        for (const NodePtr& n : project.nodes()) {
-            if (m_reached.contains(n.get())) continue;
-            for (const auto& [r, plan] : m_reached)
-                if (n->usesAsInput(r) || n->usesAsMask(r)) { m_reached[n.get()] = -1; grew = true; break; }
-        }
-    }
+    for (const NodePtr& n : edited->downstream()) m_reached[n.get()] = -1;
     for (const NodePtr& n : project.nodes())
         if (m_reached.contains(n.get())) planFor(n);
     return true;
@@ -62,8 +55,8 @@ int PreviewPlan::planFor(const NodePtr& n)
     if (const int planned = m_reached.at(n.get()); planned >= 0) return planned;
     Node p;
     p.node = n;
-    const NodeInputs in = NodeInputs::of(*n);
-    const InputShape shape = inputShape(*n);
+    const NodeLinks& in = n->links();
+    const InputShape shape = n->ports().inputs;
     const bool recompose = shape == InputShape::Stack && n->id() != m_edited &&
         std::any_of(in.layers.begin(), in.layers.end(), [&](const NodePtr& l) { return m_reached.contains(l.get()); });
     if (shape == InputShape::One) {
@@ -76,7 +69,7 @@ int PreviewPlan::planFor(const NodePtr& n)
     }
     for (int sig = 0; sig < kSignalCount; ++sig)
         for (int ch = 0; ch < kChannelCount; ++ch)
-            if (const NodePtr& m = n->signal(NodeSignal(sig)).mask[ch]; m && n->hasSignal(NodeSignal(sig)))
+            if (const NodePtr& m = in.masks[sig][ch]; m && n->hasSignal(NodeSignal(sig)))
                 p.masks[sig][ch] = sourceFor(m);
     m_nodes.push_back(std::move(p));
     const int index = int(m_nodes.size()) - 1;

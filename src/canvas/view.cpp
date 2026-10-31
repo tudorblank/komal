@@ -22,8 +22,8 @@ void CanvasView::shutdown()
 
 bool CanvasView::resize(float width, float height, float pixelScaleX, float pixelScaleY)
 {
-    const uint32_t pw = (uint32_t)std::lround(width * pixelScaleX);
-    const uint32_t ph = (uint32_t)std::lround(height * pixelScaleY);
+    const uint32_t pw = uint32_t(std::lround(width * pixelScaleX));
+    const uint32_t ph = uint32_t(std::lround(height * pixelScaleY));
     if (pw == 0 || ph == 0) return false;
 
     const uint32_t oldW = m_target.width(), oldH = m_target.height();
@@ -49,7 +49,7 @@ void CanvasView::render(WGPUCommandEncoder enc, const Deadline& budget)
 
     // Hold the last complete picture until the visible content has fully caught up.
     if (!viewChanged && !m_scene->settled()) {
-        if (!m_holding) { m_holding = true; m_holdEnd = Deadline::in(kMaxHoldMs); }
+        if (!m_holding) { m_holding = true; m_holdEnd = Deadline::in(kMaxHold); }
         if (!m_holdEnd.expired()) return;
     }
     m_holding = false;

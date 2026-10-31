@@ -29,10 +29,26 @@ void CanvasEngine::shutdown()
     m_ready = false;
 }
 
+void CanvasEngine::releaseGpu()
+{
+    m_thumbnails.shutdown();
+    m_preview.releaseGpu();   // its own tiles go into the pages: before they do
+    m_tiles.releaseGpu();
+    m_pipelines.release();
+    m_ready = false;
+}
+
+bool CanvasEngine::restoreGpu(const GpuDevice& gpu)
+{
+    m_ready = m_pipelines.create(GpuHandles{ gpu.device(), gpu.queue(), kTargetFormat });
+    m_thumbnails.init(m_ready ? &m_pipelines : nullptr, m_tiles, m_preview);
+    return m_ready;
+}
+
 void CanvasEngine::beginFrame()
 {
     if (!m_project) return;
-    m_frameBudget = Deadline::in(kFrameBudgetMs);
+    m_frameBudget = Deadline::in(kFrameBudget);
     if (m_ready) {
         m_tiles.sync();       // before any view of them builds
         m_preview.update();   // ... or previews
@@ -48,5 +64,5 @@ void CanvasEngine::renderThumbnails(WGPUCommandEncoder enc)
 
 Deadline CanvasEngine::budget(Work work) const
 {
-    return Deadline::earlier(Deadline::in(kShareMs[size_t(work)]), m_frameBudget);
+    return Deadline::earlier(Deadline::in(kShare[size_t(work)]), m_frameBudget);
 }

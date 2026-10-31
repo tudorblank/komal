@@ -1,4 +1,4 @@
-#include "canvas/tiles/downsample.hpp"
+#include "raster/downsample.hpp"
 
 #include <doctest/doctest.h>
 #include <vector>

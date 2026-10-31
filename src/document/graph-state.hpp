@@ -3,13 +3,19 @@
 // restore it; pixels travel separately, as raster commits. A kind's own settings are its
 // NodeSettings: a new kind needs nothing here.
 //
+// A node's state is immutable once captured, and steps share it: a step that moved one node of
+// five hundred holds one new NodeState and the other 499 of the step before.
+//
 //   const GraphState s = GraphState::capture(nodes);
-//   ...                       // anything changes
+//   ...                                                     // nodes 4 and 7 change
+//   const GraphState t = GraphState::capture(nodes, &s, { 4, 7 });   // the rest shared with s
 //   s.restore(key, nodes, emit);   // nodes come back or go, links and settings as they were
 
 #include "document/links.hpp"
 #include "document/node-registry.hpp"
 
+#include <absl/container/flat_hash_set.h>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -24,15 +30,19 @@ struct NodeState {
     NodeSettings settings;
     bool operator==(const NodeState&) const = default;
 };
+using NodeStatePtr = std::shared_ptr<const NodeState>;
 
 struct GraphState {
-    std::vector<NodeState> nodes;   // creation order
+    std::vector<NodeStatePtr> nodes;   // creation order
 
-    static GraphState capture(const NodeRegistry& registry);
+    static GraphState capture(const NodeRegistry& registry);   // every node anew
+    // Every node anew but those `previous` holds and `changed` doesn't name: theirs are shared.
+    // `previous` must be the graph as it was before exactly those nodes changed (Project tracks them).
+    static GraphState capture(const NodeRegistry& registry, const GraphState& previous, const absl::flat_hash_set<NodeId>& changed);
     // Makes the registry's graph this one. Nodes that come back do so as themselves, told right
     // away (unlinked); links, settings and the nodes that go are told once it's all done. Links
     // are all let go of before any is taken, so the graph never passes through a cycle on the way.
     void restore(GraphKey key, NodeRegistry& registry, const EmitEvent& emit) const;
 
-    bool operator==(const GraphState&) const = default;
+    bool operator==(const GraphState& o) const;   // node for node: the same state, shared or equal
 };

@@ -5,6 +5,7 @@
 //   source = colour * coverage * opacity
 //   paint:  source over the pixels          erase:  the pixels * (1 - source.a)
 //   alpha locked: painting keeps each pixel's alpha (rgb rescaled to it), erasing does nothing
+// Fragment stage only: the vertex stage is fullscreen.wgsl's (put before it).
 
 struct Params {
     color     : vec4f,   // premultiplied
@@ -17,12 +18,6 @@ struct Params {
 @group(0) @binding(0) var<uniform> P : Params;
 @group(1) @binding(0) var tPixels   : texture_2d<f32>;
 @group(1) @binding(1) var tCoverage : texture_2d<f32>;
-
-@vertex
-fn vs_main(@builtin(vertex_index) i : u32) -> @builtin(position) vec4f {
-    let uv = vec2f(f32((i << 1u) & 2u), f32(i & 2u));   // one triangle covering the screen
-    return vec4f(uv * 2.0 - 1.0, 0.0, 1.0);
-}
 
 @fragment
 fn fs_main(@builtin(position) pos : vec4f) -> @location(0) vec4f {

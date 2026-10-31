@@ -13,7 +13,7 @@ std::shared_ptr<RasterTiles> TileCache::get(const NodePtr& node, Kind kind)
         e.tiles = std::make_shared<RasterTiles>(std::move(source), m_pages, m_render);
         e.tiles->sync();   // reads the source: usable at once
     }
-    e.lastUsed = Clock::seconds();
+    e.lastUsed = Clock::now();
     return e.tiles;
 }
 
@@ -25,8 +25,8 @@ std::unique_ptr<RasterTiles> TileCache::make(std::unique_ptr<TileSource> source)
 void TileCache::sync()
 {
     m_pages.recycle();   // what views drew last frame is no longer read
-    const double now = Clock::seconds();
-    absl::erase_if(m_entries, [&](const auto& kv) { return kv.second.tiles.use_count() == 1 && now - kv.second.lastUsed > kKeepSeconds; });
+    const Clock::TimePoint now = Clock::now();
+    absl::erase_if(m_entries, [&](const auto& kv) { return kv.second.tiles.use_count() == 1 && Clock::between(kv.second.lastUsed, now) > kKeep; });
     for (auto& [key, e] : m_entries) e.tiles->sync();
 }
 
@@ -37,6 +37,12 @@ void TileCache::forget(NodeId id)
         kv.second.tiles->release();   // a holder keeps empty tiles until it lets go
         return true;
     });
+}
+
+void TileCache::releaseGpu()
+{
+    for (auto& [key, e] : m_entries) e.tiles->release();
+    m_pages.release();
 }
 
 void TileCache::release()

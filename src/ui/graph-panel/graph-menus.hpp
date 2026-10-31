@@ -7,7 +7,7 @@
 //   menus.openContext(node);                                   // a right click on a node
 //   menus.openValue(GraphMenus::Rename{ node });               // a double-clicked title
 
-#include "document/input-slot.hpp"
+#include "node/node.hpp"
 #include "ui/graph-panel/node-menu.hpp"
 
 #include <imgui.h>

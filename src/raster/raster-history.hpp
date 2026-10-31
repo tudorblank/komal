@@ -5,6 +5,7 @@
 
 #include "raster/tile-grid.hpp"
 
+#include <cassert>
 #include <memory>
 #include <vector>
 
@@ -47,7 +48,11 @@ public:
         m_commits.push_back(std::move(delta));
         return RasterCommitId(m_commits.size() - 1);
     }
-    TileDelta& at(RasterCommitId id) { return m_commits[size_t(id)]; }
+    TileDelta& at(RasterCommitId id)
+    {
+        assert(size_t(id) < m_commits.size() && "no such commit");
+        return m_commits[size_t(id)];
+    }
     size_t size() const { return m_commits.size(); }
     size_t bytes() const
     {

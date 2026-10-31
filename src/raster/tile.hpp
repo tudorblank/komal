@@ -1,6 +1,8 @@
 #pragma once
 // Pixels, bounds, tile coordinates, the Tile itself and per-tile edits.
 
+#include "base/color.hpp"
+
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 
@@ -28,6 +30,10 @@ constexpr RGBA canonical(RGBA c)
 constexpr uint8_t mul255(int v, int f) { return uint8_t((v * f + 127) / 255); }
 constexpr RGBA scale(RGBA c, int f) { return { mul255(c.r, f), mul255(c.g, f), mul255(c.b, f), mul255(c.a, f) }; }
 
+// A straight colour as a pixel: the one way colour is premultiplied (the GPU's previews start
+// from this too, so both agree to the byte).
+constexpr RGBA premultiply(Color8 c) { return { mul255(c.r, c.a), mul255(c.g, c.a), mul255(c.b, c.a), c.a }; }
+
 // s drawn on top of d. Both premultiplied + canonical; the result is too.
 constexpr RGBA over(RGBA d, RGBA s)
 {
@@ -36,37 +42,47 @@ constexpr RGBA over(RGBA d, RGBA s)
     return { ch(s.r, d.r), ch(s.g, d.g), ch(s.b, d.b), ch(s.a, d.a) };
 }
 
-// === BOUNDS === //
-// Inclusive integer rectangle; empty when min > max.
-struct BoundsI {
+// === RECTANGLES === //
+// An inclusive integer rectangle in one coordinate space; empty when min > max. The space is part
+// of the type, so a rectangle of pixels and one of tiles never mix up.
+struct PixelSpace {};   // world pixels
+struct TileSpace {};    // tile coordinates (of one level of detail)
+
+template <class Space>
+struct RectI {
     int minX = INT_MAX, minY = INT_MAX;   // up-left
     int maxX = INT_MIN, maxY = INT_MIN;   // down-right
 
-    bool operator==(const BoundsI&) const = default;
+    bool operator==(const RectI&) const = default;
 
     constexpr void expand(int x, int y)
     {
         minX = std::min(minX, x); maxX = std::max(maxX, x);
         minY = std::min(minY, y); maxY = std::max(maxY, y);
     }
-    constexpr void expand(const BoundsI& o) { if (!o.empty()) { expand(o.minX, o.minY); expand(o.maxX, o.maxY); } }
-    constexpr void reset() { *this = BoundsI{}; }
+    constexpr void expand(const RectI& o) { if (!o.empty()) { expand(o.minX, o.minY); expand(o.maxX, o.maxY); } }
+    constexpr void reset() { *this = RectI{}; }
 
     constexpr bool empty() const { return minX > maxX || minY > maxY; }
     constexpr bool contains(int x, int y) const { return x >= minX && x <= maxX && y >= minY && y <= maxY; }
+    constexpr bool contains(const RectI& o) const   // all of it (nothing is in anything)
+    { return o.empty() || (!empty() && o.minX >= minX && o.maxX <= maxX && o.minY >= minY && o.maxY <= maxY); }
 
     constexpr int width()  const { return empty() ? 0 : maxX - minX + 1; }
     constexpr int height() const { return empty() ? 0 : maxY - minY + 1; }
+    constexpr double area() const { return double(width()) * double(height()); }
 
-    constexpr BoundsI offsetBy(int dx, int dy) const
-    { return empty() ? *this : BoundsI{ minX + dx, minY + dy, maxX + dx, maxY + dy }; }
-    constexpr BoundsI intersect(const BoundsI& o) const
+    constexpr RectI offsetBy(int dx, int dy) const
+    { return empty() ? *this : RectI{ minX + dx, minY + dy, maxX + dx, maxY + dy }; }
+    constexpr RectI intersect(const RectI& o) const
     { return { std::max(minX, o.minX), std::max(minY, o.minY), std::min(maxX, o.maxX), std::min(maxY, o.maxY) }; }
 };
+using BoundsI  = RectI<PixelSpace>;
+using TileRect = RectI<TileSpace>;
 
 // === TILE COORDINATES === //
 using TileKey = uint64_t;
-using PageKey = uint64_t;
+enum class PageKey : uint64_t {};   // a page of tiles (TileGrid): its own type, never a tile's key
 
 using TileSet = absl::flat_hash_set<TileKey>;
 template<class V> using PageMap = absl::flat_hash_map<PageKey, V>;
@@ -111,17 +127,7 @@ namespace TileUtils {
         return worldToTile(int(std::clamp(std::floor(w), float(-kWorldLimit), float(kWorldLimit))));
     }
 }
-constexpr TileKey kNoKey = TileUtils::packKey(INT_MIN, INT_MIN);
-
-// Inclusive rectangle of tile coordinates; empty when min > max.
-struct TileRect {
-    int minX = 1, minY = 1, maxX = 0, maxY = 0;
-
-    bool operator==(const TileRect&) const = default;
-    bool   empty() const { return minX > maxX || minY > maxY; }
-    bool   contains(int tx, int ty) const { return tx >= minX && tx <= maxX && ty >= minY && ty <= maxY; }
-    double area() const { return empty() ? 0.0 : double(maxX - minX + 1) * double(maxY - minY + 1); }
-};
+constexpr TileKey kNoKey = TileUtils::packKey(INT_MIN, INT_MIN);   // no tile is this far out
 
 // f(key) for every key of `set` inside `r`, walking whichever of the two is smaller.
 // f may return bool: false stops the walk.

@@ -2,6 +2,7 @@
 #include "node/node-kinds.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <string>
 #include <utility>
 
@@ -17,10 +18,10 @@ NodePtr NodeRegistry::findPtr(NodeId id) const
     return it == m_nodes.end() ? nullptr : it->second;
 }
 
-RasterRootNode* NodeRegistry::rasterNode(RasterId id) const
+RasterRootNode& NodeRegistry::rasterNode(RasterId id) const
 {
-    auto it = m_rasterNodes.find(id);
-    return it == m_rasterNodes.end() ? nullptr : static_cast<RasterRootNode*>(find(it->second));
+    assert(size_t(id) < m_rasterNodes.size() && "no such raster");
+    return *m_rasterNodes[size_t(id)];
 }
 
 NodeId NodeRegistry::create(GraphKey key, NodeType type, float x, float y)
@@ -28,6 +29,7 @@ NodeId NodeRegistry::create(GraphKey key, NodeType type, float x, float y)
     const NodeKind& kind = nodeKind(type);
     RasterData* pixels = kind.ownsPixels ? &m_rasters.emplace_back(RasterId(m_rasters.size())) : nullptr;
     NodePtr n = kind.make(pixels);
+    if (pixels) m_rasterNodes.push_back(std::static_pointer_cast<RasterRootNode>(n));   // RasterId == index
     const NodeId id = NodeId(m_nextId++);
     n->setId(key, id);
     n->setPosition(key, x, y);
@@ -44,7 +46,6 @@ void NodeRegistry::remove(NodeId id)
     const NodePtr node = std::move(it->second);
     m_nodes.erase(it);
     std::erase(m_order, node);
-    if (node->type() == NodeType::Raster) m_rasterNodes.erase(static_cast<const RasterRootNode&>(*node).raster().id());
 }
 
 void NodeRegistry::restore(NodePtr n)
@@ -56,8 +57,17 @@ void NodeRegistry::restore(NodePtr n)
     m_order.insert(at, std::move(n));
 }
 
+NodeRegistry::PixelBytes NodeRegistry::pixelBytes() const
+{
+    PixelBytes b;
+    for (const RasterData& r : m_rasters) {
+        b.pixels  += r.bytes();
+        b.history += r.history().bytes();
+    }
+    return b;
+}
+
 void NodeRegistry::index(const NodePtr& n)
 {
     m_nodes.emplace(n->id(), n);
-    if (n->type() == NodeType::Raster) m_rasterNodes[static_cast<const RasterRootNode&>(*n).raster().id()] = n->id();
 }

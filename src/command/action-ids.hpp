@@ -8,12 +8,12 @@
 class ActionId {
 public:
     constexpr ActionId() = default;   // none: no action has it
-    constexpr explicit ActionId(std::string_view name) : m_name(name) {}
+    consteval explicit ActionId(std::string_view name) : m_name(name) {}   // a literal: it lives as long as the app
     constexpr std::string_view name() const { return m_name; }
     constexpr bool operator==(const ActionId&) const = default;
 
 private:
-    std::string_view m_name;   // a literal: lives as long as the app
+    std::string_view m_name;
 };
 
 namespace Actions {

@@ -10,13 +10,19 @@
       "name": "linux-debug", "inherits": "base",
       "displayName": "Linux Debug",
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "KOMAL_WERROR": "ON" }
     },
     {
       "name": "linux-release", "inherits": "base",
       "displayName": "Linux Release",
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "linux-asan", "inherits": "base",
+      "displayName": "Linux Debug, AddressSanitizer + UBSan, warnings as errors",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "KOMAL_SANITIZE": "ON", "KOMAL_WERROR": "ON" }
     },
     {
       "name": "macos-debug", "inherits": "base",
@@ -63,6 +69,7 @@
   "buildPresets": [
     { "name": "linux-debug",                "configurePreset": "linux-debug" },
     { "name": "linux-release",              "configurePreset": "linux-release" },
+    { "name": "linux-asan",                 "configurePreset": "linux-asan" },
     { "name": "macos-debug",                "configurePreset": "macos-debug" },
     { "name": "macos-release",              "configurePreset": "macos-release" },
     { "name": "windows-msvc-x64-debug",     "configurePreset": "windows-msvc-x64",   "configuration": "Debug" },

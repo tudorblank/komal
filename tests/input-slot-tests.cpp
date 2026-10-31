@@ -1,4 +1,4 @@
-#include "document/input-slot.hpp"
+#include "node/input-slot.hpp"
 
 #include <doctest/doctest.h>
 

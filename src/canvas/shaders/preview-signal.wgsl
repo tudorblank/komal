@@ -4,6 +4,7 @@
 //   out = Main( Wet(wet) over Dry(dry) )
 //   shaping with gains g (A, R, G, B):  rgb *= gA * gC,  a *= gA
 //   a mask's factor: the mask over white, 1 - a + min(luma(rgb), a)
+// Fragment stage only: the vertex stage is fullscreen.wgsl's (put before it).
 
 struct Params {
     mainK : vec4f, wetK : vec4f, dryK : vec4f,   // scales, A R G B
@@ -26,12 +27,6 @@ struct Params {
 @group(1) @binding(11) var tM9  : texture_2d<f32>;
 @group(1) @binding(12) var tM10 : texture_2d<f32>;
 @group(1) @binding(13) var tM11 : texture_2d<f32>;
-
-@vertex
-fn vs_main(@builtin(vertex_index) i : u32) -> @builtin(position) vec4f {
-    let uv = vec2f(f32((i << 1u) & 2u), f32(i & 2u));   // one triangle covering the screen
-    return vec4f(uv * 2.0 - 1.0, 0.0, 1.0);
-}
 
 fn maskPixel(i : i32, p : vec2i) -> vec4f {
     switch i {

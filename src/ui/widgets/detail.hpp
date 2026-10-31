@@ -2,6 +2,7 @@
 // What the widgets are made of, shared by their files (not for panels: they use widgets.hpp).
 
 #include "base/palette.hpp"
+#include "look/slider-look.hpp"
 #include "ui/widgets/widgets.hpp"
 
 #include <imgui.h>
@@ -11,12 +12,7 @@
 
 namespace Widgets::detail {
 
-// Slider and toggle colours, from the palette.
-constexpr ImU32 kTrack      = Palette::kTrack.packed();
-constexpr ImU32 kTrackFill  = Palette::kAccentDim.packed();
-constexpr ImU32 kGrab       = Palette::kGrab.packed();
-constexpr ImU32 kGrabHot    = Palette::kGrabHot.packed();
-constexpr ImU32 kGrabBorder = Palette::kGrabRim.packed();
+// Toggle colours, from the palette (sliders: look/slider-look.hpp).
 constexpr ImU32 kToggleEdge = Palette::kToggleEdge.packed();
 constexpr ImU32 kToggleHot  = Palette::kToggleHot.packed();
 
@@ -54,16 +50,6 @@ inline void textCentered(const ImRect& r, const char* text, const char* end, ImU
     dl->PopClipRect();
 }
 
-// The slider grab: a small pill with a dark outline, centred on (x, cy).
-inline void drawGrab(float x, float cy, bool hot, float halfHeight = 0.0f)   // 0: the standard height
-{
-    const float u = Widgets::metrics().unit;
-    const float gw = std::round(3.0f * u), gh = halfHeight > 0.0f ? halfHeight : std::round(6.5f * u);
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(ImVec2(x - gw - 1.0f, cy - gh - 1.0f), ImVec2(x + gw + 1.0f, cy + gh + 1.0f), kGrabBorder, 2.0f * u);
-    dl->AddRectFilled(ImVec2(x - gw, cy - gh), ImVec2(x + gw, cy + gh), hot ? kGrabHot : kGrab, 1.5f * u);
-}
-
 // A slider's item and the grab's travel (x0..x1 keeps the grab inside the item). While active,
 // `t` follows the mouse (0..1); returns whether it does.
 struct Track { float x0, x1, cy; bool hot; };
@@ -73,7 +59,7 @@ inline bool trackItem(const char* id, float width, float& t, Track& out, float m
     const ImVec2 p = ImGui::GetCursorScreenPos();
     width = std::max(width, 8.0f);
     ImGui::InvisibleButton(id, ImVec2(width, m.rowHeight));
-    if (margin < 0.0f) margin = std::round(3.0f * m.unit) + 1.0f;   // the small grab's half width
+    if (margin < 0.0f) margin = SliderLook::grabReach(m.unit);   // the grab stays inside
     out = { p.x + margin, p.x + width - margin, std::round(p.y + m.rowHeight * 0.5f), ImGui::IsItemHovered() || ImGui::IsItemActive() };
     if (!ImGui::IsItemActive()) return false;
     t = std::clamp((ImGui::GetIO().MousePos.x - out.x0) / std::max(1.0f, out.x1 - out.x0), 0.0f, 1.0f);

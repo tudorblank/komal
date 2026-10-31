@@ -1,11 +1,11 @@
 #pragma once
 
 #include <webgpu/webgpu.h>
+#include <atomic>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
-
-struct SDL_Window;
 
 // One frame's swapchain image and the encoder everything records into (acquire() to present()).
 // The surface pass is a GpuRenderPass on `view`.
@@ -18,7 +18,10 @@ struct GpuFrame {
 
 class GpuDevice {
 public:
-    bool init(SDL_Window* window);
+    // The surface to present to, made for the instance by the platform (app/window-surface).
+    using SurfaceMaker = std::function<WGPUSurface(WGPUInstance)>;
+
+    bool init(const SurfaceMaker& makeSurface, int pixelW, int pixelH);
     void shutdown();
 
     void resize(int pixelW, int pixelH); // reconfigures the surface if changed (or suboptimal)
@@ -30,13 +33,16 @@ public:
     WGPUTextureFormat surfaceFormat() const { return m_format; }
     const std::string& adapterInfo()  const { return m_adapterInfo; }
     const char* presentModeName() const;
+    // The device was lost (a driver reset, a GPU gone): nothing made on it works any more, and
+    // everything has to be made again (shutdown(), init()). Any thread may set it.
+    bool lost() const { return m_lost.load(); }
+    void simulateLoss() { m_lost = true; }   // as if lost: tries the app's rebuild
     uint32_t    frameLatency()    const { return m_frameLatency; }
 
 private:
     void configureSurface();
     WGPUInstance m_instance = nullptr;
     WGPUSurface  m_surface  = nullptr;
-    void*        m_surfaceView = nullptr;   // macOS: the SDL Metal view under the surface
     WGPUAdapter  m_adapter  = nullptr;
     WGPUDevice   m_device   = nullptr;
     WGPUQueue    m_queue    = nullptr;
@@ -47,4 +53,5 @@ private:
     WGPUPresentMode m_presentMode = WGPUPresentMode_Fifo;
     uint32_t m_frameLatency = 1;    // swapchain images queued ahead of the display
     std::vector<WGPUPresentMode> m_supportedModes;
+    std::atomic<bool> m_lost{ false };
 };

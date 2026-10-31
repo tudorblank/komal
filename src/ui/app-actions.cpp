@@ -11,8 +11,8 @@ void UserInterface::registerAppActions()
     // ---------------------------------------------------------------- app
     m_actions.add({ .id = Actions::AppQuit, .title = "Quit", .kind = K::AppState, .run = [this] { m_quit = true; } });
     // Opens the dialog; the import itself is logged when it lands (image.import). Primary: Cmd on macOS, Ctrl elsewhere.
-    m_actions.add({ .id = Actions::FileImport, .title = "Import Image...", .kind = K::Interface, .shortcuts = { { SDLK_O, ModPrimary } },
-                    .run = [this] { m_importer.showOpenDialog(m_host->window); } });
+    m_actions.add({ .id = Actions::FileImport, .title = "Import Image...", .kind = K::Interface,
+                    .run = [this] { if (m_host->showImportDialog) m_host->showImportDialog(); } });
 
     // ---------------------------------------------------------------- panels
     // "view.<id>" per panel: the menu and the window's close button both run it.

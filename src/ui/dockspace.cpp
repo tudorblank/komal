@@ -12,11 +12,11 @@ using WindowIds  = std::vector<ImGuiID>;
 
 // A node's size along `axis`: measured, or before the first layout (just loaded from the .ini)
 // the size it was saved with.
-float sizeOf(const ImGuiDockNode* n, int axis) { return n->Size[axis] > 0.0f ? n->Size[axis] : n->SizeRef[axis]; }
+float sizeOf(const ImGuiDockNode* n, size_t axis) { return n->Size[axis] > 0.0f ? n->Size[axis] : n->SizeRef[axis]; }
 
 // Each split's first-child share, remembered (scaling from last frame's sizes would creep from
 // rounding). Only a splitter the user moved (off by over a pixel) updates it.
-float childShare(const ImGuiDockNode* c0, const ImGuiDockNode* c1, int axis)
+float childShare(const ImGuiDockNode* c0, const ImGuiDockNode* c1, size_t axis)
 {
     return sizeOf(c0, axis) / (sizeOf(c0, axis) + sizeOf(c1, axis));
 }
@@ -26,7 +26,7 @@ void rememberShares(const ImGuiDockNode* node, DockShares& shares)
     if (node->IsLeafNode()) return;
     const ImGuiDockNode* c0 = node->ChildNodes[0];
     const ImGuiDockNode* c1 = node->ChildNodes[1];
-    const int axis = node->SplitAxis;
+    const size_t axis = size_t(node->SplitAxis);
     if (c0->IsVisible && c1->IsVisible && c0->Size[axis] > 0.0f && c1->Size[axis] > 0.0f) {
         const float total = c0->Size[axis] + c1->Size[axis];
         auto [it, inserted] = shares.try_emplace(node->ID, childShare(c0, c1, axis));
@@ -57,7 +57,7 @@ void scaleDockTree(ImGuiDockNode* node, ImVec2 size, const DockShares& shares, c
     if (node->IsLeafNode()) return;
     ImGuiDockNode* c0 = node->ChildNodes[0];
     ImGuiDockNode* c1 = node->ChildNodes[1];
-    const int axis = node->SplitAxis, across = axis ^ 1;
+    const size_t axis = size_t(node->SplitAxis), across = axis ^ 1;
     ImVec2 s0 = size, s1 = size;
     if (c0->IsVisible && c1->IsVisible && sizeOf(c0, axis) > 0.0f && sizeOf(c1, axis) > 0.0f) {
         const float avail = std::max(size[axis] - ImGui::GetStyle().DockingSeparatorSize, 2.0f);

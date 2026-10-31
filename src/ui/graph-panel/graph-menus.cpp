@@ -8,11 +8,12 @@
 #include <cstdio>
 
 using namespace GraphStyle;
+using namespace DocArgs;
 
 namespace {
 
-constexpr const char* kContext = "##node-context";
-constexpr const char* kValue   = "##value-edit";
+constexpr const char* kContext    = "##node-context";
+constexpr const char* kValuePopup = "##value-edit";
 
 }
 
@@ -80,17 +81,17 @@ void GraphMenus::add(NodeType type)
     ActionArgs wired;
     std::visit([&](const auto& w) {
         using T = std::decay_t<decltype(w)>;
-        if constexpr (std::is_same_v<T, FromOutput>) { y -= portY; wired.add({ "from", w.from }); }
-        if constexpr (std::is_same_v<T, ToInput>)    { x -= kNodeWidth; y -= portY; wired.add({ "into", w.to }); wired.add({ "slot", w.slot.text() }); }
+        if constexpr (std::is_same_v<T, FromOutput>) { y -= portY; wired.add({ kFrom, w.from }); }
+        if constexpr (std::is_same_v<T, ToInput>)    { x -= kNodeWidth; y -= portY; wired.add({ kInto, w.to }); wired.add({ kSlot, w.slot }); }
         if constexpr (std::is_same_v<T, Insert>) {
             x -= kNodeWidth * 0.5f;
             y -= portY;
-            wired.add({ "from", w.from });
-            wired.add({ "into", w.to });
-            wired.add({ "slot", w.slot.text() });
+            wired.add({ kFrom, w.from });
+            wired.add({ kInto, w.to });
+            wired.add({ kSlot, w.slot });
         }
     }, m_wiring);
-    ActionArgs args{ { "type", nodeKind(type).id }, { "x", x }, { "y", y } };
+    ActionArgs args{ { kType, nodeKind(type).id }, { kX, x }, { kY, y } };
     args.append(wired);
     const ActionResult r = m_actions->run(Actions::NodeAdd, std::move(args));
     if (!r) return;
@@ -114,16 +115,16 @@ void GraphMenus::drawContext()
         ImGui::Separator();
         if (const auto* raster = std::get_if<RasterSettings>(&settings)) {
             const bool active = m_project->activeRasterId() == id;
-            actionMenuItem(actions, Actions::RasterActivate, { { "node", id } }, { .checked = active, .enabled = !active });
-            actionMenuItem(actions, Actions::RasterLock, { { "node", id }, { "on", !raster->locked } }, { .checked = raster->locked });
-            actionMenuItem(actions, Actions::RasterLockAlpha, { { "node", id }, { "on", !raster->alphaLocked } }, { .checked = raster->alphaLocked });
+            actionMenuItem(actions, Actions::RasterActivate, { { kNode, id } }, { .checked = active, .enabled = !active });
+            actionMenuItem(actions, Actions::RasterLock, { { kNode, id }, { kOn, !raster->locked } }, { .checked = raster->locked });
+            actionMenuItem(actions, Actions::RasterLockAlpha, { { kNode, id }, { kOn, !raster->alphaLocked } }, { .checked = raster->alphaLocked });
         }
         if (!master) {
             const NodeId out = m_project->master().id();
             const InputSlot top = InputSlot::newLayer(uint32_t(m_project->master().layers().size()));
-            actionMenuItem(actions, Actions::LinkConnect, { { "from", id }, { "to", out }, { "slot", top.text() } },
+            actionMenuItem(actions, Actions::LinkConnect, { { kFrom, id }, { kTo, out }, { kSlot, top } },
                            { .label = "Add to Master", .enabled = m_project->canConnect(id, out, top) });
-            if (const ActionResult ref = actionMenuItem(actions, Actions::NodeReference, { { "node", id }, { "x", n->x() + 30.0f }, { "y", n->y() + 30.0f } },
+            if (const ActionResult ref = actionMenuItem(actions, Actions::NodeReference, { { kNode, id }, { kX, n->x() + 30.0f }, { kY, n->y() + 30.0f } },
                                                         { .label = "Reference it" }))
                 actions.run(Actions::SelectionSet, selectionArgs(NodeSelection::only(NodeId(ref.made))));
         }
@@ -131,16 +132,16 @@ void GraphMenus::drawContext()
         const NodeSelection& selection = m_project->selection();
         const bool many = selection.contains(id) && selection.size() > 1;
         const std::vector<NodeId> shown = many ? selection.list() : std::vector<NodeId>{ id };
-        actionMenuItem(actions, Actions::GraphShowInCanvas, { { "nodes", shown } }, { .label = many ? "Show selected in Canvas" : "Show in Canvas" });
+        actionMenuItem(actions, Actions::GraphShowInCanvas, { { kNodes, shown } }, { .label = many ? "Show selected in Canvas" : "Show in Canvas" });
         if (const auto* move = std::get_if<MoveSettings>(&settings)) {
             // Lost far away: shift it so what it outputs starts at the canvas origin.
             const BoundsI b = n->bounds();
-            if (actionMenuItem(actions, Actions::MoveSet, { { "node", id }, { "x", move->x - b.minX }, { "y", move->y - b.minY } },
+            if (actionMenuItem(actions, Actions::MoveSet, { { kNode, id }, { kOffsetX, move->x - b.minX }, { kOffsetY, move->y - b.minY } },
                                { .label = "Move to Origin", .enabled = !b.empty() && (b.minX != 0 || b.minY != 0) }))
-                actions.run(Actions::GraphShowInCanvas, { { "nodes", std::vector<NodeId>{ id } } });
+                actions.run(Actions::GraphShowInCanvas, { { kNodes, std::vector<NodeId>{ id } } });
         }
         ImGui::Separator();
-        actionMenuItem(actions, Actions::GraphRename, { { "node", id } });
+        actionMenuItem(actions, Actions::GraphRename, { { kNode, id } });
         if (!master) {
             ImGui::Separator();
             actionMenuItem(actions, Actions::GraphDelete, {}, { .label = many ? "Delete selected" : "Delete" });
@@ -151,8 +152,8 @@ void GraphMenus::drawContext()
 
 void GraphMenus::drawValue()
 {
-    if (std::exchange(m_valuePending, false)) ImGui::OpenPopup(kValue);
-    if (!ImGui::BeginPopup(kValue)) return;
+    if (std::exchange(m_valuePending, false)) ImGui::OpenPopup(kValuePopup);
+    if (!ImGui::BeginPopup(kValuePopup)) return;
     // One field, typing from the start; the popup closes once it's left (applied or not).
     static constexpr const char* kField = "##value";
     if (m_valueJustOpened) Widgets::focusField(kField);
@@ -161,17 +162,18 @@ void GraphMenus::drawValue()
         using T = std::decay_t<decltype(v)>;
         if constexpr (std::is_same_v<T, Rename>) {
             if (Widgets::textField(kField, v.text, sizeof v.text, width))
-                m_actions->run(Actions::NodeRename, { { "node", v.node }, { "label", v.text } });
+                m_actions->run(Actions::NodeRename, { { kNode, v.node }, { kLabel, v.text } });
         } else if constexpr (std::is_same_v<T, ScaleValue>) {
             if (Widgets::numberField(kField, v.percent, 0.0f, 100.0f, "%.1f%%", width))
-                m_actions->run(Actions::SignalSet, { { "node", v.node }, { "signal", v.signal }, { "channel", v.channel }, { "value", v.percent / 100.0f } });
+                m_actions->run(Actions::SignalSet, { { kNode, v.node }, { kSignal, v.signal }, { kChannel, v.channel }, { kValue, v.percent / 100.0f } });
         } else {
             const Node* n = m_project->find(v.node);
             const NodeSettings settings = n ? n->settings() : NodeSettings{};
             const auto* move = std::get_if<MoveSettings>(&settings);
             if (move && Widgets::numberField(kField, v.pixels, -1e9f, 1e9f, "%.0f px", width)) {
                 const int p = int(std::lround(v.pixels));
-                m_actions->run(Actions::MoveSet, { { "node", v.node }, { "x", v.axis == 0 ? p : move->x }, { "y", v.axis == 0 ? move->y : p } });
+                const int x = v.axis == 0 ? p : move->x, y = v.axis == 0 ? move->y : p;
+                m_actions->run(Actions::MoveSet, { { kNode, v.node }, { kOffsetX, x }, { kOffsetY, y } });
             }
         }
     }, m_value);

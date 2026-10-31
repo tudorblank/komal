@@ -6,12 +6,11 @@
 
 class RenderTarget {
 public:
-    static constexpr uint32_t kMax = 8192;   // default wgpu maxTextureDimension2D
-
-    void init(WGPUDevice device, WGPUTextureFormat format) { m_device = device; m_format = format; }
+    void init(WGPUDevice device, WGPUTextureFormat format);   // learns the device's largest texture
     void shutdown() { m_texture.reset(); m_device = nullptr; }
 
-    // (Re)creates the texture if its size differs from w x h. Returns false on failure.
+    // (Re)creates the texture if its size differs from w x h (each side clamped to what the
+    // device takes). Returns false on failure.
     bool ensure(uint32_t w, uint32_t h);
 
     WGPUTextureView view()   const { return m_texture.view(); }
@@ -21,5 +20,8 @@ public:
 private:
     WGPUDevice        m_device = nullptr;
     WGPUTextureFormat m_format = WGPUTextureFormat_RGBA8Unorm;
+    uint32_t          m_max = kDefaultMax;
     GpuTexture        m_texture;
+
+    static constexpr uint32_t kDefaultMax = 8192;   // WebGPU's default maxTextureDimension2D: if the device won't say
 };

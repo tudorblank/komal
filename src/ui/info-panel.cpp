@@ -1,6 +1,8 @@
 #include "ui/info-panel.hpp"
-#include "command/input.hpp"
 #include "base/perf.hpp"
+#include "canvas/canvas-engine.hpp"
+#include "command/input.hpp"
+#include "document/project.hpp"
 #include "ui/widgets/widgets.hpp"
 
 #include <imgui.h>
@@ -26,7 +28,12 @@ void InfoPanel::draw()
                         pen.touching ? "down" : "up", pen.pressure, pen.tiltX, pen.tiltY);
         }
         ImGui::Separator();
+        const auto mb = [](size_t bytes) { return double(bytes) / (1024.0 * 1024.0); };
+        const NodeRegistry::PixelBytes px = ui().project.pixelBytes();
+        ImGui::Text("pixels %.1f MB, their history %.1f MB", mb(px.pixels), mb(px.history));
+        ImGui::Text("GPU tiles %.0f MB, thumbnails %.0f MB", mb(ui().canvas.tiles().bytes()), mb(ui().thumbnails.bytes()));
+        ImGui::Separator();
         for (int c = 0; c < Perf::Count; ++c)   // ms per frame: smoothed, worst of the last second
-            ImGui::Text("%-12s %6.2f  max %6.2f", Perf::name(Perf::Counter(c)), Perf::average(Perf::Counter(c)), Perf::worst(Perf::Counter(c)));
+            ImGui::Text("%-12s %6.2f  max %6.2f", Perf::name(Perf::Counter(c)), Perf::average(Perf::Counter(c)).count(), Perf::worst(Perf::Counter(c)).count());
     }
 }

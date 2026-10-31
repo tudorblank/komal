@@ -184,36 +184,28 @@ void GraphPanel::registerActions(ActionRegistry& actions)
     const auto graph = ActionScope::Graph;
     const auto ui    = ActionKind::Interface;
     actions.add({ .id = Actions::GraphDelete, .title = "Delete Selected", .kind = ui,
-                  .shortcuts = { { SDLK_DELETE }, { SDLK_BACKSPACE } }, .scope = graph,
+                  .scope = graph,
                   .enabled = [this] { return !selection().empty(); }, .run = [this] { deleteSelection(); } });
-    actions.add({ .id = Actions::GraphFrameSelected, .title = "Frame Selected", .kind = ui, .shortcuts = { { SDLK_F } }, .scope = graph,
+    actions.add({ .id = Actions::GraphFrameSelected, .title = "Frame Selected", .kind = ui, .scope = graph,
                   .run = [this] { m_autoFrame = false; frameNodes(!selection().empty(), m_surface.size()); } });
-    actions.add({ .id = Actions::GraphFrameAll, .title = "Frame All", .kind = ui, .shortcuts = { { SDLK_HOME } }, .scope = graph,
+    actions.add({ .id = Actions::GraphFrameAll, .title = "Frame All", .kind = ui, .scope = graph,
                   .run = [this] { m_autoFrame = false; frameNodes(false, m_surface.size()); } });
-    actions.add({ .id = Actions::GraphSelectAll, .title = "Select All", .kind = ui, .shortcuts = { { SDLK_A, ModPrimary } }, .scope = graph,
+    actions.add({ .id = Actions::GraphSelectAll, .title = "Select All", .kind = ui, .scope = graph,
                   .run = [this] {
                       NodeSelection::Set all;
                       for (const auto& [id, s] : m_scene.items())
                           if (!m_scene.isMaster(id)) all.insert(id);
                       select(selection().withIds(std::move(all)));
                   } });
-    actions.add({ .id = Actions::GraphAddNode, .title = "Add Node...", .kind = ui, .shortcuts = { { SDLK_A, ModShift } }, .scope = graph,
+    actions.add({ .id = Actions::GraphAddNode, .title = "Add Node...", .kind = ui, .scope = graph,
                   .run = [this] { m_menus.openAdd(GraphMenus::Free{}, m_camera.toGraph(ImGui::GetIO().MousePos)); } });
     // nodes: the ones to show (none given: the selection), where their output is on the canvas.
-    actions.add({ .id = Actions::GraphShowInCanvas, .title = "Show in Canvas", .kind = ui, .args = { Arg::ids("nodes").optional() },
+    actions.add({ .id = Actions::GraphShowInCanvas, .title = "Show in Canvas", .kind = ui, .args = { Arg::ids(DocArgs::kNodes).optional() },
                   .mouse = "Double-click", .scope = graph,
-                  .run = [this](const ActionArgs& a) {
-                      std::vector<NodeId> ids;
-                      if (a.has("nodes")) for (int64_t id : a.list("nodes")) ids.push_back(NodeId(id));
-                      else ids = selection().list();
-                      showInCanvas(ids);
-                  } });
+                  .run = [this](const ActionArgs& a) { showInCanvas(a.has(DocArgs::kNodes) ? a.get(DocArgs::kNodes) : selection().list()); } });
     // node: the one to rename (none given: the one selected), in a field at the mouse.
-    actions.add({ .id = Actions::GraphRename, .title = "Rename...", .kind = ui, .args = { Arg::id("node").optional() }, .scope = graph,
-                  .run = [this](const ActionArgs& a) {
-                      const NodeId id = a.has("node") ? NodeId(a.integer("node")) : selection().single();
-                      return m_menus.openValue(GraphMenus::Rename{ id });
-                  } });
+    actions.add({ .id = Actions::GraphRename, .title = "Rename...", .kind = ui, .args = { Arg::id(DocArgs::kNode).optional() }, .scope = graph,
+                  .run = [this](const ActionArgs& a) { return m_menus.openValue(GraphMenus::Rename{ a.get(DocArgs::kNode, selection().single()) }); } });
 }
 
 void GraphPanel::showInCanvas(const std::vector<NodeId>& ids)
@@ -221,12 +213,12 @@ void GraphPanel::showInCanvas(const std::vector<NodeId>& ids)
     BoundsI b;
     for (NodeId id : ids)
         if (const Node* n = ui().project.find(id)) b.expand(n->bounds());   // a Move: where it moved them to
-    ui().actions.run(Actions::CanvasFrame, { { "minX", b.minX }, { "minY", b.minY }, { "maxX", b.maxX }, { "maxY", b.maxY } });
+    ui().actions.run(Actions::CanvasFrame, { { DocArgs::kMinX, b.minX }, { DocArgs::kMinY, b.minY }, { DocArgs::kMaxX, b.maxX }, { DocArgs::kMaxY, b.maxY } });
 }
 
 void GraphPanel::deleteSelection()
 {
-    ui().actions.run(Actions::NodeDelete, { { "nodes", selection().list() } });   // the master is skipped; the rest heal the links around them
+    ui().actions.run(Actions::NodeDelete, { { DocArgs::kNodes, selection().list() } });   // the master is skipped; the rest heal the links around them
 }
 
 void GraphPanel::frameNodes(bool selectionOnly, ImVec2 canvasSize)

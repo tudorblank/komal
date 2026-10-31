@@ -5,7 +5,7 @@
 // and what the navigator shows of the master.
 //
 //   if (picture.render(preview, node, maxW, maxH, pipelines, encoder, budget) == Result::Rendered)
-//       ... picture.texture(): width() x height() from its corner, showing bounds()
+//       ... picture.texture(): fit().width x fit().height from its corner, showing bounds()
 
 #include "canvas/preview/preview-renderer.hpp"
 
@@ -29,9 +29,8 @@ public:
 
     bool hasPicture() const { return m_has; }
     const GpuTexture& texture() const { return m_texture; }
-    uint32_t width()  const { return m_w; }
-    uint32_t height() const { return m_h; }
-    BoundsI  bounds() const { return m_bounds; }   // the world rectangle the picture is fitted to
+    const PictureFit& fit() const { return m_fit; }   // the picture, as fitted into maxW x maxH
+    BoundsI  bounds() const { return m_bounds; }      // the world rectangle the picture is fitted to
     void release();
 
 private:
@@ -41,7 +40,7 @@ private:
     GpuUniform m_checker;
     GpuObject<WGPUBindGroup> m_resultGroup;
     WGPUTextureView m_groupView = nullptr;   // ... made for this texture
-    uint32_t m_w = 0, m_h = 0;
+    PictureFit m_fit{};
     BoundsI  m_bounds;
     bool     m_has = false;
 };

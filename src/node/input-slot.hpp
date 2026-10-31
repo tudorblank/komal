@@ -1,11 +1,12 @@
 #pragma once
-// Where a link lands on a node: one type per kind of place, each holding only what it means.
-// Actions write it as text ("input", "layer:2", "new:3", "mask:main.a") and read it back; text
-// that isn't one of those is refused (parse() is empty).
+// Where a link lands on a node, its port: one type per kind of place, each holding only what it
+// means. Which a node has comes from its kind (Node::ports()). Actions write it as text ("input",
+// "layer:2", "new:3", "mask:main.a") and read it back; text that isn't one of those is refused
+// (parse() is empty).
 //
 //   if (const auto* layer = slot.as<InputSlot::Layer>()) ... stack->layers()[layer->index]
 
-#include "node/node-types.hpp"
+#include "node/signals.hpp"
 
 #include <cstdint>
 #include <optional>

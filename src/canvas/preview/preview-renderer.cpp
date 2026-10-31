@@ -28,16 +28,16 @@ PreviewSpace PreviewSpace::ofView(const CanvasFrame& frame)
     return s;
 }
 
-PreviewSpace PreviewSpace::fitted(const BoundsI& b, uint32_t width, uint32_t height)
+PreviewSpace PreviewSpace::fitted(const BoundsI& b, const PictureFit& fit)
 {
     PreviewSpace s;
-    const float zoom = fitScale(b, float(width), float(height));
+    const float zoom = fit.scale;
     s.camera.zoom = zoom;
     s.camera.pan  = { -float(b.minX) * zoom, -float(b.minY) * zoom };   // the bounds' corner at the picture's
-    s.viewW   = float(width);
-    s.viewH   = float(height);
-    s.pixelW  = width;
-    s.pixelH  = height;
+    s.viewW   = float(fit.width);
+    s.viewH   = float(fit.height);
+    s.pixelW  = fit.width;
+    s.pixelH  = fit.height;
     s.visible = { float(b.minX), float(b.minY), float(b.maxX + 1), float(b.maxY + 1) };
     s.level   = lodLevel(zoom);
     return s;
@@ -62,7 +62,7 @@ bool PreviewRenderer::plan(const Preview& preview, NodeId node)
 
 BoundsI PreviewRenderer::bounds() const
 {
-    return m_target >= 0 ? m_preview->bounds(m_preview->plan().nodes()[size_t(m_target)].node->id()) : BoundsI{};
+    return m_target >= 0 ? m_preview->model().bounds(m_preview->plan().nodes()[size_t(m_target)].node->id()) : BoundsI{};
 }
 
 int PreviewRenderer::push(Op op)
@@ -99,10 +99,10 @@ int PreviewRenderer::build(int node, Vec2 offset)
     const Node& n = *s.node;
 
     int wet = -1, dry = -1;
-    if (m_preview->wetOn(n)) {
-        if (const std::optional<Vec2> by = m_preview->moveOffset(n)) {
+    if (m_preview->model().wetOn(n)) {
+        if (const std::optional<Vec2> by = m_preview->model().moveOffset(n)) {
             wet = opFor(s.input, { offset.x + by->x, offset.y + by->y });   // a move moves its input
-        } else if (inputShape(n) == InputShape::One) {
+        } else if (n.ports().inputs == InputShape::One) {
             wet = opFor(s.input, offset);
         } else if (!s.layers.empty()) {   // a stack the edit reaches: recomposed
             Op stack;
@@ -128,7 +128,7 @@ int PreviewRenderer::build(int node, Vec2 offset)
             wet = leafOp(s.wet, offset);
         }
     }
-    if (m_preview->dryOn(n)) dry = opFor(s.input, offset);
+    if (m_preview->model().dryOn(n)) dry = opFor(s.input, offset);
 
     Op signal;
     signal.kind = Op::Kind::Signal;
@@ -313,13 +313,12 @@ bool PreviewRenderer::execute(const PreviewSpace& space, const CanvasPipelines& 
             break;
         case Op::Kind::Stroke: {
             const BrushParams& brush = m_preview->project().stroke().params();
-            const RGBA c = brush.color;   // straight
-            const float a = float(c.a) / 255.0f;
+            const RGBA c = premultiply(brush.color);   // as the CPU stroke does
             PreviewStrokeParams params{};
-            params.color[0]  = float(c.r) / 255.0f * a;
-            params.color[1]  = float(c.g) / 255.0f * a;
-            params.color[2]  = float(c.b) / 255.0f * a;
-            params.color[3]  = a;
+            params.color[0]  = float(c.r) / 255.0f;
+            params.color[1]  = float(c.g) / 255.0f;
+            params.color[2]  = float(c.b) / 255.0f;
+            params.color[3]  = float(c.a) / 255.0f;
             params.opacity   = float(brush.opacity) / 255.0f;
             params.erase     = brush.mode == CompositeMode::Erase;
             params.keepAlpha = brush.keepAlpha;
@@ -353,9 +352,9 @@ bool PreviewRenderer::execute(const PreviewSpace& space, const CanvasPipelines& 
             PreviewSignalParams params{};
             for (int c = 0; c < kChannelCount; ++c) {
                 const auto slot = [&](NodeSignal s) { return op.masks[maskSlot(s, NodeChannel(c))] >= 0 ? maskSlot(s, NodeChannel(c)) : -1; };
-                params.mainK[c] = m_preview->scale(n, NodeSignal::Main, NodeChannel(c));
-                params.wetK[c]  = n.hasDryWet() ? m_preview->scale(n, NodeSignal::Wet, NodeChannel(c)) : 1.0f;
-                params.dryK[c]  = n.hasDryWet() ? m_preview->scale(n, NodeSignal::Dry, NodeChannel(c)) : 1.0f;
+                params.mainK[c] = m_preview->model().scale(n, NodeSignal::Main, NodeChannel(c));
+                params.wetK[c]  = n.hasDryWet() ? m_preview->model().scale(n, NodeSignal::Wet, NodeChannel(c)) : 1.0f;
+                params.dryK[c]  = n.hasDryWet() ? m_preview->model().scale(n, NodeSignal::Dry, NodeChannel(c)) : 1.0f;
                 params.mainM[c] = slot(NodeSignal::Main);
                 params.wetM[c]  = slot(NodeSignal::Wet);
                 params.dryM[c]  = slot(NodeSignal::Dry);

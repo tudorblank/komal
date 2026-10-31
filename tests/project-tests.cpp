@@ -2,14 +2,15 @@
 #include "node/node-kinds.hpp"
 #include "helpers.hpp"
 
+#include <set>
 #include <vector>
 
 TEST_CASE("links: no cycles, the master feeds nothing, a slot takes one source")
 {
     StarterProject s;
     Project& p = s.project;
-    const NodeId m1 = p.createNode(NodeType::Move, 0, 0);
-    const NodeId m2 = p.createNode(NodeType::Move, 0, 0);
+    const NodeId m1 = p.addNode(NodeType::Move, 0, 0, {});
+    const NodeId m2 = p.addNode(NodeType::Move, 0, 0, {});
     CHECK(p.connect(m1, m2, InputSlot::input()));
     CHECK_FALSE(p.canConnect(m2, m1, InputSlot::input()));          // a cycle
     CHECK_FALSE(p.canConnect(m1, m1, InputSlot::input()));          // itself
@@ -25,7 +26,7 @@ TEST_CASE("deleting a node heals the links through it")
 {
     StarterProject s;
     Project& p = s.project;
-    const NodeId move = p.createNode(NodeType::Move, 0, 0);
+    const NodeId move = p.addNode(NodeType::Move, 0, 0, {});
     REQUIRE(p.connect(s.background, move, InputSlot::input()));
     REQUIRE(p.connect(move, s.master, InputSlot::stackLayer(0)));   // the move takes the background's place
     CHECK(p.master().layers()[0]->id() == move);
@@ -42,7 +43,7 @@ TEST_CASE("undo and redo restore the graph and its settings")
     Project& p = s.project;
     NodeId move = kNoNodeId;
     step(p, "Add", [&] {
-        move = p.createNode(NodeType::Move, 10, 20);
+        move = p.addNode(NodeType::Move, 10, 20, {});
         p.connect(s.background, move, InputSlot::input());
     });
     step(p, "Offset", [&] { p.setNodeSettings(move, MoveSettings{ 30, -5 }); });
@@ -76,12 +77,7 @@ TEST_CASE("a graph snapshot restores what changed since")
 {
     StarterProject s;
     Project& p = s.project;
-    const NodeId move = p.createNode(NodeType::Move, 0, 0);
-    const GraphState before = [&] {
-        p.beginStep("capture");   // snapshots are taken around steps: read the current one
-        p.endStep();
-        return *p.history().step(p.history().current()).graph;
-    }();
+    const NodeId move = p.addNode(NodeType::Move, 0, 0, {});   // outside any step: the next one captures it first
     step(p, "Change", [&] {
         p.setNodePosition(move, 50, 60);
         p.setNodeSettings(move, MoveSettings{ 4, 4 });
@@ -94,7 +90,6 @@ TEST_CASE("a graph snapshot restores what changed since")
     CHECK(static_cast<const MoveNode&>(m).offsetX() == 0);
     CHECK_FALSE(static_cast<const RasterRootNode*>(p.find(s.background))->locked());
     CHECK_FALSE(p.inputAt(move, InputSlot::input()));
-    (void)before;
 }
 
 TEST_CASE("a dragged value is previewed, then applied once or cancelled")
@@ -129,8 +124,9 @@ TEST_CASE("a stroke changes the raster once, when it ends: one undo step")
     const StrokePoint path[] = { { 120.0f, 100.0f, 1.0f }, { 140.0f, 100.0f, 1.0f } };
     p.strokeTo(path);
     REQUIRE(p.strokeActive());
-    REQUIRE(p.preview());
-    CHECK(p.preview()->stroke());
+    const EditPreview* painting = p.preview();
+    REQUIRE(painting);
+    CHECK(painting->stroke());
     CHECK(pixelOf(p, s.paint, 120, 100).a == 0);   // only the coverage grew
     CHECK_FALSE(p.stroke().coverage().getReadTile(1, 1) == nullptr);
     p.endStroke();
@@ -193,7 +189,12 @@ TEST_CASE("the selection follows the nodes: a deleted node leaves it")
     Project& p = s.project;
     CHECK(p.setSelection({ { s.background, s.paint }, s.background }));
     CHECK_FALSE(p.setSelection({ { s.background, s.paint }, s.background }));   // the same: no change
+    bool stale = false;   // whoever hears the node went sees it unselected already
+    const Connection c = p.changed.connect([&](const ProjectEvent& e) {
+        if (e.type == ProjectEventType::NodeRemoved && p.selection().contains(e.node)) stale = true;
+    });
     p.deleteNodes({ s.background });
+    CHECK_FALSE(stale);
     CHECK(p.selection().size() == 1);
     CHECK(p.selection().contains(s.paint));
     CHECK(p.selection().anchor() == kNoNodeId);
@@ -221,14 +222,18 @@ TEST_CASE("a dragged offset is the edit's alone: the Move keeps its own until ap
 {
     StarterProject s;
     Project& p = s.project;
-    const NodeId move = p.createNode(NodeType::Move, 0, 0);
+    const NodeId move = p.addNode(NodeType::Move, 0, 0, {});
     REQUIRE(p.connect(s.background, move, InputSlot::input()));
     const BoundsI before = p.find(move)->bounds();
     CHECK(p.previewEdit(OffsetEdit{ move, 100, 0 }));
     CHECK(static_cast<const MoveNode*>(p.find(move))->offsetX() == 0);
     CHECK(p.find(move)->bounds() == before);                  // the document waits, bounds too
-    CHECK(p.preview()->offsetOf(move)->x == 100);
-    CHECK_FALSE(p.preview()->offsetOf(s.background));
+    const EditPreview* pv = p.preview();
+    REQUIRE(pv);
+    const OffsetEdit* dragged = pv->offsetOf(move);
+    REQUIRE(dragged);
+    CHECK(dragged->x == 100);
+    CHECK_FALSE(pv->offsetOf(s.background));
     p.applyPreview();
     CHECK(static_cast<const MoveNode*>(p.find(move))->offsetX() == 100);
     CHECK(p.find(move)->bounds() == before.offsetBy(100, 0));
@@ -241,7 +246,7 @@ TEST_CASE("an edit that doesn't fit the document is refused")
     CHECK_FALSE(p.previewEdit(ScaleEdit{ s.paint, NodeSignal::Main, NodeChannel::A, 1.5f }));    // out of range
     CHECK_FALSE(p.previewEdit(ScaleEdit{ s.paint, NodeSignal::Wet, NodeChannel::A, 0.5f }));     // a raster has no wet
     CHECK_FALSE(p.previewEdit(OffsetEdit{ s.paint, 1, 1 }));                                     // not a Move
-    CHECK_FALSE(p.previewEdit(OffsetEdit{ p.createNode(NodeType::Move, 0, 0), 1 << 30, 0 }));    // out of the world
+    CHECK_FALSE(p.previewEdit(OffsetEdit{ p.addNode(NodeType::Move, 0, 0, {}), 1 << 30, 0 }));    // out of the world
     CHECK_FALSE(p.previewEdit(NodesMoveEdit{ { NodeId(999) }, 1.0f, 1.0f }));                    // not there
     CHECK_FALSE(p.previewEdit(LinkMoveEdit{ s.paint, s.master, InputSlot::stackLayer(0) }));     // that slot is fed by another
     CHECK_FALSE(p.previewEdit(StrokeEdit{ s.paint, 1 }));                                        // strokes begin with beginStroke()
@@ -277,7 +282,7 @@ TEST_CASE("a node's settings are its kind's own: anything else is refused")
 {
     StarterProject s;
     Project& p = s.project;
-    const NodeId move = p.createNode(NodeType::Move, 0, 0);
+    const NodeId move = p.addNode(NodeType::Move, 0, 0, {});
     CHECK(p.setNodeSettings(move, MoveSettings{ 3, 4 }));
     CHECK_FALSE(p.setNodeSettings(move, MoveSettings{ 3, 4 }));            // no change
     CHECK_FALSE(p.setNodeSettings(move, RasterSettings{ true, false }));   // not a Move's
@@ -290,25 +295,25 @@ TEST_CASE("a node's settings are its kind's own: anything else is refused")
 
 TEST_CASE("a kind's input shape comes from its class")
 {
-    CHECK(nodeKind(NodeType::Raster).inputs == InputShape::None);
-    CHECK(nodeKind(NodeType::Reference).inputs == InputShape::One);
-    CHECK(nodeKind(NodeType::Move).inputs == InputShape::One);
-    CHECK(nodeKind(NodeType::Compositor).inputs == InputShape::Stack);
+    CHECK(nodeKind(NodeType::Raster).ports.inputs == InputShape::None);
+    CHECK(nodeKind(NodeType::Reference).ports.inputs == InputShape::One);
+    CHECK(nodeKind(NodeType::Move).ports.inputs == InputShape::One);
+    CHECK(nodeKind(NodeType::Compositor).ports.inputs == InputShape::Stack);
 }
 
 TEST_CASE("links into a node: inputs, layers and masks, each with its slot")
 {
     StarterProject s;
     Project& p = s.project;
-    const NodeId move = p.createNode(NodeType::Move, 0, 0);
+    const NodeId move = p.addNode(NodeType::Move, 0, 0, {});
     REQUIRE(p.connect(s.background, move, InputSlot::input()));
     REQUIRE(p.connect(s.paint, move, InputSlot::mask(NodeSignal::Main, NodeChannel::A)));
-    const auto into = Links::into(*p.find(move));
+    const auto into = p.find(move)->links().all();
     REQUIRE(into.size() == 2);
     CHECK(into[0].first->id() == s.background);
     CHECK(into[0].second == InputSlot::input());
     CHECK(into[1].second == InputSlot::mask(NodeSignal::Main, NodeChannel::A));
-    const auto layers = Links::into(p.master());
+    const auto layers = p.master().links().all();
     REQUIRE(layers.size() == 2);
     CHECK(layers[1].second == InputSlot::stackLayer(1));
     InputSlot slot;
@@ -321,11 +326,121 @@ TEST_CASE("deleting a chain heals through every deleted node with one input")
 {
     StarterProject s;
     Project& p = s.project;
-    const NodeId a = p.createNode(NodeType::Move, 0, 0);
-    const NodeId b = p.createNode(NodeType::Reference, 0, 0);
+    const NodeId a = p.addNode(NodeType::Move, 0, 0, {});
+    const NodeId b = p.addNode(NodeType::Reference, 0, 0, {});
     REQUIRE(p.connect(s.background, a, InputSlot::input()));
     REQUIRE(p.connect(a, b, InputSlot::input()));
     REQUIRE(p.connect(b, s.master, InputSlot::stackLayer(0)));
     CHECK(p.deleteNodes({ a, b }));
     CHECK(p.master().layers()[0]->id() == s.background);
+}
+
+TEST_CASE("a history jump across a deleted raster keeps its pixels shown")
+{
+    // A stroke, undone; a branch deletes the raster; the History Tree jumps back to the stroke.
+    // The stroke's commit flips while the raster is out of the graph: it must come back drawn.
+    StarterProject s;
+    Project& p = s.project;
+    BrushParams brush;
+    brush.diameter = 20.0f;
+    step(p, "Stroke", [&] {
+        p.beginStroke(brush, { 2000.0f, 2000.0f, 1.0f });
+        const StrokePoint path[] = { { 2040.0f, 2000.0f, 1.0f } };
+        p.strokeTo(path);
+        p.endStroke();
+    });
+    const StepId stroked = p.history().current();
+    REQUIRE(p.undo());
+    (void)p.master().bounds();   // caches, as the views keep them
+    (void)p.find(s.paint)->bounds();
+    step(p, "Delete", [&] { p.deleteNodes({ s.paint }); });
+    REQUIRE(p.goToHistory(stroked));
+
+    const auto* r = static_cast<const RasterRootNode*>(p.find(s.paint));
+    REQUIRE(r);
+    CHECK(r->bounds() == r->raster().getBounds());
+    CHECK(p.master().bounds().contains(2020, 2000));
+    RenderCtx ctx;
+    const Tile* t = renderTile(p.master(), TileUtils::worldToTile(2020), TileUtils::worldToTile(2000), ctx);
+    REQUIRE(t);
+    CHECK(t->getReadPx(TileUtils::worldToLocal(2020), TileUtils::worldToLocal(2000)).a == 255);
+}
+
+TEST_CASE("an imported image is part of its step: undo takes it away, redo brings it back")
+{
+    StarterProject s;
+    Project& p = s.project;
+    TileGrid tiles;
+    TileEdit::fill(tiles.writeOrCreateTile(10, 10), RGBA{ 10, 20, 30, 255 });
+    NodeId imported = kNoNodeId;
+    step(p, "Import", [&] { imported = p.importTiles(tiles, "photo", {}); });
+    REQUIRE(p.find(imported));
+    CHECK(pixelOf(p, imported, 650, 650).a == 255);
+    REQUIRE(p.undo());
+    CHECK_FALSE(p.find(imported));
+    REQUIRE(p.redo());
+    REQUIRE(p.find(imported));
+    CHECK(pixelOf(p, imported, 650, 650).a == 255);
+}
+
+TEST_CASE("a lifted link lands where it's dropped, or nothing changes at all")
+{
+    StarterProject s;
+    Project& p = s.project;
+    // Within its own stack: at a position among the others (the stack without it).
+    CHECK(p.moveLink(s.background, s.master, InputSlot::stackLayer(0), s.master, InputSlot::newLayer(1)));
+    REQUIRE(p.master().layers().size() == 2);
+    CHECK(p.master().layers()[1]->id() == s.background);
+    CHECK_FALSE(p.canMoveLink(s.background, s.master, InputSlot::stackLayer(1), s.master, InputSlot::newLayer(2)));   // past the top, once lifted
+    CHECK_FALSE(p.canMoveLink(s.background, s.master, InputSlot::stackLayer(1), s.master, InputSlot::stackLayer(0)));  // onto another's row
+    // Somewhere it can't go: refused, and still linked.
+    CHECK_FALSE(p.moveLink(s.background, s.master, InputSlot::stackLayer(1), s.paint, InputSlot::input()));
+    CHECK(p.master().layers()[1]->id() == s.background);
+    // Off.
+    CHECK(p.moveLink(s.background, s.master, InputSlot::stackLayer(1), kNoNodeId, {}));
+    CHECK(p.master().layers().size() == 1);
+}
+
+TEST_CASE("a node is added with all of its wiring, or not at all")
+{
+    StarterProject s;
+    Project& p = s.project;
+    const size_t nodes = p.nodes().size();
+    // A raster takes no input: a Move made to feed one isn't made.
+    CHECK(p.addNode(NodeType::Move, 0, 0, { .from = s.paint, .into = s.background, .slot = InputSlot::input() }) == kNoNodeId);
+    CHECK(p.nodes().size() == nodes);
+    CHECK(p.addNode(NodeType::Raster, 0, 0, { .from = s.paint, .into = kNoNodeId, .slot = {} }) == kNoNodeId);   // nothing to feed
+    // Inserted into a link: fed by its source, feeding its slot.
+    const NodeId move = p.addNode(NodeType::Move, 0, 0, { .from = s.paint, .into = s.master, .slot = InputSlot::stackLayer(1) });
+    REQUIRE(move != kNoNodeId);
+    CHECK(p.inputAt(move, InputSlot::input())->id() == s.paint);
+    CHECK(p.master().layers()[1]->id() == move);
+}
+
+TEST_CASE("history steps share the states of the nodes they didn't change")
+{
+    StarterProject s;
+    Project& p = s.project;
+    std::vector<NodeId> extra;
+    step(p, "Add", [&] {
+        for (int i = 0; i < 200; ++i) extra.push_back(p.addNode(NodeType::Move, float(i), 0.0f, {}));
+    });
+    const size_t count = p.nodes().size();
+    for (int i = 0; i < 50; ++i) step(p, "Move", [&] { p.setNodePosition(extra[0], float(i), 100.0f); });
+    REQUIRE(p.history().size() == 52);
+
+    // Every step holds every node, but only the moved one's state is new each time.
+    std::set<const NodeState*> distinct;
+    for (size_t i = 0; i < p.history().size(); ++i)
+        for (const NodeStatePtr& n : p.history().step(StepId(i)).graph->nodes) distinct.insert(n.get());
+    CHECK(distinct.size() <= count + 3 + 50);   // the start's few, the add step's, one per move
+
+    // And they still come back exactly: undo the moves, then the add.
+    for (int i = 0; i < 50; ++i) REQUIRE(p.undo());
+    CHECK(p.find(extra[0])->x() == 0.0f);
+    CHECK(p.find(extra[0])->y() == 0.0f);
+    REQUIRE(p.undo());
+    CHECK_FALSE(p.find(extra[0]));
+    CHECK(p.redo());
+    CHECK(p.nodes().size() == count);
 }

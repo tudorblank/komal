@@ -16,6 +16,12 @@ void CanvasScene::shutdown()
     m_ready = false;
 }
 
+void CanvasScene::releaseGpu()
+{
+    for (auto& item : m_items) item->releaseGpu();
+    touch();
+}
+
 void CanvasScene::adopt(std::unique_ptr<CanvasItem> item)
 {
     item->m_scene = this;

@@ -27,24 +27,29 @@ public:
 
     bool init(const GpuDevice& gpu, const Project& project);   // false: no pipelines (nothing canvas draws)
     void shutdown();
+    // The GPU device is made again (it was lost): everything on it let go of, then made on the new
+    // one. The tiles' sources stay, and build again as they're shown.
+    void releaseGpu();
+    bool restoreGpu(const GpuDevice& gpu);
     bool ready() const { return m_ready; }
 
     void beginFrame();                               // once a frame: after the panels drew, before any view renders
     void renderThumbnails(WGPUCommandEncoder enc);   // once a frame: after the views rendered
-    double nextFrameIn() const { return m_thumbnails.nextFrameIn(); }   // base/frames.hpp
+    Clock::Seconds nextFrameIn() const { return m_thumbnails.nextFrameIn(); }   // base/frames.hpp
 
     enum class Work : uint8_t { Canvas, Navigator, Thumbnails };   // in the order they render
     Deadline budget(Work work) const;   // its share of this frame, at most what's left of it
 
     const CanvasPipelines& pipelines() const { return m_pipelines; }
     const TileCache& tiles() const { return m_tiles; }
+    bool outOfMemory() const { return m_tiles.outOfMemory(); }   // some of the picture has no room on the GPU
     const Preview&  preview() const { return m_preview; }
     const std::shared_ptr<RasterTiles>& outputTiles() const { return m_output; }   // the master's
     NodeThumbnails& thumbnails()  { return m_thumbnails; }
 
 private:
-    static constexpr double kFrameBudgetMs = 6.0;   // the whole: leaves room for the rest of the frame
-    static constexpr double kShareMs[] = { 4.0, 2.0, 3.0 };   // per Work
+    static constexpr Clock::Milliseconds kFrameBudget{ 6.0 };   // the whole: leaves room for the rest of the frame
+    static constexpr Clock::Milliseconds kShare[] = { Clock::Milliseconds(4.0), Clock::Milliseconds(2.0), Clock::Milliseconds(3.0) };   // per Work
 
 
     const Project*  m_project = nullptr;

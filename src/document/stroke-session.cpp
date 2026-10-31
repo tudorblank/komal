@@ -38,8 +38,9 @@ void StrokeSession::take()
         // already inside the bounds can't grow them.
         const int x0 = TileUtils::tileToWorld(tx), y0 = TileUtils::tileToWorld(ty);
         const BoundsI whole{ x0, y0, x0 + Tile::kSize - 1, y0 + Tile::kSize - 1 };
-        if (m_bounds.intersect(whole) == whole || !m_stroke.composeTile(*m_measure, nullptr, tx, ty)) continue;
-        const BoundsI& lb = m_measure->bounds();
+        if (m_bounds.intersect(whole) == whole) continue;
+        const BoundsI lb = m_stroke.coverBounds(tx, ty);
+        if (lb.empty()) continue;
         m_bounds.expand(BoundsI{ x0 + lb.minX, y0 + lb.minY, x0 + lb.maxX, y0 + lb.maxY });
     }
     m_log.push_back({ ++m_revision, std::move(tiles) });
@@ -51,6 +52,13 @@ bool StrokeSession::changesSince(uint64_t revision, TileSet& out) const
     for (const auto& [rev, tiles] : m_log)
         if (rev > revision) out.insert(tiles.begin(), tiles.end());
     return true;
+}
+
+void StrokeSession::discard()
+{
+    m_raster.reset();
+    m_stroke.end();
+    m_log.clear();
 }
 
 RasterCommitRef StrokeSession::end(GraphKey key)

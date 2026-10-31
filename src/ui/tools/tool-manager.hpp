@@ -3,7 +3,17 @@
 #include "ui/tools/tool.hpp"
 
 #include <memory>
+#include <string>
 #include <vector>
+
+// color.set's: the colour it sets, then the channels it changes (straight, 0..1; any left out stay).
+namespace ColorArgs {
+inline constexpr ArgKey<std::string> kTarget{ "target" };   // primary, secondary
+inline constexpr ArgKey<float> kR{ "r" };
+inline constexpr ArgKey<float> kG{ "g" };
+inline constexpr ArgKey<float> kB{ "b" };
+inline constexpr ArgKey<float> kA{ "a" };
+}
 
 // Owns the tools and the colours they share. active(): the picked tool, or the hand while Space
 // is held over the canvas.

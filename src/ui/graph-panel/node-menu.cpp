@@ -16,7 +16,7 @@ bool matches(const char* name, const char* search)
     const size_t n = std::strlen(name), m = std::strlen(search);
     for (size_t i = 0; i + m <= n; ++i) {
         size_t j = 0;
-        while (j < m && std::tolower((unsigned char)name[i + j]) == std::tolower((unsigned char)search[j])) ++j;
+        while (j < m && std::tolower(static_cast<unsigned char>(name[i + j])) == std::tolower(static_cast<unsigned char>(search[j]))) ++j;
         if (j == m) return true;
     }
     return m == 0;
@@ -45,7 +45,7 @@ bool NodeMenu::draw(NodeType& picked)
 
     std::vector<const NodeKind*> items;
     for (const NodeKind& k : nodeKinds()) {
-        if (m_fit == Fit::NeedsInput && k.inputs == InputShape::None) continue;   // every kind has an output
+        if (m_fit == Fit::NeedsInput && k.ports.inputs == InputShape::None) continue;   // every kind has an output
         if (matches(k.label, m_search)) items.push_back(&k);
     }
     // ImGui's keys: the search field owns the text focus.

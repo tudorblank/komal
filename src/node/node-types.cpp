@@ -9,20 +9,6 @@ std::shared_ptr<RasterRootNode> RasterRootNode::create(RasterData& r)
     return std::make_shared<RasterRootNode>(Private{}, r);
 }
 
-EditSummary RasterRootNode::edit(GraphKey, const std::function<void(RasterEditor&)>& body)
-{
-    RasterEditor ed(*m_raster);
-    try {
-        body(ed);
-    } catch (...) {
-        publish(ed.commit());   // the editor finalizes, and the graph is still told
-        throw;
-    }
-    EditSummary s = ed.commit();
-    publish(s);
-    return s;
-}
-
 RasterCommitId RasterRootNode::recordEdit(GraphKey, const std::function<void(RasterEditor&)>& body)
 {
     EditSummary s;
@@ -54,14 +40,6 @@ void RasterRootNode::publish(const EditSummary& s)
 }
 
 // ============================ ONE INPUT ============================
-bool UnaryNode::setInput(GraphKey, NodePtr in)
-{
-    if (in == m_input) return true;
-    if (!canDependOn(in)) return false;
-    change([&] { m_input = std::move(in); });
-    return true;
-}
-
 std::shared_ptr<ReferenceNode> ReferenceNode::create()
 {
     return std::make_shared<ReferenceNode>(Private{});
@@ -81,9 +59,9 @@ TileSet MoveNode::setOffset(GraphKey, int x, int y)
 
 void MoveNode::wetFootprint(TileSet& out)
 {
-    if (!m_input) return;
+    if (!input()) return;
     TileSet raw;
-    m_input->addFootprint(raw);
+    input()->addFootprint(raw);
     mapInputTiles(raw, out);
 }
 
@@ -99,9 +77,9 @@ void MoveNode::mapInputTiles(const TileSet& in, TileSet& out) const
 
 const Tile* MoveNode::fetchWet(int tx, int ty, RenderCtx& ctx)
 {
-    if (!m_input) return nullptr;
+    if (!input()) return nullptr;
     if (((m_x | m_y) & TileUtils::kTileMask) == 0)   // whole-tile shift: forward, zero-copy
-        return m_input->fetch(tx - (m_x >> TileUtils::kTileShift), ty - (m_y >> TileUtils::kTileShift), ctx);
+        return input()->fetch(tx - (m_x >> TileUtils::kTileShift), ty - (m_y >> TileUtils::kTileShift), ctx);
 
     Tile& out = ctx.take();   // sub-tile shift: up to 4 source tiles
     const TileSpan d = TileSpan::wholeTile(tx, ty);
@@ -110,7 +88,7 @@ const Tile* MoveNode::fetchWet(int tx, int ty, RenderCtx& ctx)
     {
         Tile::BulkWrite w(out, Tile::BulkWrite::Trusted);
         forEachTileSpan(d.worldBounds().offsetBy(-m_x, -m_y), [&](const TileSpan& s) {
-            if (const Tile* st = m_input->fetch(s.tx, s.ty, ctx)) {
+            if (const Tile* st = input()->fetch(s.tx, s.ty, ctx)) {
                 copySpanShifted(w.data(), *st, s, d, m_x, m_y);
                 w.markChanged();
                 any = true;
@@ -127,64 +105,10 @@ std::shared_ptr<CompositorNode> CompositorNode::create()
     return std::make_shared<CompositorNode>(Private{});
 }
 
-bool CompositorNode::addLayerAt(GraphKey, NodePtr in, size_t index)
-{
-    if (!in || !canDependOn(in) || has(in)) return false;
-    TileSet dirty;
-    in->addFootprint(dirty);
-    changeKnown(dirty, Bounds::Recompute, Evict::All,
-                [&] { m_layers.insert(m_layers.begin() + std::min(index, m_layers.size()), std::move(in)); });
-    return true;
-}
-
-void CompositorNode::removeLayer(GraphKey, size_t i)
-{
-    if (i >= m_layers.size()) return;
-    TileSet dirty;
-    m_layers[i]->addFootprint(dirty);
-    changeKnown(dirty, Bounds::Recompute, Evict::All, [&] { m_layers.erase(m_layers.begin() + i); });
-}
-
-TileSet CompositorNode::moveLayer(GraphKey, size_t from, size_t to)
-{
-    if (from >= m_layers.size() || to >= m_layers.size() || from == to) return {};
-    // Only tiles where the moved layer overlaps the layers it crosses can change.
-    TileSet moved, others;
-    m_layers[from]->addFootprint(moved);
-    for (size_t i = std::min(from, to); i <= std::max(from, to); ++i)
-        if (i != from) m_layers[i]->addFootprint(others);
-    TileSet dirty;
-    for (TileKey k : moved) if (others.contains(k)) dirty.insert(k);
-    return changeKnown(dirty, Bounds::Keep, Evict::All, [&] {
-        NodePtr n = std::move(m_layers[from]);
-        m_layers.erase(m_layers.begin() + from);
-        m_layers.insert(m_layers.begin() + to, std::move(n));
-    });
-}
-
-void CompositorNode::replaceInputInstance(GraphKey, const NodePtr& o, const NodePtr& n)
-{
-    auto it = std::find(m_layers.begin(), m_layers.end(), o);
-    if (o == n || it == m_layers.end() || !canDependOn(n)) return;
-    TileSet dirty;
-    o->addFootprint(dirty);
-    if (n) n->addFootprint(dirty);
-    const bool dup = n && has(n);
-    changeKnown(dirty, Bounds::Recompute, Evict::All, [&] { if (n && !dup) *it = n; else m_layers.erase(it); });
-}
-
-void CompositorNode::detachAllInputs(GraphKey)
-{
-    if (m_layers.empty()) return;
-    TileSet dirty;
-    for (auto& l : m_layers) l->addFootprint(dirty);
-    changeKnown(dirty, Bounds::Recompute, Evict::All, [&] { m_layers.clear(); });
-}
-
 BoundsI CompositorNode::wetBounds() const
 {
     BoundsI r;
-    for (auto& l : m_layers) r.expand(l->bounds());
+    for (auto& l : layers()) r.expand(l->bounds());
     return r;
 }
 
@@ -225,7 +149,7 @@ void CompositorNode::evictRawTile(int tx, int ty)
 
 const Tile* CompositorNode::composeTile(int tx, int ty, RenderCtx& ctx)
 {
-    return composeStack(m_layers.data(), m_layers.data() + m_layers.size(), tx, ty, ctx);
+    return composeStack(layers().data(), layers().data() + layers().size(), tx, ty, ctx);
 }
 
 const Tile* composeStack(const NodePtr* bottom, const NodePtr* top, int tx, int ty, RenderCtx& ctx)

@@ -7,6 +7,7 @@
 //   if (stroke.begin(raster, params, at)) ...   // started (the first dab stamped, if any)
 //   if (stroke.moveTo(path)) ...                // through every point: true if it stamped
 //   const RasterCommitRef c = stroke.end(key);  // the commit, if the pixels changed
+//   stroke.discard();                           // or nothing: the raster never changed
 
 #include "document/history.hpp"
 #include "node/node-types.hpp"
@@ -26,6 +27,7 @@ public:
     bool begin(std::shared_ptr<RasterRootNode> raster, const BrushParams& params, StrokePoint at);
     bool moveTo(std::span<const StrokePoint> path);   // false: nothing new stamped
     RasterCommitRef end(GraphKey key);   // {} if no stroke, or the pixels didn't change
+    void discard();                      // ends it without touching the raster
 
     // ---- while active, for the preview
     const TileGrid&    coverage() const { return m_stroke.scratch(); }   // white, premultiplied
@@ -46,5 +48,4 @@ private:
     uint64_t m_revision = 0;                             // never reset: readers from an older stroke see "everything"
     uint64_t m_began = 0;                                // the revision this stroke began at
     BoundsI  m_bounds;
-    std::unique_ptr<Tile> m_measure = std::make_unique<Tile>();   // take()'s scratch
 };

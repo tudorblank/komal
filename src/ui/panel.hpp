@@ -14,9 +14,8 @@
 
 #include <webgpu/webgpu.h>
 
+#include <functional>
 #include <string>
-
-struct SDL_Window;
 
 class ActionRegistry;
 class CanvasEngine;
@@ -52,11 +51,12 @@ struct PanelInfo {
     bool        openByDefault = true;
 };
 
-// What the app tells the interface about where it runs. The app keeps it current; panels read it.
+// What the app tells the interface about where it runs, and what the platform does for it. The
+// app keeps it current; panels read it.
 struct HostInfo {
-    SDL_Window* window  = nullptr;   // dialogs open over it
     float       uiScale = 1.0f;      // the window's content scale (the style is scaled by it too)
     std::string gpu;                 // the GPU and display, as text
+    std::function<void()> showImportDialog;   // picks image files, which arrive as imports (UserInterface::openFile)
 };
 
 // What every panel may use (Panel::ui()), from init() on. Everything lives as long as the panels.
@@ -82,7 +82,9 @@ public:
     virtual void shutdown() {}
     virtual void draw() = 0;                          // its window; nothing while closed
     virtual void renderGpu(WGPUCommandEncoder) {}     // its offscreen passes, after every draw
-    virtual double nextFrameIn() const { return kNoFrame; }   // base/frames.hpp; kNoFrame while closed
+    virtual void releaseGpu() {}                      // the GPU device is made again: its GPU objects go...
+    virtual void restoreGpu() {}                      // ... and are made on the new one (the engine's first)
+    virtual Clock::Seconds nextFrameIn() const { return kNoFrame; }   // base/frames.hpp; kNoFrame while closed
 
     bool isOpen() const { return m_open; }               // its View toggle (only) changes it
     const char* title() const { return m_title; }        // PanelInfo's

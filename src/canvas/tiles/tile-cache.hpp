@@ -8,6 +8,7 @@
 //
 // An entry nobody holds goes once it's been unused for a while; a removed node's go at once.
 
+#include "base/clock.hpp"
 #include "canvas/tiles/raster-tiles.hpp"
 
 #include <absl/container/flat_hash_map.h>
@@ -31,12 +32,15 @@ public:
     void sync();               // recycles the pages, then every entry follows its source
     void forget(NodeId id);    // a removed node's entries
     void release();            // every entry's GPU tiles and the pages; holders keep empty tiles
+    void releaseGpu();         // the GPU tiles and the pages, the entries kept: they build again as shown
 
     size_t tileCount() const;
     size_t pageCount() const { return m_pages.pageCount(); }
+    size_t bytes() const { return m_pages.bytes(); }   // the atlas pages' textures
+    bool   outOfMemory() const { return m_pages.full(); }   // a tile had no room on the GPU
 
 private:
-    static constexpr double kKeepSeconds = 30.0;   // an entry nobody holds, unused this long, goes
+    static constexpr Clock::Seconds kKeep{ 30.0 };   // an entry nobody holds, unused this long, goes
 
     struct Key {
         const Node* node;
@@ -47,7 +51,7 @@ private:
     struct Entry {
         NodeId id;
         std::shared_ptr<RasterTiles> tiles;
-        double lastUsed;   // Clock::seconds()
+        Clock::TimePoint lastUsed;
     };
 
     AtlasPages m_pages;    // before the entries, which free into it

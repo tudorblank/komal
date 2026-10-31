@@ -1,87 +1,19 @@
 #include "device.hpp"
+#include "base/dev-switches.hpp"
 #include "base/log.hpp"
 
-#include <SDL3/SDL.h>
 #include <webgpu/wgpu.h>
+#include <atomic>
 #include <cstring>
 #include <cstdlib>
 
-#if defined(_WIN32)
-  #ifndef WIN32_LEAN_AND_MEAN
-    #define WIN32_LEAN_AND_MEAN
-  #endif
-  #ifndef NOMINMAX
-    #define NOMINMAX
-  #endif
-  #include <windows.h>
-#endif
-
 namespace {
-
-WGPUSurface createSurface(WGPUInstance instance, SDL_Window* window, void** platformView)
-{
-    const SDL_PropertiesID props = SDL_GetWindowProperties(window);
-    *platformView = nullptr;
-
-#if defined(_WIN32)
-    WGPUSurfaceSourceWindowsHWND src{};
-    src.chain.sType = WGPUSType_SurfaceSourceWindowsHWND;
-    src.hinstance   = GetModuleHandleW(nullptr);
-    src.hwnd        = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
-
-    WGPUSurfaceDescriptor desc{};
-    desc.nextInChain = &src.chain;
-    return wgpuInstanceCreateSurface(instance, &desc);
-
-#elif defined(__APPLE__)
-    // SDL makes the Metal view and its CAMetalLayer: no Objective-C needed here.
-    (void)props;
-    SDL_MetalView view = SDL_Metal_CreateView(window);
-    if (!view) return nullptr;
-    *platformView = view;
-    WGPUSurfaceSourceMetalLayer src{};
-    src.chain.sType = WGPUSType_SurfaceSourceMetalLayer;
-    src.layer       = SDL_Metal_GetLayer(view);
-    WGPUSurfaceDescriptor desc{};
-    desc.nextInChain = &src.chain;
-    return wgpuInstanceCreateSurface(instance, &desc);
-
-#else   // Linux, BSDs: Wayland or X11
-    const char* driver = SDL_GetCurrentVideoDriver();
-    if (driver && std::strcmp(driver, "wayland") == 0) {
-        WGPUSurfaceSourceWaylandSurface src{};
-        src.chain.sType = WGPUSType_SurfaceSourceWaylandSurface;
-        src.display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr);
-        src.surface = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
-        WGPUSurfaceDescriptor desc{};
-        desc.nextInChain = &src.chain;
-        return wgpuInstanceCreateSurface(instance, &desc);
-    }
-    WGPUSurfaceSourceXlibWindow src{};
-    src.chain.sType = WGPUSType_SurfaceSourceXlibWindow;
-    src.display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr);
-    src.window  = (uint64_t)SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
-    WGPUSurfaceDescriptor desc{};
-    desc.nextInChain = &src.chain;
-    return wgpuInstanceCreateSurface(instance, &desc);
-#endif
-}
-
-void destroySurfaceView(void* platformView)
-{
-#if defined(__APPLE__)
-    if (platformView) SDL_Metal_DestroyView(static_cast<SDL_MetalView>(platformView));
-#else
-    (void)platformView;
-#endif
-}
-
 
 void logSv(const char* tag, WGPUStringView m)
 {
     if (!m.data) return;
     if (m.length == WGPU_STRLEN) Log::info("wgpu", "%s: %s", tag, m.data);
-    else Log::info("wgpu", "%s: %.*s", tag, (int)m.length, m.data);
+    else Log::info("wgpu", "%s: %.*s", tag, int(m.length), m.data);
 }
 
 struct AdapterRequest { WGPUAdapter adapter = nullptr; };
@@ -105,19 +37,26 @@ void onDevice(WGPURequestDeviceStatus status, WGPUDevice device, WGPUStringView 
 
 void onUncapturedError(const WGPUDevice*, WGPUErrorType, WGPUStringView msg, void*, void*)
 { logSv("error", msg); }
-void onDeviceLost(const WGPUDevice*, WGPUDeviceLostReason, WGPUStringView msg, void*, void*)
-{ logSv("device lost", msg); }
+// Lost for good (a driver reset, a GPU removed): the app makes everything again. Releasing it
+// ourselves (Destroyed, InstanceDropped) isn't a loss.
+void onDeviceLost(const WGPUDevice*, WGPUDeviceLostReason reason, WGPUStringView msg, void* lost, void*)
+{
+    if (reason == WGPUDeviceLostReason_Destroyed || reason == WGPUDeviceLostReason_InstanceDropped) return;
+    logSv("device lost", msg);
+    static_cast<std::atomic<bool>*>(lost)->store(true);
+}
 bool isSrgb(WGPUTextureFormat f)
 { return f == WGPUTextureFormat_BGRA8UnormSrgb || f == WGPUTextureFormat_RGBA8UnormSrgb; }
 
 }
 
-bool GpuDevice::init(SDL_Window* window)
+bool GpuDevice::init(const SurfaceMaker& makeSurface, int pixelW, int pixelH)
 {
+    m_lost = false;
     m_instance = wgpuCreateInstance(nullptr);
     if (!m_instance) { Log::error("gpu", "wgpuCreateInstance failed"); return false; }
 
-    m_surface = createSurface(m_instance, window, &m_surfaceView);
+    m_surface = makeSurface(m_instance);
     if (!m_surface) { Log::error("gpu", "surface creation failed"); return false; }
 
     // ---- adapter (wgpu-native completes this synchronously with AllowSpontaneous)
@@ -166,6 +105,7 @@ bool GpuDevice::init(SDL_Window* window)
     ddesc.uncapturedErrorCallbackInfo.callback = onUncapturedError;
     ddesc.deviceLostCallbackInfo.mode          = WGPUCallbackMode_AllowSpontaneous;
     ddesc.deviceLostCallbackInfo.callback      = onDeviceLost;
+    ddesc.deviceLostCallbackInfo.userdata1     = &m_lost;
     WGPURequestDeviceCallbackInfo dcb{};
     dcb.mode      = WGPUCallbackMode_AllowSpontaneous;
     dcb.callback  = onDevice;
@@ -185,22 +125,20 @@ bool GpuDevice::init(SDL_Window* window)
     m_supportedModes.assign(caps.presentModes, caps.presentModes + caps.presentModeCount);
     wgpuSurfaceCapabilitiesFreeMembers(caps);
 
-    // Present mode: default Fifo (vsync). Override with KOMAL_PRESENT_MODE=fifo|fifo_relaxed|mailbox|immediate
-    if (const char* pm = std::getenv("KOMAL_PRESENT_MODE")) {
+    // Present mode: Fifo (vsync), unless a developer switch asks for another (base/dev-switches).
+    const DevSwitches& dev = devSwitches();
+    if (!dev.presentMode.empty()) {
         WGPUPresentMode want = WGPUPresentMode_Fifo;
-        if      (!std::strcmp(pm, "mailbox"))      want = WGPUPresentMode_Mailbox;
-        else if (!std::strcmp(pm, "immediate"))    want = WGPUPresentMode_Immediate;
-        else if (!std::strcmp(pm, "fifo_relaxed")) want = WGPUPresentMode_FifoRelaxed;
+        if      (dev.presentMode == "mailbox")      want = WGPUPresentMode_Mailbox;
+        else if (dev.presentMode == "immediate")    want = WGPUPresentMode_Immediate;
+        else if (dev.presentMode == "fifo_relaxed") want = WGPUPresentMode_FifoRelaxed;
         for (WGPUPresentMode m : m_supportedModes)
             if (m == want) m_presentMode = want;
     }
+    if (dev.frameLatency >= 1 && dev.frameLatency <= 3) m_frameLatency = uint32_t(dev.frameLatency);
 
-    if (const char* fl = std::getenv("KOMAL_FRAME_LATENCY")) {
-        const int v = std::atoi(fl);
-        if (v >= 1 && v <= 3) m_frameLatency = (uint32_t)v;
-    }
-
-    SDL_GetWindowSizeInPixels(window, &m_width, &m_height);
+    m_width  = pixelW;
+    m_height = pixelH;
     configureSurface();
     return true;
 }
@@ -222,7 +160,7 @@ void GpuDevice::configureSurface()
     if (m_width <= 0 || m_height <= 0) return;
 
     WGPUSurfaceConfigurationExtras extras{};
-    extras.chain.sType = (WGPUSType)WGPUSType_SurfaceConfigurationExtras;
+    extras.chain.sType = static_cast<WGPUSType>(WGPUSType_SurfaceConfigurationExtras);
     extras.desiredMaximumFrameLatency = m_frameLatency;
 
     WGPUSurfaceConfiguration cfg{};
@@ -230,8 +168,8 @@ void GpuDevice::configureSurface()
     cfg.device      = m_device;
     cfg.format      = m_format;
     cfg.usage       = WGPUTextureUsage_RenderAttachment;
-    cfg.width       = (uint32_t)m_width;
-    cfg.height      = (uint32_t)m_height;
+    cfg.width       = uint32_t(m_width);
+    cfg.height      = uint32_t(m_height);
     cfg.alphaMode   = WGPUCompositeAlphaMode_Auto;
     cfg.presentMode = m_presentMode;
     wgpuSurfaceConfigure(m_surface, &cfg);
@@ -255,13 +193,18 @@ bool GpuDevice::acquire(GpuFrame& f)
         case WGPUSurfaceGetCurrentTextureStatus_SuccessSuboptimal:
             m_surfaceStale = true;   // still presentable, fix it up before the next frame
             break;
+        case WGPUSurfaceGetCurrentTextureStatus_DeviceLost:
+            m_lost = true;
+            if (f.surfaceTexture.texture) wgpuTextureRelease(f.surfaceTexture.texture);
+            f = GpuFrame{};
+            return false;
         case WGPUSurfaceGetCurrentTextureStatus_Outdated:
         case WGPUSurfaceGetCurrentTextureStatus_Lost:
             if (f.surfaceTexture.texture) wgpuTextureRelease(f.surfaceTexture.texture);
             f = GpuFrame{};
             configureSurface();
             return false;
-        default:   // Timeout, OutOfMemory, DeviceLost, Error
+        default:   // Timeout, OutOfMemory, Error
             if (f.surfaceTexture.texture) wgpuTextureRelease(f.surfaceTexture.texture);
             f = GpuFrame{};
             return false;
@@ -299,8 +242,6 @@ void GpuDevice::shutdown()
     if (m_queue)    { wgpuQueueRelease(m_queue);       m_queue = nullptr; }
     if (m_surface)  { wgpuSurfaceUnconfigure(m_surface);
                       wgpuSurfaceRelease(m_surface);   m_surface = nullptr; }
-    destroySurfaceView(m_surfaceView);
-    m_surfaceView = nullptr;
     if (m_device)   { wgpuDeviceRelease(m_device);     m_device = nullptr; }
     if (m_adapter)  { wgpuAdapterRelease(m_adapter);   m_adapter = nullptr; }
     if (m_instance) { wgpuInstanceRelease(m_instance); m_instance = nullptr; }

@@ -26,12 +26,16 @@ struct BrushParams {
     float         flow      = 1.0f;    // coverage each dab adds (builds up within the stroke)
     float         spacing   = 0.15f;   // distance between dabs, as a fraction of the diameter
     bool          antialias = true;    // off: hard pixel edges (pixel art; diameter 1 = single pixels)
-    RGBA          color     = { 255, 255, 255, 255 };   // straight alpha (as from a colour picker)
+    Color8        color     = { 255, 255, 255, 255 };   // straight (as from a colour picker)
     uint8_t       opacity   = 255;     // applied once to the whole stroke
     CompositeMode mode      = CompositeMode::Over;      // Over paints, Erase erases
     bool          keepAlpha = false;   // lock transparency: colour changes, alpha never (Erase does nothing)
     bool          pressureSize = true;    // pressure scales the diameter
     bool          pressureFlow = false;   // pressure scales the flow
+
+    // What the settings may be (hardness and the rest: 0..1); actions refuse anything else.
+    static constexpr float kMinDiameter = 1.0f, kMaxDiameter = 1024.0f;
+    static constexpr float kMinFlow = 0.01f, kMinSpacing = 0.02f;
 };
 
 class BrushStroke {
@@ -47,6 +51,9 @@ public:
 
     // `out` = `original` (pre-stroke, may be null) with the stroke applied. False if empty.
     bool composeTile(Tile& out, const Tile* original, int tx, int ty) const;
+    // Tile-local bounds of the pixels the stroke adds where there's nothing: what composeTile()
+    // over nothing covers, read off the coverage without composing.
+    BoundsI coverBounds(int tx, int ty) const;
 
 private:
     static constexpr int kDabTable  = 4096;

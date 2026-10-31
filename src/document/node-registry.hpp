@@ -20,8 +20,9 @@ public:
     Node*   find(NodeId id) const;
     NodePtr findPtr(NodeId id) const;
     bool    contains(NodeId id) const { return m_nodes.contains(id); }
-    RasterRootNode* rasterNode(RasterId id) const;   // null while its node is deleted
-    RasterData&     raster(RasterId id) { return m_rasters[size_t(id)]; }
+    // The node of a raster's data, deleted or not: its pixels change only through it, so a
+    // history jump that flips a deleted raster leaves its caches right for when it comes back.
+    RasterRootNode& rasterNode(RasterId id) const;
 
     // A new node of that kind (node-kinds.hpp) at (x, y) in the graph, named after its kind; a
     // kind that owns pixels gets its own data and a number ("Raster 3", never reused).
@@ -29,13 +30,17 @@ public:
     void   remove(NodeId id);
     void   restore(NodePtr n);                 // a removed node back, with its id
 
+    // What every raster's pixels hold (in the graph or not), and their history's tiles.
+    struct PixelBytes { size_t pixels = 0, history = 0; };
+    PixelBytes pixelBytes() const;
+
 private:
-    void index(const NodePtr& n);   // by id, and a raster by its data
+    void index(const NodePtr& n);   // by id
 
     std::deque<RasterData> m_rasters;   // first, destroyed last: raster nodes point into it. RasterId == index
+    std::vector<std::shared_ptr<RasterRootNode>> m_rasterNodes;   // by RasterId, whether in the graph or not
     std::vector<NodePtr> m_order;
     absl::flat_hash_map<NodeId, NodePtr> m_nodes;
-    absl::flat_hash_map<RasterId, NodeId> m_rasterNodes;
     uint32_t m_nextId = 1;     // the next node's id
     uint32_t m_numbered = 0;   // nodes named with a number so far
 };

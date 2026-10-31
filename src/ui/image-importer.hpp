@@ -5,7 +5,7 @@
 //   OnCanvas   dropped on the canvas: centred on that world point, on top of the master, active
 //   InGraph    dropped on the graph: the node where it was dropped, at the world origin, unlinked
 //
-// open() is thread-safe (the native file dialog answers on its own thread). Requests and finished
+// open() is thread-safe (the platform's file dialog answers on its own thread). Requests and finished
 // work wake the main loop, so nothing waits on frames meanwhile.
 
 #include "base/worker-pool.hpp"
@@ -21,7 +21,6 @@
 #include <vector>
 
 class ActionRegistry;
-struct SDL_Window;
 
 class ImageImporter {
 public:
@@ -37,7 +36,6 @@ public:
 
     void open(std::string path);   // ToMaster
     void open(std::string path, Placement placement);
-    void showOpenDialog(SDL_Window* window);    // File > Import Image...
     Polled poll(ActionRegistry& actions);   // once per frame, main thread
 
 private:
@@ -48,8 +46,9 @@ private:
         Request request;
         bool ok = false;                       // written on the worker before `finished`
         std::atomic<bool> finished{ false };   // set last on the worker, then the loop is woken
-        ImageFile image;       // decoded...
+        DecodedImage image;    // decoded...
         TileGrid tiles;        // ...and cut into tiles where it goes, on the worker
+        std::string name;      // the file's, without its extension
         std::string error;
     };
     static bool importOnWorker(Job& j);   // decodes and tiles it

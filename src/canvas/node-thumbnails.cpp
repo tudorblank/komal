@@ -1,4 +1,5 @@
 #include "canvas/node-thumbnails.hpp"
+#include "canvas/imgui-texture.hpp"
 #include "gfx/render-pass.hpp"
 #include "base/perf.hpp"
 #include "base/frames.hpp"
@@ -40,12 +41,14 @@ bool NodeThumbnails::get(NodeId id, View& out)
     const Thumb& t = *it->second;
     out.empty = t.empty;
     if (t.empty) return true;
-    const float x = float(m_pages.originX(t.slot) + t.fitX), y = float(m_pages.originY(t.slot) + t.fitY);
-    out.texture = (ImTextureID)(uintptr_t)m_pages.texture(t.slot.page).view();
-    out.uv0     = ImVec2(x / kPageSize, y / kPageSize);
-    out.uv1     = ImVec2((x + t.fitW) / kPageSize, (y + t.fitH) / kPageSize);
-    out.fit0    = ImVec2(float(t.fitX) / kWidth, float(t.fitY) / kHeight);
-    out.fit1    = ImVec2(float(t.fitX + t.fitW) / kWidth, float(t.fitY + t.fitH) / kHeight);
+    const PictureFit& f = t.fit;
+    const float x = float(m_pages.originX(t.slot)) + float(f.x), y = float(m_pages.originY(t.slot)) + float(f.y);
+    const ImageUv uv = pictureUv(x, y, float(f.width), float(f.height), kPageSize, kPageSize);
+    out.texture = imguiTexture(m_pages.texture(t.slot.page).view());
+    out.uv0     = uv.uv0;
+    out.uv1     = uv.uv1;
+    out.fit0    = ImVec2(float(f.x) / kWidth, float(f.y) / kHeight);
+    out.fit1    = ImVec2(float(f.x + f.width) / kWidth, float(f.y + f.height) / kHeight);
     return true;
 }
 
@@ -97,7 +100,7 @@ void NodeThumbnails::refresh(const Project& project, const Deadline& budget)
             continue;
         }
         const bool complete = update(*n, t, budget);
-        if (!complete) m_nextFrameIn = 0.0;   // the rest stay requested by being drawn again
+        if (!complete) m_nextFrameIn = kFrameNow;   // the rest stay requested by being drawn again
         if (t.empty) { t.shown = true; continue; }
         if (complete && (t.stale || t.tiles->revision(t.level) != t.seen) && prepareRender(t)) m_toRender.push_back(id);
     }
@@ -128,19 +131,15 @@ bool NodeThumbnails::prepareRender(Thumb& t)
 
     // Fitted, proportions kept, centred in the slot.
     const BoundsI& b = t.bounds;
-    const PictureFit fit = fitInto(b, kWidth, kHeight);
-    t.fitW = int(fit.width);
-    t.fitH = int(fit.height);
-    t.fitX = (kWidth - t.fitW) / 2;
-    t.fitY = (kHeight - t.fitH) / 2;
+    t.fit = fitInto(b, kWidth, kHeight);
 
-    // World -> the picture's viewport.
-    const float sx = float(t.fitW) / float(b.width()), sy = float(t.fitH) / float(b.height());
-    const Mat4 viewProj = Mat4::ortho(float(t.fitW), float(t.fitH)) * Mat4::translateScale(-float(b.minX) * sx, -float(b.minY) * sy, sx, sy);
+    // World -> the picture's viewport (as the preview's PreviewSpace::fitted maps it).
+    const float k = t.fit.scale;
+    const Mat4 viewProj = Mat4::ortho(float(t.fit.width), float(t.fit.height)) * Mat4::translateScale(-float(b.minX) * k, -float(b.minY) * k, k, k);
     t.camera.write(ctx.queue, viewProj.m, sizeof(viewProj.m));
 
     // In page pixels: the pattern starts at the picture's corner.
-    const CheckerParams c = pictureChecker(float(m_pages.originX(t.slot) + t.fitX), float(m_pages.originY(t.slot) + t.fitY));
+    const CheckerParams c = pictureChecker(float(m_pages.originX(t.slot)) + float(t.fit.x), float(m_pages.originY(t.slot)) + float(t.fit.y));
     t.checker.write(ctx.queue, &c, sizeof c);
 
     const float size = float(Tile::kSize << t.level);
@@ -173,7 +172,7 @@ void NodeThumbnails::renderGpu(WGPUCommandEncoder enc)
         const GpuRenderPass pass(enc, m_pages.texture(page).view(), GpuRenderPass::Load::Keep, "Thumbnails Pass");
         for (; i < thumbs.size() && thumbs[i]->slot.page == page; ++i) {
             Thumb& t = *thumbs[i];
-            pass.confine(uint32_t(m_pages.originX(t.slot) + t.fitX), uint32_t(m_pages.originY(t.slot) + t.fitY), uint32_t(t.fitW), uint32_t(t.fitH));
+            pass.confine(uint32_t(m_pages.originX(t.slot)) + t.fit.x, uint32_t(m_pages.originY(t.slot)) + t.fit.y, t.fit.width, t.fit.height);
             wgpuRenderPassEncoderSetPipeline(pass, m_pipelines->checkerPipeline);
             wgpuRenderPassEncoderSetBindGroup(pass, 0, t.checker.group, 0, nullptr);
             wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
@@ -200,7 +199,7 @@ void NodeThumbnails::renderPreview(WGPUCommandEncoder enc, NodeId id, Thumb& t)
         t.empty = t.shown = t.stale = true;
         return;
     case PreviewPicture::Result::Waiting:
-        m_nextFrameIn = 0.0;
+        m_nextFrameIn = kFrameNow;
         return;
     case PreviewPicture::Result::NotReached:
     case PreviewPicture::Result::Unchanged:
@@ -208,16 +207,13 @@ void NodeThumbnails::renderPreview(WGPUCommandEncoder enc, NodeId id, Thumb& t)
     }
     if (!t.slot) t.slot = m_pages.allocate(m_pipelines->ctx.device);
     if (!t.slot) return;
-    t.fitW = int(picture->width());
-    t.fitH = int(picture->height());
-    t.fitX = (kWidth - t.fitW) / 2;
-    t.fitY = (kHeight - t.fitH) / 2;
+    t.fit = picture->fit();
     WGPUTexelCopyTextureInfo src{};
     src.texture = picture->texture().texture();
     WGPUTexelCopyTextureInfo dst{};
     dst.texture = m_pages.texture(t.slot.page).texture();
-    dst.origin  = { uint32_t(m_pages.originX(t.slot) + t.fitX), uint32_t(m_pages.originY(t.slot) + t.fitY), 0 };
-    const WGPUExtent3D size = { uint32_t(t.fitW), uint32_t(t.fitH), 1 };
+    dst.origin  = { uint32_t(m_pages.originX(t.slot)) + t.fit.x, uint32_t(m_pages.originY(t.slot)) + t.fit.y, 0 };
+    const WGPUExtent3D size = { t.fit.width, t.fit.height, 1 };
     wgpuCommandEncoderCopyTextureToTexture(enc, &src, &dst, &size);
     t.empty = false;
     t.shown = true;

@@ -2,7 +2,7 @@
 // The stroke being painted, as a TileSource: its coverage so far (Project::stroke()), the tiles
 // stamped since it last asked. A preview's leaf: the stroke over its raster, on the GPU.
 
-#include "canvas/tiles/tile-source.hpp"
+#include "node/tile-source.hpp"
 
 class Project;
 

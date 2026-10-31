@@ -1,4 +1,5 @@
 #include "base/worker-pool.hpp"
+#include "base/log.hpp"
 
 #include <utility>
 
@@ -37,7 +38,11 @@ void WorkerPool::work()
         std::function<void()> job = std::move(m_jobs.front());
         m_jobs.pop_front();
         lock.unlock();
-        job();
+        try {
+            job();
+        } catch (...) {   // a job reports its own failures; one that throws is dropped, not the app
+            Log::error("worker", "a background job threw: dropped");
+        }
         lock.lock();
     }
 }

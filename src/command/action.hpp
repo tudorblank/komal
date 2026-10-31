@@ -9,6 +9,7 @@
 #include <functional>
 #include <string>
 #include <type_traits>
+#include <typeinfo>
 #include <vector>
 
 enum class ActionScope : uint8_t {
@@ -69,7 +70,9 @@ struct Action {
     std::vector<ArgSpec> args{};         // what it takes (a gesture: what it begins with); checked before it runs
     std::vector<ArgSpec> endArgs{};      // a gesture: what it ends with (its end sees both)
     std::vector<ArgSpec> updateArgs{};   // a gesture: what each update takes (checked like the rest)
-    std::vector<Shortcut> shortcuts{};   // the first is the one shown; none: menus only
+    const std::type_info* payload = nullptr;         // bulk data it runs (or begins) with, of this type (null: none)
+    const std::type_info* updatePayload = nullptr;   // a gesture: what each update carries (null: none)
+    std::vector<Shortcut> shortcuts{};   // bound by the keymap (ActionRegistry::bind), never here; the first is shown
     std::string mouse{};                 // how the mouse runs it where it's detected ("Double-click"): shown without a key
     ActionScope scope = ActionScope::Global;
     bool repeats  = false;               // fires again while its keys are held (the OS's key repeat)

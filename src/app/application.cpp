@@ -1,6 +1,7 @@
 #include "application.hpp"
 #include "app/window-icon.hpp"
 #include "app/window-state.hpp"
+#include "base/dev-switches.hpp"
 #include "base/log.hpp"
 #include "base/palette.hpp"
 #include "base/perf.hpp"
@@ -90,11 +91,10 @@ bool Application::init(const char* title, int width, int height)
     setWindowIcon(m_window);
 
     // ---- project (CPU)
-    m_project.init();
+    m_editor.project().init();
 
     // ---- GPU init (wgpu)
-    if (!m_gpu.init(m_window))
-        return false;
+    if (!initGpu()) return false;
 
     // ---- UI init (ImGui)
     IMGUI_CHECKVERSION();
@@ -111,7 +111,29 @@ bool Application::init(const char* title, int width, int height)
 
     // ---- ImGui on the GPU
     ImGui_ImplSDL3_InitForOther(m_window);
+    initImGuiRenderer();
+    m_imguiReady = true;
 
+    // ---- the interface
+    m_host.showImportDialog = [this] { showImportDialog(); };
+    if (!m_userInterface.init(m_gpu, m_editor.project(), m_input.frame(), m_host))
+        Log::error("ui", "init failed (canvas viewport disabled)");
+    applyContentScale();
+    
+    m_gpuResetAt = devSwitches().gpuResetAt;
+    m_running = true;
+    return true;
+}
+
+bool Application::initGpu()
+{
+    int pw = 0, ph = 0;
+    SDL_GetWindowSizeInPixels(m_window, &pw, &ph);
+    return m_gpu.init([this](WGPUInstance instance) { return m_surface.create(instance, m_window); }, pw, ph);
+}
+
+void Application::initImGuiRenderer()
+{
     ImGui_ImplWGPU_InitInfo wgpuInfo;
     wgpuInfo.Device             = m_gpu.device();
     wgpuInfo.NumFramesInFlight  = 3;
@@ -119,26 +141,36 @@ bool Application::init(const char* title, int width, int height)
     wgpuInfo.DepthStencilFormat = WGPUTextureFormat_Undefined;
     ImGui_ImplWGPU_Init(&wgpuInfo);
 
-    {
-        const SDL_DisplayMode* dm = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(m_window));
-        char buf[512];
-        std::snprintf(buf, sizeof buf,
-                      "%s\nSDL video driver: %s | display: %.2f Hz | present: %s, latency %u | scale: %.2f x %.2f",
-                      m_gpu.adapterInfo().c_str(), SDL_GetCurrentVideoDriver(),
-                      dm ? dm->refresh_rate : 0.0f, m_gpu.presentModeName(), m_gpu.frameLatency(),
-                      SDL_GetWindowPixelDensity(m_window), contentScale(m_window));
-        m_host.gpu = buf;
-        Log::info("gpu", "%s", buf);
-    }
-    m_imguiReady = true;
+    const SDL_DisplayMode* dm = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(m_window));
+    char buf[512];
+    std::snprintf(buf, sizeof buf,
+                  "%s\nSDL video driver: %s | display: %.2f Hz | present: %s, latency %u | scale: %.2f x %.2f",
+                  m_gpu.adapterInfo().c_str(), SDL_GetCurrentVideoDriver(),
+                  dm ? dm->refresh_rate : 0.0f, m_gpu.presentModeName(), m_gpu.frameLatency(),
+                  SDL_GetWindowPixelDensity(m_window), contentScale(m_window));
+    m_host.gpu = buf;
+    Log::info("gpu", "%s", buf);
+}
 
-    // ---- the interface
-    m_host.window = m_window;
-    if (!m_userInterface.init(m_gpu, m_project, m_input.frame(), m_host))
-        Log::error("ui", "init failed (canvas viewport disabled)");
-    applyContentScale();
-    
-    m_running = true;
+bool Application::rebuildGpu()
+{
+    Log::error("gpu", "the GPU device was lost: making everything on it again");
+    if (m_imguiGpu) {   // what's on the old device goes, ImGui's too (its textures come back by themselves)
+        m_userInterface.releaseGpu();
+        ImGui_ImplWGPU_Shutdown();
+        m_imguiGpu = false;
+    }
+    m_gpu.shutdown();
+    m_surface.release();
+    if (!initGpu()) {   // no device yet (a driver still resetting): tried again in a while
+        m_gpu.shutdown();
+        m_surface.release();
+        return false;
+    }
+    initImGuiRenderer();
+    m_imguiGpu = true;
+    if (!m_userInterface.restoreGpu(m_gpu)) Log::error("ui", "the canvas couldn't be made on the new device");
+    m_userInterface.notice("The GPU was reset: the picture is being drawn again");
     return true;
 }
 
@@ -156,26 +188,26 @@ int Application::exec()
     return 0;
 }
 
-double Application::nextFrameIn() const
+Clock::Seconds Application::nextFrameIn() const
 {
-    if (m_framesAfterInput > 0) return 0.0;
+    if (m_framesAfterInput > 0) return kFrameNow;
     return std::min(m_userInterface.nextFrameIn(), m_imguiFeed.nextFrameIn(m_frameStart, m_input.frame()));
 }
 
 void Application::waitForFrame()
 {
     if (m_noImage) {   // no swapchain image last time (zero size, surface rebuilt): retry after input, else now and then
-        if (m_framesAfterInput == 0) SDL_WaitEventTimeout(nullptr, kNoImageRetryMs);
+        if (m_framesAfterInput == 0) SDL_WaitEventTimeout(nullptr, Sint32(kNoImageRetry.count()));
         return;
     }
-    const double next = nextFrameIn();
-    if (next <= 0.0) return;
+    const Clock::Seconds next = nextFrameIn();
+    if (next <= kFrameNow) return;
     if (next == kNoFrame) {
         SDL_WaitEvent(nullptr);   // until input; leaves the event queued for processEvents()
         return;
     }
-    const double left = next - Clock::msSince(m_frameStart) / 1000.0;
-    if (left > 0.0) SDL_WaitEventTimeout(nullptr, Sint32(std::ceil(left * 1000.0)) + 1);   // just past it: no wake too early
+    const Clock::Milliseconds left = next - Clock::since(m_frameStart);
+    if (left > kFrameNow) SDL_WaitEventTimeout(nullptr, Sint32(std::ceil(left.count())) + 1);   // just past it: no wake too early
 }
 
 bool Application::processEvents()
@@ -216,6 +248,19 @@ void Application::handleEvent(const SDL_Event& e)
     }
 }
 
+void Application::showImportDialog()
+{
+    static const SDL_DialogFileFilter kFilters[] = {
+        { "Images", "png;jpg;jpeg;bmp;tga;psd;gif" },
+        { "All files", "*" },
+    };
+    // Answers on its own thread: openFile() is safe from any.
+    SDL_ShowOpenFileDialog([](void* self, const char* const* files, int) {
+        if (!files) return;   // an error, or cancelled
+        for (; *files; ++files) static_cast<Application*>(self)->m_userInterface.openFile(*files);
+    }, this, m_window, kFilters, 2, nullptr, true);
+}
+
 void Application::applyContentScale()
 {
     const float scale = contentScale(m_window);
@@ -226,6 +271,12 @@ void Application::applyContentScale()
 
 void Application::renderFrame()
 {
+    if (m_gpuResetAt > 0 && ++m_framesDrawn == m_gpuResetAt) m_gpu.simulateLoss();
+    if (m_gpu.lost() && !rebuildGpu()) {
+        m_noImage = true;   // waitForFrame() spaces the retries out
+        processEvents();
+        return;
+    }
     int w = 0, h = 0;
     SDL_GetWindowSizeInPixels(m_window, &w, &h);
     m_gpu.resize(w, h);
@@ -248,8 +299,8 @@ void Application::renderFrame()
     ImGui_ImplSDL3_NewFrame();
     
     ImGuiIO& io = ImGui::GetIO();
-    io.DisplaySize = ImVec2((float)frame.width  / io.DisplayFramebufferScale.x,
-                            (float)frame.height / io.DisplayFramebufferScale.y);
+    io.DisplaySize = ImVec2(float(frame.width)  / io.DisplayFramebufferScale.x,
+                            float(frame.height) / io.DisplayFramebufferScale.y);
     ImGui::NewFrame();
 
     m_userInterface.draw();
@@ -265,12 +316,13 @@ void Application::renderFrame()
         ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), pass);
     }
     m_gpu.present(frame);
+    m_input.consumed();   // this frame's input was read
 
     // Frames still owed to this input (nextFrameIn()).
     m_framesAfterInput = input ? kFramesAfterInput : std::max(0, m_framesAfterInput - 1);
 
-    Perf::add(Perf::Acquire, Clock::msBetween(t0, t1));
-    Perf::add(Perf::Frame, Clock::msSince(t1));
+    Perf::add(Perf::Acquire, Clock::between(t0, t1));
+    Perf::add(Perf::Frame, Clock::since(t1));
     Perf::endFrame();
 }
 
@@ -278,12 +330,14 @@ void Application::shutdown()
 {
     m_userInterface.shutdown();
     if (m_imguiReady) {
-        ImGui_ImplWGPU_Shutdown();
+        if (m_imguiGpu) ImGui_ImplWGPU_Shutdown();
+        m_imguiGpu = false;
         ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext();
         m_imguiReady = false;
     }
     m_gpu.shutdown();
+    m_surface.release();
     if (m_window) {
         if (!m_prefDir.empty())
             WindowState{ m_normalW, m_normalH, (SDL_GetWindowFlags(m_window) & SDL_WINDOW_MAXIMIZED) != 0 }.save(m_prefDir + "window.cfg");

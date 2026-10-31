@@ -10,10 +10,19 @@
 // node's output as greyscale over white (transparent = untouched, opaque black = 0).
 // Main.A is the opacity.
 //
+// What feeds a node is its links (NodeLinks), landing on its ports: its kind declares them (Ports:
+// nothing, one input or a stack feeding its wet, and a mask per channel of each signal it has).
+// Links change in one place, Node::link / unlink / moveLayer / setLinks, which knows each port's
+// rules: what may land there, and which tiles change when it does.
+//
 // Edits never recompute eagerly: they mark tiles dirty down to every listener (inputs and
-// masks). Rendering pulls. Readers outside the graph (GPU copies of an output: the canvas, a
-// thumbnail) follow a node's output tile by tile through a TileWatch.
+// masks), each listener once per change, in an order where a node comes after everything it
+// reads (Kahn's algorithm over what's downstream, kept until a link below it changes). Rendering
+// pulls. Readers outside the graph (GPU copies of an output: the canvas, a thumbnail) follow a
+// node's output tile by tile through a TileWatch.
 
+#include "node/input-slot.hpp"
+#include "node/signals.hpp"
 #include "raster/raster-data.hpp"
 
 #include <array>
@@ -30,11 +39,7 @@ using NodePtr = std::shared_ptr<Node>;
 enum class NodeId : uint32_t {};   // assigned by the Project, never reused; its own type: never mixed up with another number
 constexpr NodeId kNoNodeId{};
 
-enum class NodeType    : uint8_t { Raster, Reference, Move, Compositor };
-enum class NodeSignal  : uint8_t { Main, Dry, Wet };
-enum class NodeChannel : uint8_t { A, R, G, B };
-constexpr int kSignalCount  = 3;
-constexpr int kChannelCount = 4;
+enum class NodeType : uint8_t { Raster, Reference, Move, Compositor };
 
 // A kind's own settings, beyond its signals and links: one struct per kind that has any. The node
 // owns them (Node::settings / setSettings); history snapshots them and the graph's controls show
@@ -53,14 +58,33 @@ struct MoveSettings {
 };
 using NodeSettings = std::variant<NoSettings, RasterSettings, MoveSettings>;
 
+// What a kind's links can land on (its class declares them: kPorts). Every signal it has takes a
+// mask per channel besides.
+enum class InputShape : uint8_t {
+    None,    // nothing feeds its wet: it makes its own pixels (a raster)
+    One,     // one input
+    Stack,   // a stack of layers, bottom first, each node at most once
+};
+struct Ports {
+    InputShape inputs = InputShape::None;
+    bool       dryWet = false;   // an effect: Dry and Wet signals besides Main
+};
+
+// Everything that feeds a node: its input (InputShape::One), its layers, bottom first (Stack), and
+// its masks (null: none). Only the parts its ports have are ever set.
+struct NodeLinks {
+    NodePtr input;
+    std::vector<NodePtr> layers;
+    NodePtr masks[kSignalCount][kChannelCount] = {};
+
+    // Every link with the slot it lands on: the input, the layers bottom first, then the masks.
+    std::vector<std::pair<NodePtr, InputSlot>> all() const;
+    bool empty() const;   // nothing feeds it
+    bool operator==(const NodeLinks&) const = default;
+};
+
 struct SignalChannels {
-    float   scale[kChannelCount] = { 1, 1, 1, 1 };   // A, R, G, B in 0..1
-    NodePtr mask[kChannelCount]  = {};
-    bool isIdentity() const
-    {
-        for (int i = 0; i < kChannelCount; ++i) if (scale[i] != 1.0f || mask[i]) return false;
-        return true;
-    }
+    float scale[kChannelCount] = { 1, 1, 1, 1 };   // A, R, G, B in 0..1
 };
 
 // Per-tile channel gain: factor(i) = perPixel ? mul255(k, perPixel[i]) : k.
@@ -143,7 +167,7 @@ class GraphKey {
 // ============================ NODE ============================
 class Node : public std::enable_shared_from_this<Node> {
 public:
-    Node();
+    explicit Node(Ports ports);   // its kind's (its class's kPorts)
     virtual ~Node() = default;
     Node(const Node&) = delete;
     Node& operator=(const Node&) = delete;
@@ -163,8 +187,6 @@ public:
     virtual void setSettings(GraphKey, const NodeSettings&) {}   // its own kind's struct (validated by the caller)
 
     // ---------- what a subclass implements (raw signals; the base applies gains and masks)
-    virtual bool hasDryWet() const { return false; }   // effect nodes
-    virtual std::span<const NodePtr> inputs() const { return {}; }
     virtual BoundsI wetBounds() const = 0;
     virtual const Tile* fetchWet(int tx, int ty, RenderCtx& ctx) = 0;
     virtual void wetFootprint(TileSet& out) = 0;
@@ -187,37 +209,47 @@ public:
     virtual void evictRawTile(int, int) {}      // caches derived from inputs
     virtual void evictOutputTile(int, int) {}   // caches of post-signal output
 
-    // ---------- signals / masks
+    // ---------- signals
     const SignalChannels& signal(NodeSignal s) const { return m_signals[int(s)]; }
+    bool hasDryWet() const { return m_ports.dryWet; }   // an effect
     bool hasSignal(NodeSignal s) const { return s == NodeSignal::Main || hasDryWet(); }
     bool wetOn() const { return !hasDryWet() || gainByte(m_signals[int(NodeSignal::Wet)].scale[0]) != 0; }
     bool dryOn() const { return hasDryWet() && gainByte(m_signals[int(NodeSignal::Dry)].scale[0]) != 0; }
-    bool isPassthrough() const
-    { return signal(NodeSignal::Main).isIdentity() && signal(NodeSignal::Wet).isIdentity() && !dryOn(); }
+    bool isPassthrough() const { return signalIsIdentity(NodeSignal::Main) && signalIsIdentity(NodeSignal::Wet) && !dryOn(); }
+    void setScale(GraphKey, NodeSignal sig, NodeChannel ch, float v);   // ignored for a signal the node lacks
 
-    void setScale(GraphKey, NodeSignal sig, NodeChannel ch, float v);         // ignored for a signal the node lacks
-    bool linkMask(GraphKey, NodePtr mask, NodeSignal sig, NodeChannel ch);   // nullptr unlinks; false: cycle, or no such signal
-    bool hasMasks() const;
-    bool clearMasksTo(GraphKey, const NodePtr& n);   // drops every mask slot that points at n
-    void unlinkAllMasks(GraphKey);
+    // ---------- links: what feeds it (NodeLinks), on its ports
+    const Ports&     ports() const { return m_ports; }
+    const NodeLinks& links() const { return m_links; }
+    std::span<const NodePtr> inputs() const;           // what feeds its wet: its input, or its layers
+    const NodePtr& mask(NodeSignal s, NodeChannel c) const { return m_links.masks[int(s)][int(c)]; }
+    NodePtr linkAt(const InputSlot& slot) const;        // what feeds that slot (a new layer is a position: nothing)
+    // Whether `source` may land on `slot`: a port it has, never a cycle, a node once per stack (on
+    // its own row again is fine; at a new position in its own stack it moves there).
+    bool canLink(const NodePtr& source, const InputSlot& slot) const;
+    void link(GraphKey, const NodePtr& source, const InputSlot& slot);   // where canLink() said yes
+    void unlink(GraphKey, const InputSlot& slot);                         // nothing there: nothing happens
+    void moveLayer(GraphKey, size_t from, size_t to);                     // in its stack, both in range
+    void unlinkSource(GraphKey, const Node& source);   // every link from `source` (it's going)
+    // Exactly `want` (what its ports take; a link that would make a cycle is left out). Everything
+    // it held goes first: a whole graph restored node by node never passes through a cycle.
+    void setLinks(GraphKey, const NodeLinks& want);
 
-    // ---------- graph
-    virtual void replaceInputInstance(GraphKey, const NodePtr&, const NodePtr&) {}
-    virtual void detachAllInputs(GraphKey) {}
-    std::vector<NodePtr> allDeps() const;   // inputs and masks
+    std::vector<NodePtr> allDeps() const;   // inputs and masks, each once
+    // Everything that reads it, directly or not, each after everything it reads (cached).
+    std::vector<NodePtr> downstream();
     bool usesAsInput(const Node* n) const;
     bool usesAsMask(const Node* n) const;
     bool dependsOn(const Node* t) const;
     bool canDependOn(const NodePtr& n) const { return !n || (n.get() != this && !n->dependsOn(this)); }
-    uint64_t revision() const { return m_revision; }   // bumps whenever the output may have changed
 
     // A reader outside the graph: the node reports every output tile that changes into it, for as
     // long as the reader keeps it.
     std::shared_ptr<TileWatch> watchOutput();
 
-    void removeFromGraph(GraphKey);   // when deleting: users drop it, it drops its inputs and masks
+    void removeFromGraph(GraphKey);   // when deleting: users drop it, it drops what fed it
 
-    static uint8_t gainByte(float v) { return uint8_t(std::clamp(int(v * 255.0f + 0.5f), 0, 255)); }
+    static uint8_t gainByte(float v) { return unitToByte(v); }
 
 protected:
     // Unknown change: dirty = footprint before + after.
@@ -225,23 +257,42 @@ protected:
     // Known change: exactly `dirty`.
     TileSet changeKnown(TileSet dirty, Bounds b, Evict e, const std::function<void()>& mutate);
 
+    // Tiles of its output changed (raster edits enter the graph here): it, then everything
+    // downstream, each once.
     void emitDirty(const TileSet& tiles, Evict e);
     void invalidateBounds();
 
 private:
-    // Dirty tiles from a dependency (raster edits enter the graph here).
-    void dependencyDirty(const Node* from, const TileSet& tiles);
+    // What's downstream of it (through listeners), each after everything it reads: Kahn's
+    // algorithm over that part of the graph. Kept until a listener list at or below it changes:
+    // then it, and everything upstream of the node whose list changed, drop theirs.
+    struct Downstream {
+        std::vector<std::weak_ptr<Node>> order;
+        absl::flat_hash_map<const Node*, uint32_t> index;   // into order
+    };
+    // Dirty tiles a node takes from the ones it reads, before it passes them on.
+    struct Incoming {
+        TileSet tiles;
+        bool    raw = false;   // from an input: caches derived from inputs go too
+    };
+    const Downstream& downstreamOrder();
+    void dropOrders();   // this node's and every node's it reads, directly or not
+    void takeDirty(const TileSet& tiles, Evict e);   // its own part: readers told, caches evicted
+    void receive(const Node& from, const TileSet& tiles, Incoming& in) const;   // from a dependency
+    bool signalIsIdentity(NodeSignal s) const;
 
+    const Ports m_ports;
     NodeId      m_id = kNoNodeId;
     std::string m_label;
     float       m_x = 0, m_y = 0;
     std::array<SignalChannels, kSignalCount> m_signals;
+    NodeLinks   m_links;
     mutable bool    m_boundsDirty = true;
     mutable BoundsI m_bounds;
-    uint64_t m_revision = 0;
     std::vector<std::weak_ptr<Node>> m_listeners;   // nodes that use this one (input or mask)
     std::vector<std::weak_ptr<TileWatch>> m_watches;   // readers outside the graph
     std::vector<NodePtr> m_wired;                   // deps this node is registered with
+    std::unique_ptr<Downstream> m_downstream;       // made on first use; null: worked out again when asked
 
     void finishChange(const TileSet& d, Bounds b, Evict e);
     void rewire();
@@ -249,7 +300,7 @@ private:
 
     // signal pipeline
     const MaskTile* maskTile(Node& mask, int tx, int ty, RenderCtx& ctx);
-    bool planGains(const SignalChannels& s, int tx, int ty, RenderCtx& ctx, Gain (&g)[4]);
+    bool planGains(NodeSignal sig, int tx, int ty, RenderCtx& ctx, Gain (&g)[4]);
     const Tile* applyGains(const Tile* raw, const Gain (&g)[4], RenderCtx& ctx);
     const Tile* renderSignal(NodeSignal sig, int tx, int ty, RenderCtx& ctx);
     const Tile* blendOver(const Tile* top, const Tile* bottom, RenderCtx& ctx);

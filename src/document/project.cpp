@@ -1,15 +1,17 @@
 #include "project.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <string>
 #include <utility>
 
 namespace {
 
+// The start's own pixels: commits no step refers to, so undo never goes past them.
 void paintStarterContent(GraphKey key, RasterRootNode& background, RasterRootNode& paint)
 {
-    background.edit(key, [](RasterEditor& ed) {
+    background.recordEdit(key, [](RasterEditor& ed) {
         for (int y = 0; y < 192; ++y)   // gradient
             for (int x = 0; x < 256; ++x)
                 ed.setPixel(x, y, { uint8_t(x), uint8_t(y * 255 / 191), 160, 255 });
@@ -19,7 +21,7 @@ void paintStarterContent(GraphKey key, RasterRootNode& background, RasterRootNod
                 ed.setPixel(300 + x, y, on ? RGBA{ 230, 230, 230, 255 } : RGBA{ 20, 20, 20, 128 });
             }
     });
-    paint.edit(key, [](RasterEditor& ed) {
+    paint.recordEdit(key, [](RasterEditor& ed) {
         for (int y = -96; y <= 0; ++y)   // disc across negative tile coordinates
             for (int x = -96; x <= 0; ++x) {
                 const int dx = x + 48, dy = y + 48;
@@ -39,12 +41,11 @@ void Project::init()
 
     const NodeId bg    = createNode(NodeType::Raster, 40.0f, 0.0f);
     const NodeId paint = createNode(NodeType::Raster, 40.0f, 370.0f);
-    paintStarterContent(key(), *rasterAt(bg), *rasterAt(paint));   // not undoable
+    paintStarterContent(key(), *rasterAt(bg), *rasterAt(paint));
     connect(bg,    master, InputSlot::newLayer(0));
     connect(paint, master, InputSlot::newLayer(1));
     setActiveRaster(paint);
-    m_history.setGraph(kStartStep, std::make_shared<const GraphState>(GraphState::capture(m_nodes)));   // where undo can go back to
-    m_historyRevision = m_graphRevision;
+    m_steps.start();
     m_canvasCamera.zoom = 2.0f;   // the starter content, in view
     m_canvasCamera.pan  = { 300.0f, 160.0f };
 }
@@ -65,7 +66,7 @@ RasterRootNode* Project::rasterAt(NodeId id) const
 NodePtr Project::inputAt(NodeId to, const InputSlot& slot) const
 {
     const Node* n = find(to);
-    return n ? Links::inputAt(*n, slot) : nullptr;
+    return n ? n->linkAt(slot) : nullptr;
 }
 
 bool Project::preferredInput(NodeId id, InputSlot& out) const
@@ -84,6 +85,20 @@ NodeId Project::createNode(NodeType type, float x, float y)
     return id;
 }
 
+NodeId Project::addNode(NodeType type, float x, float y, const NodeWiring& wiring)
+{
+    // What can be told without the node first: the ends are there, and something can feed it.
+    if (wiring.from != kNoNodeId && (!find(wiring.from) || isMaster(wiring.from) || nodeKind(type).ports.inputs == InputShape::None)) return kNoNodeId;
+    if (wiring.into != kNoNodeId && !find(wiring.into)) return kNoNodeId;
+    const NodeId id = createNode(type, x, y);
+    InputSlot in;
+    bool wired = wiring.from == kNoNodeId || (preferredInput(id, in) && connect(wiring.from, id, in));
+    wired = wired && (wiring.into == kNoNodeId || connect(id, wiring.into, wiring.slot));
+    if (wired) return id;
+    deleteNodes({ id });   // a link it can't have: as if never made
+    return kNoNodeId;
+}
+
 NodeId Project::importTiles(const TileGrid& tiles, const std::string& name, const ImportOptions& options)
 {
     float x = options.nodeX, y = options.nodeY;
@@ -97,7 +112,8 @@ NodeId Project::importTiles(const TileGrid& tiles, const std::string& name, cons
     const NodeId id = createNode(NodeType::Raster, x, y);
     RasterRootNode& r = *rasterAt(id);
     if (!name.empty()) r.setLabel(key(), name);
-    r.edit(key(), [&](RasterEditor& ed) { ed.applyTileGrid(tiles, { 255, CompositeMode::Replace }); });
+    recordCommit({ r.raster().id(), r.recordEdit(key(), [&](RasterEditor& ed) { ed.applyTileGrid(tiles, { 255, CompositeMode::Replace }); }) },
+                 "Import Image");
     if (options.addToMaster) connect(id, m_master->id(), InputSlot::newLayer(uint32_t(m_master->layers().size())));
     if (options.makeActive) setActiveRaster(id);
     else if (m_active == id && prevActive != kNoNodeId) setActiveRaster(prevActive);   // createNode takes it when there was none
@@ -114,8 +130,8 @@ bool Project::deleteNodes(const std::vector<NodeId>& ids)
     if (doomed.contains(m_stroke.node())) endStroke();   // committed while its node is still there
 
     // Every node's inputs before, to tell what changed once it's done.
-    absl::flat_hash_map<NodeId, NodeInputs> before;
-    for (const NodePtr& n : nodes()) before.emplace(n->id(), NodeInputs::of(*n));
+    absl::flat_hash_map<NodeId, NodeLinks> before;
+    for (const NodePtr& n : nodes()) before.emplace(n->id(), n->links());
 
     // Re-feed every surviving slot a doomed node fed, before anything is removed (indices stay valid).
     for (const NodePtr& n : nodes())
@@ -123,18 +139,18 @@ bool Project::deleteNodes(const std::vector<NodeId>& ids)
 
     // Whatever wasn't re-fed is dropped here. A raster's pixels stay: history may bring them back.
     for (NodeId id : doomed) {
-        find(id)->removeFromGraph(key());   // users lose it (and are told), it drops its inputs and masks
+        find(id)->removeFromGraph(key());   // users lose it (and are told), it drops what fed it
         m_nodes.remove(id);
     }
 
     // Done: the links that went or were healed, then the nodes.
     const EmitEvent tell = emitter();
     for (NodeId id : doomed) {
-        NodeInputs& was = before[id];
+        NodeLinks& was = before[id];
         was.layers.clear();   // a stack goes with its node
-        Links::emitChanges(id, was, NodeInputs{}, tell);
+        Links::emitChanges(id, was, NodeLinks{}, tell);
     }
-    for (const NodePtr& n : nodes()) Links::emitChanges(n->id(), before[n->id()], NodeInputs::of(*n), tell);
+    for (const NodePtr& n : nodes()) Links::emitChanges(n->id(), before[n->id()], n->links(), tell);
     for (NodeId id : doomed) emit(ProjectEventType::NodeRemoved, id);
 
     if (doomed.contains(m_active)) fallBackActiveRaster();
@@ -202,15 +218,15 @@ bool Project::canConnect(NodeId from, NodeId to, const InputSlot& slot) const
 {
     if (from == to || isMaster(from)) return false;   // the master output feeds only the viewport
     const Node* dst = find(to);
-    return dst && Links::canConnect(findPtr(from), *dst, slot);
+    return dst && dst->canLink(findPtr(from), slot);
 }
 
 bool Project::connect(NodeId from, NodeId to, const InputSlot& slot)
 {
     if (!canConnect(from, to, slot)) return false;
     Node& dst = *find(to);
-    const NodeInputs before = NodeInputs::of(dst);
-    Links::connect(key(), findPtr(from), dst, slot);
+    const NodeLinks before = dst.links();
+    dst.link(key(), findPtr(from), slot);
     emitInputChanges(to, before);
     return true;
 }
@@ -218,20 +234,42 @@ bool Project::connect(NodeId from, NodeId to, const InputSlot& slot)
 bool Project::disconnect(NodeId to, const InputSlot& slot)
 {
     Node* dst = find(to);
-    if (!dst || !Links::inputAt(*dst, slot)) return false;
-    const NodeInputs before = NodeInputs::of(*dst);
-    Links::disconnect(key(), *dst, slot);
+    if (!dst || !dst->linkAt(slot)) return false;
+    const NodeLinks before = dst->links();
+    dst->unlink(key(), slot);
     emitInputChanges(to, before);
+    return true;
+}
+
+bool Project::canMoveLink(NodeId source, NodeId from, const InputSlot& slot, NodeId to, const InputSlot& toSlot) const
+{
+    const Node* f = find(from);
+    const NodePtr src = findPtr(source);
+    if (!f || !src || f->linkAt(slot) != src) return false;
+    if (to == kNoNodeId) return true;   // off
+    const Node* t = find(to);
+    return t && Links::canMove(src, *f, slot, *t, toSlot);
+}
+
+bool Project::moveLink(NodeId source, NodeId from, const InputSlot& slot, NodeId to, const InputSlot& toSlot)
+{
+    if (!canMoveLink(source, from, slot, to, toSlot)) return false;
+    if (to == from && toSlot == slot) return false;   // back where it was: nothing changes
+    disconnect(from, slot);
+    if (to != kNoNodeId) {
+        [[maybe_unused]] const bool landed = connect(source, to, toSlot);
+        assert(landed && "canMove said it lands");
+    }
     return true;
 }
 
 bool Project::moveLayer(NodeId compositor, size_t from, size_t to)
 {
     Node* n = find(compositor);
-    if (!n || inputShape(*n) != InputShape::Stack) return false;
-    auto* c = static_cast<CompositorNode*>(n);
-    if (from >= c->layers().size() || to >= c->layers().size() || from == to) return false;
-    c->moveLayer(key(), from, to);
+    if (!n || n->ports().inputs != InputShape::Stack) return false;
+    const size_t count = n->links().layers.size();
+    if (from >= count || to >= count || from == to) return false;
+    n->moveLayer(key(), from, to);
     emit(ProjectEventType::LayersChanged, compositor);
     return true;
 }
@@ -239,7 +277,7 @@ bool Project::moveLayer(NodeId compositor, size_t from, size_t to)
 bool Project::setSignalScale(NodeId id, NodeSignal s, NodeChannel c, float v)
 {
     Node* n = find(id);
-    if (!n || !n->hasSignal(s) || n->signal(s).scale[int(c)] == v) return false;
+    if (!n || !n->hasSignal(s) || !(v >= 0.0f && v <= 1.0f) || n->signal(s).scale[int(c)] == v) return false;   // 0..1 (NaN isn't)
     n->setScale(key(), s, c, v);
     emit(ProjectEventType::NodeChanged, id);
     return true;
@@ -330,9 +368,24 @@ void Project::endStroke()
     emit(ProjectEventType::PreviewChanged, raster);
     if (commit.commit == kNoRasterCommit) return;
     emit(ProjectEventType::RasterEdited, raster);
-    const bool own = m_stepDepth == 0;   // ended outside any action: a step of its own
-    if (own) beginStep("Brush Stroke");
-    m_stepCommits.push_back(commit);
+    recordCommit(commit, "Brush Stroke");
+}
+
+void Project::cancelStroke()
+{
+    if (!m_stroke.active()) return;
+    const NodeId raster = m_stroke.node();
+    m_stroke.discard();
+    m_preview.reset();
+    emit(ProjectEventType::PreviewChanged, raster);
+}
+
+void Project::recordCommit(const RasterCommitRef& commit, const char* label)
+{
+    if (commit.commit == kNoRasterCommit) return;
+    const bool own = !m_steps.open();   // made outside any action: a step of its own
+    if (own) beginStep(label);
+    m_steps.commit(commit);
     if (own) endStep();
 }
 
@@ -340,56 +393,31 @@ void Project::endStroke()
 
 void Project::beginStep(std::string label)
 {
-    if (m_stepDepth++ > 0) return;   // inside another: merges into it
-    m_stepLabel = std::move(label);
-    m_stepCommits.clear();
-    // Changed outside any step since (nothing should): undo comes back to what it really was.
-    const StepId here = m_history.current();
-    if (m_graphRevision != m_historyRevision || !m_history.step(here).graph) {
-        auto now = std::make_shared<const GraphState>(GraphState::capture(m_nodes));
-        const auto& was = m_history.step(here).graph;
-        if (!was || !(*was == *now)) m_history.setGraph(here, std::move(now));
-        m_historyRevision = m_graphRevision;
-    }
-    m_stepBefore   = m_history.step(here).graph;
-    m_stepRevision = m_graphRevision;
+    m_steps.begin(std::move(label));
 }
 
 void Project::endStep()
 {
-    if (m_stepDepth == 0 || --m_stepDepth > 0) return;
-    // Captured again only if a graph event came: otherwise it's the state it opened with, shared.
-    std::shared_ptr<const GraphState> after = std::move(m_stepBefore);
-    bool graphChanged = false;
-    if (m_graphRevision != m_stepRevision) {
-        auto now = std::make_shared<const GraphState>(GraphState::capture(m_nodes));
-        graphChanged = !(*now == *after);
-        if (graphChanged) after = std::move(now);
-    }
-    m_historyRevision = m_graphRevision;   // `after` is the live graph, and the current step's from here on
-    if (m_stepCommits.empty() && !graphChanged) return;   // changed nothing: undo never "does nothing"
-    m_history.push({ std::move(m_stepLabel), std::move(m_stepCommits), std::move(after) });
-    m_stepCommits.clear();
-    emit(ProjectEventType::HistoryChanged);
+    if (m_steps.end()) emit(ProjectEventType::HistoryChanged);
 }
 
 bool Project::undo()
 {
-    return canUndo() && goToHistory(m_history.parent(m_history.current()));
+    return canUndo() && goToHistory(history().parent(history().current()));
 }
 
 bool Project::redo()
 {
-    return canRedo() && goToHistory(m_history.redoChild(m_history.current()));
+    return canRedo() && goToHistory(history().redoChild(history().current()));
 }
 
 bool Project::goToHistory(StepId step)
 {
-    if (m_stroke.active() || m_stepDepth > 0 || !m_history.contains(step) || step == m_history.current()) return false;
+    if (m_stroke.active() || m_steps.open() || !history().contains(step) || step == history().current()) return false;
     cancelPreview();
-    m_history.goTo(step, [&](const RasterCommitRef& c) { flipRasterCommit(c); });   // the pixels, step by step
-    if (const auto& graph = m_history.step(step).graph) restoreGraph(*graph);    // the graph, as it was there
-    m_historyRevision = m_graphRevision;   // the live graph is that step's
+    const auto graph = m_steps.goTo(step, [&](const RasterCommitRef& c) { flipRasterCommit(c); });   // the pixels, step by step
+    if (graph) restoreGraph(*graph);   // the graph, as it was there
+    m_steps.synced();                  // the live graph is that step's
     emit(ProjectEventType::HistoryChanged);
     return true;
 }
@@ -403,12 +431,9 @@ void Project::restoreGraph(const GraphState& target)
 
 void Project::flipRasterCommit(const RasterCommitRef& c)
 {
-    if (RasterRootNode* n = m_nodes.rasterNode(c.raster)) {
-        n->flip(key(), c.commit);
-        emit(ProjectEventType::RasterEdited, n->id());
-    } else {
-        (void)m_nodes.raster(c.raster).flip(c.commit);   // its node was deleted: keep the data consistent
-    }
+    RasterRootNode& n = m_nodes.rasterNode(c.raster);   // in the graph or not: its caches follow its pixels
+    n.flip(key(), c.commit);
+    if (m_nodes.contains(n.id())) emit(ProjectEventType::RasterEdited, n.id());
 }
 
 // ---------------------------------------------------------------- shared by the views
@@ -446,16 +471,16 @@ bool Project::setCanvasViewport(Vec2 size)
 
 void Project::emit(const ProjectEvent& e)
 {
-    if (changesGraph(e.type)) ++m_graphRevision;
+    if (changesGraph(e.type)) m_steps.touched(e.node);
+    // A node that goes leaves the selection before anyone hears it went (the state is final when
+    // told), then the selection's change is told.
+    const bool deselect = e.type == ProjectEventType::NodeRemoved && (m_selection.contains(e.node) || m_selection.anchor() == e.node);
+    if (deselect) m_selection = m_selection.without(e.node);
     changed.emit(e);
-    // A node that goes leaves the selection, told once it's gone.
-    if (e.type == ProjectEventType::NodeRemoved && (m_selection.contains(e.node) || m_selection.anchor() == e.node)) {
-        m_selection = m_selection.without(e.node);
-        emit(ProjectEventType::SelectionChanged);
-    }
+    if (deselect) emit(ProjectEventType::SelectionChanged);
 }
 
-void Project::emitInputChanges(NodeId to, const NodeInputs& before)
+void Project::emitInputChanges(NodeId to, const NodeLinks& before)
 {
-    if (const Node* n = find(to)) Links::emitChanges(to, before, NodeInputs::of(*n), emitter());
+    if (const Node* n = find(to)) Links::emitChanges(to, before, n->links(), emitter());
 }

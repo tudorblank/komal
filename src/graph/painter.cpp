@@ -1,6 +1,7 @@
 #include "graph/painter.hpp"
 #include "base/math.hpp"
 #include "document/project.hpp"
+#include "look/slider-look.hpp"
 #include "graph/style.hpp"
 #include "canvas/node-thumbnails.hpp"
 
@@ -59,7 +60,7 @@ void drawAlphaLockIcon(const GraphPaint& g, const ImRect& r, bool locked, bool h
     for (int y = 0; y < 3; ++y)
         for (int x = 0; x < 3; ++x)
             if ((x + y) % 2 == 0) {
-                const ImVec2 p(a.x + inset + x * cell, a.y + inset + y * cell);
+                const ImVec2 p(a.x + inset + float(x) * cell, a.y + inset + float(y) * cell);
                 g.dl->AddRectFilled(p, ImVec2(p.x + cell, p.y + cell), col);
             }
     g.dl->AddRect(ImVec2(a.x + inset, a.y + inset), ImVec2(b.x - inset, b.y - inset), col, 0.0f, 0, std::max(1.0f, cell * 0.2f));
@@ -211,7 +212,7 @@ void paintNode(const GraphPaint& g, const Project& project, const Node& n, const
     }
 
     // ---- layer stack
-    const std::vector<NodePtr> layers = NodeInputs::of(n).layers;
+    const std::vector<NodePtr>& layers = n.links().layers;
     for (const NodeItemLayerRow& row : item.layers) {
         const ImVec2 a = g.at(row.rect.Min), b = g.at(row.rect.Max);
         if (row.as<NodeItemLayerRow::Gap>()) {           // where the dragged link or layer lands
@@ -227,12 +228,10 @@ void paintNode(const GraphPaint& g, const Project& project, const Node& n, const
     }
 
     // ---- signals
-    static const char* kSignalName[kSignalCount] = { "Main", "Dry", "Wet" };   // NodeSignal order
-    static const char* kChannelName[kChannelCount] = { "A", "R", "G", "B" };
     for (const NodeItemSectionRow& sec : item.sections) {
         const bool hot = widgetHovered(SectionControl{ sec.signal });
         drawArrow(g, ImVec2(sec.rect.Min.x + 12.0f, sec.rect.GetCenter().y), 7.0f, sec.expanded, hot ? kTitleColor : kDimText);
-        textInRow(g, sec.rect.Min.x + 21.0f, sec.rect, kText, hot ? kTitleColor : kTextColor, kSignalName[int(sec.signal)]);
+        textInRow(g, sec.rect.Min.x + 21.0f, sec.rect, kText, hot ? kTitleColor : kTextColor, signalLabel(sec.signal));
         if (Node::gainByte(scaleOf(sec.signal, NodeChannel::A)) == 0) {
             const float w = textWidth(g, kSmallText, "off");
             textInRow(g, sec.rect.Max.x - kPad - w, sec.rect, kSmallText, kDimText, "off");
@@ -244,18 +243,14 @@ void paintNode(const GraphPaint& g, const Project& project, const Node& n, const
         const float cy  = g.at(row.track.GetCenter()).y;
         const float x0  = g.at(row.track.Min).x, x1 = g.at(row.track.Max).x;
         const float xv  = x0 + (x1 - x0) * v;
-        const float t   = std::max(g.px(2.0f), 2.5f * s);
-        dl->AddRectFilled(ImVec2(x0, cy - t * 0.5f), ImVec2(x1, cy + t * 0.5f), kTrack, t * 0.5f);
-        dl->AddRectFilled(ImVec2(x0, cy - t * 0.5f), ImVec2(xv, cy + t * 0.5f), kTrackFill, t * 0.5f);
-        const float gw = 3.0f * s, gh = 6.5f * s;
-        dl->AddRectFilled(ImVec2(xv - gw - bw, cy - gh - bw), ImVec2(xv + gw + bw, cy + gh + bw), kBorder, 2.0f * s);
-        dl->AddRectFilled(ImVec2(xv - gw, cy - gh), ImVec2(xv + gw, cy + gh), hot ? kGrabActive : kGrab, 1.5f * s);
+        SliderLook::drawTrack(dl, x0, x1, cy, xv, s, kTrack);
+        SliderLook::drawGrab(dl, xv, cy, s, hot);
 
         char buf[8];
         std::snprintf(buf, sizeof buf, "%d", int(std::lround(v * 100.0f)));
         const float w = textWidth(g, kSmallText, buf, nullptr, g.numberFont);
         textInRow(g, row.rect.Max.x - 20.0f - w, row.rect, kSmallText, kTextColor, buf, g.numberFont);
-        textInRow(g, row.rect.Max.x - 13.0f, row.rect, kSmallText, kChannelColor[int(row.channel)], kChannelName[int(row.channel)]);
+        textInRow(g, row.rect.Max.x - 13.0f, row.rect, kSmallText, kChannelColor[int(row.channel)], channelLabel(row.channel));
     }
 
 }

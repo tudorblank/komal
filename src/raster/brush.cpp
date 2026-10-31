@@ -9,7 +9,7 @@ float smoothstep(float t) { t = std::clamp(t, 0.0f, 1.0f); return t * t * (3.0f 
 
 int clampWorld(float v)
 {
-    return (int)std::clamp(std::floor(v), (float)-TileUtils::kWorldLimit, (float)TileUtils::kWorldLimit);
+    return int(std::clamp(std::floor(v), float(-TileUtils::kWorldLimit), float(TileUtils::kWorldLimit)));
 }
 
 }
@@ -20,9 +20,8 @@ void BrushStroke::begin(const BrushParams& params, StrokePoint at)
     m_params = params;
     m_params.diameter = std::max(params.diameter, 1.0f);
     m_params.spacing  = std::max(params.spacing, 0.01f);
-    const RGBA c = params.color;
-    m_color = canonical({ mul255(c.r, c.a), mul255(c.g, c.a), mul255(c.b, c.a), c.a });   // premultiply
-    m_flowK = uint8_t(std::clamp(int(m_params.flow * 255.0f + 0.5f), 0, 255));
+    m_color = premultiply(params.color);
+    m_flowK = unitToByte(m_params.flow);
     m_shapes.clear();
     m_shapes.resize(kSizeLevels + 1);
     m_active = true;
@@ -191,6 +190,17 @@ bool BrushStroke::composeTile(Tile& out, const Tile* original, int tx, int ty) c
         w.markChanged();
     }
     return !out.isEmpty();
+}
+
+BoundsI BrushStroke::coverBounds(int tx, int ty) const
+{
+    BoundsI b;
+    const Tile* cov = m_scratch.getReadTile(tx, ty);
+    if (!cov || m_params.keepAlpha || m_params.mode == CompositeMode::Erase) return b;   // adds nothing where nothing was
+    const RGBA* c = cov->getReadAll();
+    for (int i = 0; i < Tile::kPixels; ++i)   // as composeTile: the colour scaled by coverage, then by opacity
+        if (c[i].a && mul255(mul255(m_color.a, c[i].a), m_params.opacity)) b.expand(i & TileUtils::kTileMask, i >> TileUtils::kTileShift);
+    return b;
 }
 
 void applyStroke(RasterEditor& editor, const RasterData& raster, const BrushStroke& stroke, const TileSet& tiles)

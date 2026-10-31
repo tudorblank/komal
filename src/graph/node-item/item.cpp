@@ -54,7 +54,7 @@ public:
         m_item.ioRow.reset();
         m_item.thumb.reset();
         const bool master = m_project.isMaster(m_item.id);
-        const bool stack  = inputShape(m_node) == InputShape::Stack;
+        const bool stack  = m_node.ports().inputs == InputShape::Stack;
         const NodeSettings settings = m_node.settings();
 
         // ---- header (+ body, or the master's stack)
@@ -118,7 +118,7 @@ private:
         m_item.ioRow = io;
         const float cy = io.GetCenter().y;
         m_item.ports.push_back({ ImVec2(m_x1, cy), true, {}, false, false });
-        if (inputShape(m_node) == InputShape::One) inputPort(cy, InputSlot::input());
+        if (m_node.ports().inputs == InputShape::One) inputPort(cy, InputSlot::input());
         if (std::holds_alternative<RasterSettings>(settings)) {
             const float h = kIconSize * 0.5f;
             const float x = m_x0 + kPad;
@@ -133,7 +133,7 @@ private:
     void layerList()
     {
         // The layers shown, bottom first: all but the one being dragged.
-        const uint32_t count = uint32_t(NodeInputs::of(m_node).layers.size());
+        const uint32_t count = uint32_t(m_node.links().layers.size());
         std::vector<uint32_t> shown;
         for (uint32_t i = 0; i < count; ++i)
             if (int(i) != m_stack.hidden) shown.push_back(i);
@@ -173,10 +173,9 @@ private:
         widget(SectionControl{ sig }, ImRect(m_x0 + 4.0f, head.Min.y, m_x1 - 4.0f, head.Max.y));
         m_y = head.Max.y;
 
-        const SignalChannels& sc = m_node.signal(sig);
         for (int ch = 0; ch < kChannelCount; ++ch) {
             // Collapsed: alpha, plus any channel with a mask (a link never ends nowhere).
-            if (!expanded && ch != int(NodeChannel::A) && !sc.mask[ch]) continue;
+            if (!expanded && ch != int(NodeChannel::A) && !m_node.mask(sig, NodeChannel(ch))) continue;
             const ImRect row(m_x0, m_y, m_x1, m_y + kRowH);
             const ImRect track(m_x0 + 16.0f, row.Min.y + 3.0f, m_x1 - 50.0f, row.Max.y - 3.0f);
             m_item.channels.push_back({ row, track, sig, NodeChannel(ch) });
@@ -206,5 +205,5 @@ ImRect layerThumbRect(const ImRect& r)
 
 void buildNodeItem(const Project& project, const Node& n, const NodeItemState& view, StackLayout stack, NodeItem& out)
 {
-    Builder(project, n, view, inputShape(n) == InputShape::Stack ? stack : StackLayout{}, out).build();
+    Builder(project, n, view, n.ports().inputs == InputShape::Stack ? stack : StackLayout{}, out).build();
 }

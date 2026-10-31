@@ -1,4 +1,5 @@
 #include "ui/widgets/detail.hpp"
+#include "ui/theme.hpp"
 
 using namespace Widgets::detail;
 
@@ -14,7 +15,7 @@ const Metrics& metrics()
     madeFor[0] = font;
     madeFor[1] = frame;
     madeFor[2] = spacing;
-    const float u = font / 15.0f;
+    const float u = font / kBaseFontSize;
     m.unit            = u;
     m.rowHeight       = frame;
     m.boxHeight       = std::round(font + 6.0f * u);
@@ -61,7 +62,7 @@ float stackHeight(int rows, int headings, int gaps)
     const float sy = ImGui::GetStyle().ItemSpacing.y;
     // Each item is followed by the item spacing; the last one's is dropped (the panel's padding follows).
     const int items = rows + headings + gaps;
-    return rows * m.rowHeight + headings * ImGui::GetTextLineHeight() + gaps * m.sectionGap + std::max(0, items - 1) * sy;
+    return float(rows) * m.rowHeight + float(headings) * ImGui::GetTextLineHeight() + float(gaps) * m.sectionGap + float(std::max(0, items - 1)) * sy;
 }
 
 // ---------------------------------------------------------------- layout

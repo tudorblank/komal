@@ -1,4 +1,5 @@
 #include "hand-tool.hpp"
+#include "document/document-actions.hpp"
 #include "document/project.hpp"
 #include "ui/widgets/widgets.hpp"
 
@@ -12,7 +13,7 @@ void HandTool::drawIcon(ImDrawList* dl, ImVec2 c, float size, ImU32 color) const
     const float fw = s * 0.26f;
     const float tops[4] = { -0.55f, -0.80f, -0.75f, -0.50f };
     for (int i = 0; i < 4; ++i) {
-        const float x = c.x - s * 0.45f + i * fw * 1.15f;
+        const float x = c.x - s * 0.45f + float(i) * fw * 1.15f;
         dl->AddRectFilled(ImVec2(x, c.y + tops[i] * s), ImVec2(x + fw, c.y + s * 0.1f), color, fw * 0.5f);
     }
     dl->AddRectFilled(ImVec2(c.x - s * 0.47f, c.y - s * 0.05f), ImVec2(c.x + s * 0.47f, c.y + s * 0.80f), color, s * 0.3f);
@@ -29,7 +30,7 @@ void HandTool::drawProperties(ToolContext& ctx)
     }
     // Zooms about the canvas's middle.
     const CanvasCamera& cam = ctx.project.canvasCamera();
-    const auto zoomTo = [&](float zoom) { ctx.actions.run(Actions::CanvasZoom, { { "factor", zoom / cam.zoom } }); };
+    const auto zoomTo = [&](float zoom) { ctx.actions.run(Actions::CanvasZoom, { { DocArgs::kFactor, zoom / cam.zoom } }); };
 
     float percent = cam.zoom * 100.0f;
     if (Widgets::sliderRow("Zoom", percent, CanvasCamera::kMinZoom * 100.0f, CanvasCamera::kMaxZoom * 100.0f, "%.0f%%", true, 100.0f))
@@ -46,28 +47,20 @@ void HandTool::drawProperties(ToolContext& ctx)
 
 void HandTool::canvasInput(const CanvasInput& in)
 {
-    // From a primary press on the canvas to its release, by the device that pressed.
-    const auto isPen = [](PointerDevice d) { return d != PointerDevice::Mouse; };
+    // From a primary press on the canvas to its release. ImGui must have given the canvas the
+    // press (not a popup, not another panel).
     for (const CanvasPointer& p : in.pointer) {
         const PointerEvent& ev = p.event;
-        const bool down = ev.type == PointerEvent::Type::Down, up = ev.type == PointerEvent::Type::Up;
-        if (!m_dragging) {
-            // ImGui must have given the canvas this press (not a popup, not another panel).
-            if (down && ev.button == PointerButton::Primary && in.active) {
-                m_dragging = true;
-                m_dragPen  = isPen(ev.device);
-                m_last     = { ev.x, ev.y };
-            }
-            continue;
+        switch (m_drag.feed(ev, in.active && ev.button == PointerButton::Primary)) {
+        case PointerCapture::Step::Began: m_last = { ev.x, ev.y }; break;
+        case PointerCapture::Step::Moved:
+        case PointerCapture::Step::Ended:
+            if (ev.x != m_last.x || ev.y != m_last.y)
+                in.actions.run(Actions::CanvasPan, { { DocArgs::kDx, ev.x - m_last.x }, { DocArgs::kDy, ev.y - m_last.y } });
+            m_last = { ev.x, ev.y };
+            break;
+        case PointerCapture::Step::Ignored: break;
         }
-        if (isPen(ev.device) != m_dragPen || (!up && ev.type != PointerEvent::Type::Move)) continue;
-        if (up && ev.button != PointerButton::Primary) continue;
-        if (ev.x != m_last.x || ev.y != m_last.y)
-            in.actions.run(Actions::CanvasPan, { { "dx", ev.x - m_last.x }, { "dy", ev.y - m_last.y } });
-        m_last = { ev.x, ev.y };
-        if (up) m_dragging = false;
     }
-    // Safety net: a release the app never saw (focus lost mid-drag) still ends the drag.
-    if (m_dragging && !in.input.buttonHeld(m_dragPen ? PointerDevice::Pen : PointerDevice::Mouse, PointerButton::Primary))
-        m_dragging = false;
+    m_drag.lost(in.input);
 }

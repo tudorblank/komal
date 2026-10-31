@@ -8,6 +8,7 @@
 #include "ui/graph-panel/panel.hpp"
 #include "ui/history-panel.hpp"
 #include "ui/info-panel.hpp"
+#include "ui/keymap.hpp"
 #include "ui/navigator.hpp"
 #include "ui/tools/color-panel.hpp"
 #include "ui/tools/tool-properties-panel.hpp"
@@ -18,7 +19,7 @@
 #include <imgui_internal.h>   // FindHoveredWindowEx
 #include <algorithm>
 
-UserInterface::UserInterface()
+UserInterface::UserInterface(ActionRegistry& actions) : m_actions(actions)
 {
     // Every panel, in View menu order. Where each docks and when it draws are its own (PanelInfo).
     m_canvasPanel = addPanel<CanvasPanel>();
@@ -53,9 +54,8 @@ bool UserInterface::init(GpuDevice& gpu, Project& project, const InputFrame& inp
 {
     m_input = &input;
     m_host  = &host;
-    // The two lists of what a user can do: to the document, and to the app. Panels add their own
+    // What a user can do to the app, next to the document's (the editor's). Panels add their own
     // interface actions (framing, selecting, opening menus) as they init.
-    registerDocumentActions(m_actions, project);
     registerAppActions();
     bool ok = m_canvas.init(gpu, project);
     m_context.emplace(UiContext{ gpu, project, m_actions, m_tools, input, m_canvas, m_canvas.thumbnails(), host });
@@ -63,6 +63,7 @@ bool UserInterface::init(GpuDevice& gpu, Project& project, const InputFrame& inp
         e.panel->m_ui = &*m_context;
         ok = e.panel->init() && ok;   // one failing leaves the rest working
     }
+    bindDefaultKeys(m_actions);   // every action is there now
     m_initialized = true;
     return ok;
 }
@@ -76,11 +77,24 @@ void UserInterface::shutdown()
 }
 
 
-double UserInterface::nextFrameIn() const
+void UserInterface::releaseGpu()
+{
+    for (auto e = m_panels.rbegin(); e != m_panels.rend(); ++e) e->panel->releaseGpu();
+    m_canvas.releaseGpu();   // after every view of it
+}
+
+bool UserInterface::restoreGpu(GpuDevice& gpu)
+{
+    const bool ok = m_canvas.restoreGpu(gpu);   // before every view of it
+    for (PanelEntry& e : m_panels) e.panel->restoreGpu();
+    return ok;
+}
+
+Clock::Seconds UserInterface::nextFrameIn() const
 {
     // Imports wake the loop when they finish; a stroke changes nothing while the pen rests.
     // A closed panel needs no frames (each knows it's closed).
-    double next = std::min(m_canvas.nextFrameIn(), m_notices.nextFrameIn());
+    Clock::Seconds next = std::min(m_canvas.nextFrameIn(), m_notices.nextFrameIn());
     for (const PanelEntry& e : m_panels) next = std::min(next, e.panel->nextFrameIn());
     return next;
 }
@@ -99,6 +113,8 @@ void UserInterface::draw()
         if (std::holds_alternative<ImageImporter::InGraph>(i.placement))
             m_actions.run(Actions::SelectionSet, selectionArgs(NodeSelection::only(i.node)));
     for (const std::string& why : polled.failed) m_notices.post("Couldn't import " + why);
+    if (m_canvas.outOfMemory() && !m_toldOutOfMemory) m_notices.post("Out of GPU memory: parts of the picture can't be shown");
+    m_toldOutOfMemory = m_canvas.outOfMemory();
     m_actions.dispatch(*m_input, ImGui::GetIO().WantTextInput);   // the frame's shortcuts, all of them, before the panels
     drawMenuBar();
 

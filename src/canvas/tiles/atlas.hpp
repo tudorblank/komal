@@ -26,15 +26,17 @@ class AtlasPages {
 public:
     using Slot = SlotPages::Slot;
 
-    Slot allocate(const CanvasPipelines& p);
+    Slot allocate(const CanvasPipelines& p);   // an invalid Slot when no page can be made (out of GPU memory)
     void upload(const CanvasPipelines& p, Slot s, const RGBA* pixels);
     // Reused only after recycle(): a view that drew it this frame still reads it.
     void free(Slot s)    { m_slots.free(s); }
     void freeNow(Slot s) { m_slots.freeNow(s); }   // no view drew it this frame
-    void recycle()       { m_slots.recycle(); }    // once a frame, before any view builds its draw
+    void recycle();      // once a frame, before any view builds its draw: pages long empty give their textures back
     void release();      // the GPU resources; the atlases on these pages must be cleared first
 
     size_t pageCount() const { return m_slots.pageCount(); }
+    size_t bytes() const { return m_slots.bytes(); }
+    bool   full() const { return m_full; }   // a page couldn't be made, since the last release()
 
 private:
     friend class TileDrawList;
@@ -47,8 +49,9 @@ private:
     SlotPages m_slots{ { .slotWidth = kSlotStride, .slotHeight = kSlotStride, .pageSize = kPageSize,
                          .format = WGPUTextureFormat_RGBA8Unorm,
                          .usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_CopyDst, .label = "Atlas Page" } };
-    std::vector<GpuObject<WGPUBindGroup>> m_bindGroups;   // per page: its texture and the sampler
+    std::vector<GpuObject<WGPUBindGroup>> m_bindGroups;   // per page: its texture and the sampler (none while it has no texture)
     std::vector<RGBA> m_staging;                          // tile + gutter, one upload per tile
+    bool m_full = false;
 };
 
 // Tiles by key, in the slots of its own pages or shared ones.
@@ -61,7 +64,8 @@ public:
 
     void share(AtlasPages& pages) { m_pages = &pages; }   // while empty; they must outlive it
 
-    void upload(const CanvasPipelines& p, TileKey key, const RGBA* pixels);   // adds or replaces
+    // Adds or replaces. False when there's no room on the GPU: the tile isn't there.
+    bool upload(const CanvasPipelines& p, TileKey key, const RGBA* pixels);
     void free(TileKey key);   // its slot is reused after the pages' next recycle()
     void clear();             // drops every tile; before any view draws from it this frame
     void release();           // clear(), and drops its own pages' GPU resources

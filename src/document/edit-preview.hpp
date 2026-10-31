@@ -11,7 +11,7 @@
 //
 // No edit in progress is no EditPreview (Project::preview() is null).
 
-#include "document/input-slot.hpp"
+#include "node/node.hpp"
 
 #include <optional>
 #include <type_traits>
@@ -58,7 +58,6 @@ struct EditPreview {
 
     Edit edit;
 
-    EditPreview() = default;
     template <class T> requires std::is_constructible_v<Edit, T>
     EditPreview(T e) : edit(std::move(e)) {}   // from any one of them
 

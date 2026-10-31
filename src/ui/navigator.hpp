@@ -31,10 +31,12 @@ public:
     PanelInfo info() const override;
     bool init() override;   // draws the engine's output tiles with its pipelines
     void shutdown() override;
+    void releaseGpu() override;
+    void restoreGpu() override;
 
     void draw() override;
     void renderGpu(WGPUCommandEncoder enc) override;
-    double nextFrameIn() const override;        // tiles of the picture (or the preview's) still coming in: now
+    Clock::Seconds nextFrameIn() const override;        // tiles of the picture (or the preview's) still coming in: now
 
 private:
     bool showsPreview();   // the preview's picture of the master, rather than the view's (draw time)

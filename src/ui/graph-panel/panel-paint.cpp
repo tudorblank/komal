@@ -26,11 +26,11 @@ void GraphPanel::paintGrid(const GraphPaint& g, ImVec2 min, ImVec2 max) const
     const int ix0 = int(std::floor((min.x - o.x) / step)), ix1 = int(std::ceil((max.x - o.x) / step));
     const int iy0 = int(std::floor((min.y - o.y) / step)), iy1 = int(std::ceil((max.y - o.y) / step));
     for (int i = ix0; i <= ix1; ++i) {
-        const float x = o.x + i * step;
+        const float x = o.x + float(i) * step;
         g.dl->AddLine(ImVec2(x, min.y), ImVec2(x, max.y), i % major == 0 ? kGridMajor : kGridLine);
     }
     for (int i = iy0; i <= iy1; ++i) {
-        const float y = o.y + i * step;
+        const float y = o.y + float(i) * step;
         g.dl->AddLine(ImVec2(min.x, y), ImVec2(max.x, y), i % major == 0 ? kGridMajor : kGridLine);
     }
 

@@ -55,7 +55,7 @@ void GraphScene::setStackGap(NodeId node, StackLayout layout)
 StackLayout GraphScene::stackLayout(NodeId id) const
 {
     const Node* n = m_project->find(id);
-    if (!n || inputShape(*n) != InputShape::Stack) return {};
+    if (!n || n->ports().inputs != InputShape::Stack) return {};
     StackLayout l = id == m_gapNode ? m_gap : StackLayout{};
     if (m_lifted && m_lifted->from == id)   // a layer lifted off it: its row closes up
         if (const auto* layer = m_lifted->slot.as<InputSlot::Layer>()) l.hidden = int(layer->index);
@@ -185,7 +185,7 @@ void GraphScene::addLinksInto(NodeId to, bool layersOnly)
     if (!n) return;
     std::erase_if(m_links, [&](const GraphLink& l) { return l.to == to && (!layersOnly || l.slot.is<InputSlot::Layer>()); });
     ++m_linksRevision;
-    for (const auto& [source, slot] : Links::into(*n))
+    for (const auto& [source, slot] : n->links().all())
         if (!layersOnly || slot.is<InputSlot::Layer>()) addLink(source->id(), to, slot);
 }
 

@@ -62,8 +62,7 @@ public:
     virtual ~Tool() = default;
 
     virtual const char* name() const = 0;
-    virtual ActionId pickAction() const = 0;      // picks it (command/action-ids.hpp)
-    virtual SDL_Keycode shortcut() const = 0;   // ... on this key, no modifiers
+    virtual ActionId pickAction() const = 0;      // picks it (command/action-ids.hpp; its key: ui/keymap)
     virtual void drawIcon(ImDrawList* dl, ImVec2 center, float size, ImU32 color) const = 0;
 
     virtual void drawProperties(ToolContext& ctx) = 0;   // inside the Tool Properties window
@@ -72,5 +71,5 @@ public:
     virtual void picked() {}   // picked through its own action (the toolbox, its key): its plain mode again
 
     virtual bool busy() const { return false; }   // mid-gesture (a stroke, a drag)
-    virtual void cancel(ActionRegistry&) {}       // switched away: finish whatever is going on
+    virtual void finish(ActionRegistry&) {}       // switched away: whatever is going on ends, as if let go
 };

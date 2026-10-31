@@ -98,7 +98,8 @@ void ColorPanel::draw()
     if (m_h != h0 || m_s != s0 || m_v != v0) {   // a control changed the colour: its action writes it
         float rgb[3];
         writeTo(rgb);
-        actions.run(Actions::ColorSet, { { "target", m_editSecondary ? "secondary" : "primary" }, { "r", rgb[0] }, { "g", rgb[1] }, { "b", rgb[2] } });
+        actions.run(Actions::ColorSet, { { ColorArgs::kTarget, m_editSecondary ? "secondary" : "primary" }, { ColorArgs::kR, rgb[0] },
+                                         { ColorArgs::kG, rgb[1] }, { ColorArgs::kB, rgb[2] } });
     }
 }
 

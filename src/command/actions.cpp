@@ -2,12 +2,11 @@
 #include "base/clock.hpp"
 #include "base/log.hpp"
 
-#include <SDL3/SDL_keyboard.h>
 #include <cassert>
 
 namespace {
 
-bool sameShortcut(const Shortcut& a, const Shortcut& b) { return a.key == b.key && a.mods == b.mods; }
+constexpr ArgKey<int64_t> kMade{ "made" };   // what an action made (a new node's id), in the log
 
 bool logged(ActionKind kind) { return kind == ActionKind::DocumentEdit || kind == ActionKind::Gesture || kind == ActionKind::AppState; }
 
@@ -37,12 +36,7 @@ std::string ActionRegistry::whyNot(const Action& action) const
     if (gesture ? (!action.begin || action.run) : (!action.run || action.begin || action.update || action.end || action.cancel))
         return "a gesture begins (and never runs), anything else runs";
     if (!gesture && (!action.endArgs.empty() || !action.updateArgs.empty())) return "only a gesture ends and updates";
-    // Panel scopes are never live together, but the global scope is live with either.
-    for (const Action& other : m_actions)
-        if (other.scope == action.scope || other.scope == ActionScope::Global || action.scope == ActionScope::Global)
-            for (const Shortcut& s : action.shortcuts)
-                for (const Shortcut& o : other.shortcuts)
-                    if (sameShortcut(s, o)) return "its shortcut is " + std::string(other.id.name()) + "'s";
+    if (!action.shortcuts.empty()) return "its keys come from the keymap (bind)";
     return {};
 }
 
@@ -55,6 +49,30 @@ void ActionRegistry::add(Action action)
     }
     m_index.emplace(action.id.name(), m_actions.size());
     m_actions.push_back(std::move(action));
+}
+
+bool ActionRegistry::bind(ActionId id, Shortcut shortcut)
+{
+    const auto it = m_index.find(id.name());
+    std::string why;
+    if (it == m_index.end()) why = "no such action";
+    else if (shortcut.key == Key::Unknown) why = "no key";
+    else if (!m_actions[it->second].run) why = "a gesture isn't started by a key";
+    else {
+        // Panel scopes are never live together, but the global scope is live with either.
+        const ActionScope scope = m_actions[it->second].scope;
+        for (const Action& other : m_actions)
+            if (other.scope == scope || other.scope == ActionScope::Global || scope == ActionScope::Global)
+                for (const Shortcut& o : other.shortcuts)
+                    if (shortcut == o) why = "the key is " + std::string(other.id.name()) + "'s";
+    }
+    if (!why.empty()) {
+        Log::error("action", "%.*s: key %s not bound: %s", int(id.name().size()), id.name().data(), ::shortcutLabel(shortcut).c_str(), why.c_str());
+        assert(false && "a keymap mistake");
+        return false;
+    }
+    m_actions[it->second].shortcuts.push_back(shortcut);
+    return true;
 }
 
 const Action* ActionRegistry::find(ActionId id) const
@@ -72,11 +90,12 @@ ActionResult ActionRegistry::run(ActionId id, ActionArgs args)
         record(*a, args, ActionLogEntry::Status::Disabled);
         return {};
     }
-    if (!argsFit(*a, a->args, args)) return {};
+    if (!argsFit(*a, a->args, a->payload, args)) return {};
     openStep(*a);
     const ActionResult r = a->run(args);
     closeStep(*a);
-    if (r.made) args.add({ "made", r.made });
+    args.payload.reset();   // never logged
+    if (r.made) args.add({ kMade, r.made });
     record(*a, args, r ? ActionLogEntry::Status::Done : ActionLogEntry::Status::Refused);
     return r;
 }
@@ -91,7 +110,7 @@ bool ActionRegistry::beginGesture(ActionId id, ActionArgs args)
         record(*a, args, ActionLogEntry::Status::Disabled);
         return false;
     }
-    if (!argsFit(*a, a->args, args)) return false;
+    if (!argsFit(*a, a->args, a->payload, args)) return false;
     openStep(*a);
     if (!a->begin(args)) {
         closeStep(*a);
@@ -99,7 +118,7 @@ bool ActionRegistry::beginGesture(ActionId id, ActionArgs args)
         return false;
     }
     args.payload.reset();   // only for the handler
-    m_gestures[id.name()] = std::move(args);
+    m_gestures[id.name()] = { id, std::move(args) };
     return true;
 }
 
@@ -107,7 +126,7 @@ void ActionRegistry::updateGesture(ActionId id, const ActionArgs& args)
 {
     if (!inGesture(id)) return;
     const Action* a = find(id);
-    if (!a || !a->update || !argsFit(*a, a->updateArgs, args)) return;   // a mistaken update is refused (logged), the gesture goes on
+    if (!a || !a->update || !argsFit(*a, a->updateArgs, a->updatePayload, args)) return;   // a mistaken update is refused (logged), the gesture goes on
     a->update(args);
 }
 
@@ -115,10 +134,10 @@ ActionResult ActionRegistry::endGesture(ActionId id, ActionArgs args)
 {
     auto it = m_gestures.find(id.name());
     if (it == m_gestures.end()) return {};
-    ActionArgs logged = std::move(it->second);
+    ActionArgs logged = std::move(it->second.args);
     m_gestures.erase(it);
     const Action* a = find(id);
-    if (a && !argsFit(*a, a->endArgs, args)) {   // ends all the same: as if cancelled
+    if (a && !argsFit(*a, a->endArgs, nullptr, args)) {   // ends all the same: as if cancelled
         if (a->cancel) a->cancel(ActionArgs{});
         closeStep(*a);
         return {};
@@ -130,7 +149,7 @@ ActionResult ActionRegistry::endGesture(ActionId id, ActionArgs args)
     const ActionResult r = a && a->end ? a->end(all) : ActionResult{ true };
     if (a) closeStep(*a);
     logged.append(args);
-    if (r.made) logged.add({ "made", r.made });
+    if (r.made) logged.add({ kMade, r.made });
     if (a) record(*a, logged, r ? ActionLogEntry::Status::Done : ActionLogEntry::Status::Refused);
     return r;
 }
@@ -139,7 +158,7 @@ void ActionRegistry::cancelGesture(ActionId id)
 {
     auto it = m_gestures.find(id.name());
     if (it == m_gestures.end()) return;
-    const ActionArgs logged = std::move(it->second);
+    const ActionArgs logged = std::move(it->second.args);
     m_gestures.erase(it);
     const Action* a = find(id);
     if (a && a->cancel) a->cancel(ActionArgs{});
@@ -154,9 +173,10 @@ bool ActionRegistry::inGesture(ActionId id) const
 
 // ---------------------------------------------------------------- log
 
-bool ActionRegistry::argsFit(const Action& a, std::span<const ArgSpec> specs, const ActionArgs& args)
+bool ActionRegistry::argsFit(const Action& a, std::span<const ArgSpec> specs, const std::type_info* payload, const ActionArgs& args)
 {
     std::string why = checkArgs(specs, args);
+    if (why.empty()) why = checkPayload(payload, args.payload);
     if (why.empty()) return true;
     Log::error("action", "%.*s refused: %s", int(a.id.name().size()), a.id.name().data(), why.c_str());   // a caller's mistake, whatever the kind
     record(a, args, ActionLogEntry::Status::Refused, std::move(why));
@@ -166,7 +186,7 @@ bool ActionRegistry::argsFit(const Action& a, std::span<const ArgSpec> specs, co
 void ActionRegistry::record(const Action& a, const ActionArgs& args, ActionLogEntry::Status status, std::string why)
 {
     if (!logged(a.kind)) return;
-    ActionLogEntry e{ Clock::seconds(), a.kind, a.id, args.format(), status, std::move(why) };
+    ActionLogEntry e{ Clock::sinceStart(), a.kind, a.id, args.format(), status, std::move(why) };
     // Repeated runs of a coalescing action in one interaction: one line, with the last values.
     if (a.coalesce && status == ActionLogEntry::Status::Done) {
         if (m_hasPending && m_pending.id != e.id) flushPending();
@@ -188,7 +208,7 @@ void ActionRegistry::flushPending()
 void ActionRegistry::write(ActionLogEntry e)
 {
     static constexpr const char* kStatus[] = { "", " (refused)", " (disabled)", " (cancelled)" };
-    Log::info("action", "%8.2fs %-7s %.*s%s%s%s", e.seconds, actionKindName(e.kind), int(e.id.name().size()), e.id.name().data(),
+    Log::info("action", "%8.2fs %-7s %.*s%s%s%s", e.at.count(), actionKindName(e.kind), int(e.id.name().size()), e.id.name().data(),
               e.args.empty() ? "" : " ", e.args.c_str(), kStatus[int(e.status)]);
     m_log.push_back(std::move(e));
     if (m_log.size() > kLogCapacity) m_log.pop_front();
@@ -201,7 +221,7 @@ void ActionRegistry::endFrame(bool interacting)
     // Nothing held, yet a gesture is open: whatever was to end it never came (its panel closed
     // mid-drag). Cancelled, so its undo step closes.
     std::vector<ActionId> stuck;
-    for (const auto& [name, args] : m_gestures) stuck.push_back(ActionId(name));
+    for (const auto& [name, open] : m_gestures) stuck.push_back(open.id);
     for (const ActionId id : stuck) cancelGesture(id);
 }
 
@@ -284,5 +304,5 @@ std::string modifiersLabel(uint8_t mods)
 
 std::string shortcutLabel(const Shortcut& s)
 {
-    return modifiersLabel(s.mods) + SDL_GetKeyName(s.key);
+    return modifiersLabel(s.mods) + keyName(s.key);
 }

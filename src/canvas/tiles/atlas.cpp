@@ -1,4 +1,5 @@
 #include "canvas/tiles/atlas.hpp"
+#include "gfx/error-scope.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -8,10 +9,15 @@
 AtlasPages::Slot AtlasPages::allocate(const CanvasPipelines& p)
 {
     const Slot s = m_slots.allocate(p.ctx.device);
-    while (m_bindGroups.size() < m_slots.pageCount()) {   // a new page: its bind group
+    if (!s) {
+        m_full = true;
+        return s;
+    }
+    m_bindGroups.resize(m_slots.pageCount());
+    if (!m_bindGroups[size_t(s.page)]) {   // a new page, or one made again: its bind group
         WGPUBindGroupEntry entries[2]{};
         entries[0].binding     = 0;
-        entries[0].textureView = m_slots.texture(int(m_bindGroups.size())).view();
+        entries[0].textureView = m_slots.texture(s.page).view();
         entries[1].binding     = 1;
         entries[1].sampler     = p.atlasSampler;
         WGPUBindGroupDescriptor gd{};
@@ -19,9 +25,16 @@ AtlasPages::Slot AtlasPages::allocate(const CanvasPipelines& p)
         gd.layout     = p.atlasLayout;
         gd.entryCount = 2;
         gd.entries    = entries;
-        m_bindGroups.emplace_back(wgpuDeviceCreateBindGroup(p.ctx.device, &gd));
+        m_bindGroups[size_t(s.page)].reset(wgpuDeviceCreateBindGroup(p.ctx.device, &gd));
     }
     return s;
+}
+
+void AtlasPages::recycle()
+{
+    m_slots.recycle();
+    for (size_t i = 0; i < m_bindGroups.size(); ++i)
+        if (!m_slots.texture(int(i))) m_bindGroups[i].reset();   // its texture went: the group with it
 }
 
 void AtlasPages::upload(const CanvasPipelines& p, Slot s, const RGBA* pixels)
@@ -52,15 +65,23 @@ void AtlasPages::release()
 {
     m_bindGroups.clear();   // before the textures they bind
     m_slots.release();
+    m_full = false;
 }
 
 // ---------------------------------------------------------------- atlases
 
-void TileAtlas::upload(const CanvasPipelines& p, TileKey key, const RGBA* pixels)
+bool TileAtlas::upload(const CanvasPipelines& p, TileKey key, const RGBA* pixels)
 {
     auto [it, inserted] = m_chunks.try_emplace(key);
-    if (inserted) it->second = m_pages->allocate(p);   // new tile: a slot
+    if (inserted) {   // a new tile: a slot
+        it->second = m_pages->allocate(p);
+        if (!it->second) {
+            m_chunks.erase(it);
+            return false;
+        }
+    }
     m_pages->upload(p, it->second, pixels);
+    return true;
 }
 
 void TileAtlas::free(TileKey key)
@@ -97,7 +118,7 @@ bool TileDrawList::add(TileKey key, float x, float y, float size, float subX, fl
     auto it = m_atlas->m_chunks.find(key);
     if (it == m_atlas->m_chunks.end()) return false;
     const P::Slot& c = it->second;
-    constexpr float N = (float)Tile::kSize;
+    constexpr float N = float(Tile::kSize);
     ChunkInstance inst{};
     inst.center[0]   = x + size * 0.5f;
     inst.center[1]   = y + size * 0.5f;
@@ -108,7 +129,7 @@ bool TileDrawList::add(TileKey key, float x, float y, float size, float subX, fl
     inst.uvOffset[1] = (float(slots.originY(c) + P::kGutter) + subY * N) / P::kPageSize;
     inst.uvScale[0]  = subSize * N / P::kPageSize;
     inst.uvScale[1]  = subSize * N / P::kPageSize;
-    m_building[c.page].push_back(inst);
+    m_building[size_t(c.page)].push_back(inst);
     return true;
 }
 
@@ -128,13 +149,16 @@ bool TileDrawList::end(const CanvasPipelines& p, float opacity)
         if (same) continue;
         if (!inst.empty()) {
             if (!page.buffer) {
+                GpuErrorScope scope(p.ctx.device);
                 WGPUBufferDescriptor bd{};
                 bd.label = sv("Atlas Page Instances");
                 bd.size  = sizeof(ChunkInstance) * size_t(m_atlas->m_pages->m_slots.slotsPerPage());
                 bd.usage = WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst;
                 page.buffer.reset(wgpuDeviceCreateBuffer(p.ctx.device, &bd));
+                if (scope.failed("tile instances")) page.buffer.reset();
             }
-            wgpuQueueWriteBuffer(p.ctx.queue, page.buffer, 0, inst.data(), inst.size() * sizeof(ChunkInstance));
+            if (page.buffer) wgpuQueueWriteBuffer(p.ctx.queue, page.buffer, 0, inst.data(), inst.size() * sizeof(ChunkInstance));
+            else inst.clear();   // nothing to draw them from
         }
         page.instances = std::move(inst);
         changed = true;
@@ -150,10 +174,10 @@ void TileDrawList::draw(WGPURenderPassEncoder pass) const
     const size_t pages = std::min(m_pages.size(), bindGroups.size());
     for (size_t i = 0; i < pages; ++i) {
         const Page& page = m_pages[i];
-        if (page.instances.empty()) continue;
+        if (page.instances.empty() || !bindGroups[i]) continue;   // a page that gave its texture back holds no tile
         wgpuRenderPassEncoderSetBindGroup(pass, 1, bindGroups[i], 0, nullptr);
         wgpuRenderPassEncoderSetVertexBuffer(pass, 0, page.buffer, 0, page.instances.size() * sizeof(ChunkInstance));
-        wgpuRenderPassEncoderDraw(pass, 4, (uint32_t)page.instances.size(), 0, 0);
+        wgpuRenderPassEncoderDraw(pass, 4, uint32_t(page.instances.size()), 0, 0);
     }
 }
 

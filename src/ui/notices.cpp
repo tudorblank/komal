@@ -9,7 +9,7 @@
 void Notices::post(std::string text)
 {
     Log::info("notice", "%s", text.c_str());
-    m_shown.push_back({ std::move(text), Deadline::in(kShowMs) });
+    m_shown.push_back({ std::move(text), Deadline::in(kShow) });
     while (m_shown.size() > kMaxShown) m_shown.pop_front();
 }
 
@@ -33,8 +33,8 @@ void Notices::draw()
     }
 }
 
-double Notices::nextFrameIn() const
+Clock::Seconds Notices::nextFrameIn() const
 {
     if (m_shown.empty()) return kNoFrame;
-    return m_shown.front().until.msLeft() / 1000.0;
+    return m_shown.front().until.left();
 }

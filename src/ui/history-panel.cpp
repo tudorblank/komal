@@ -1,4 +1,5 @@
 #include "ui/history-panel.hpp"
+#include "document/document-actions.hpp"
 #include "command/actions.hpp"
 #include "document/project.hpp"
 #include "ui/widgets/widgets.hpp"
@@ -97,7 +98,7 @@ void HistoryPanel::draw()
     const bool hovered = ImGui::IsItemHovered();
     const int hoveredRow = hovered ? int((ImGui::GetIO().MousePos.y - origin.y) / rowH) : -1;
     if (ImGui::IsItemClicked() && hoveredRow >= 0 && hoveredRow < int(count) && uint32_t(hoveredRow) != current)
-        actions.run(Actions::HistoryGoTo, { { "step", hoveredRow } });
+        actions.run(Actions::HistoryGoTo, { { DocArgs::kStep, StepId(hoveredRow) } });
 
     // The current step stays in view when it changes (an undo, a jump, a new step).
     if (history.current() != m_shownCurrent) {

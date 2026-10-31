@@ -23,7 +23,7 @@
 namespace Widgets {
 
 struct Metrics {
-    float unit;              // UI scale: font size / 15
+    float unit;              // UI scale: font size / kBaseFontSize (ui/theme.hpp)
     float rowHeight;         // every row
     float boxHeight;         // fields, buttons, swatches
     float fieldWidth;        // value fields

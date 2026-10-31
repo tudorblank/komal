@@ -1,16 +1,29 @@
 #pragma once
+// Image files decoded (stb_image: PNG, JPEG, BMP, TGA, PSD composite, GIF first frame, ...), for
+// import. Safe on any thread. Refused before decoding when the picture is bigger than the app takes.
 
-#include "raster/tile.hpp"
+#include "raster/raster-data.hpp"
 
+#include <cstdint>
+#include <memory>
 #include <string>
-#include <vector>
 
-struct ImageFile {
-    std::vector<RGBA> pixels;   // premultiplied, canonical, row by row
-    int width = 0, height = 0;
-    std::string name;           // file name without directory or extension
+constexpr uint64_t kMaxImagePixels = uint64_t(1) << 28;   // 16384 x 16384: a gigabyte decoded
+
+// An image file decoded: RGBA8, premultiplied, row by row, in the decoder's own memory (held
+// until it goes: the tiles take it from there, no copy in between).
+class DecodedImage {
+public:
+    int width() const { return m_width; }
+    int height() const { return m_height; }
+    FlatImage flat() const;
+    void release();
+
+private:
+    friend bool loadImageFile(const std::string& path, DecodedImage& out, std::string& error);
+    struct Free { void operator()(uint8_t* pixels) const; };
+    std::unique_ptr<uint8_t, Free> m_pixels;
+    int m_width = 0, m_height = 0;
 };
 
-// stb_image reads (PNG, JPEG, BMP, TGA, PSD composite, GIF first frame, ...).
-// multi-thread safe
-bool loadImageFile(const std::string& path, ImageFile& out, std::string& error);
+bool loadImageFile(const std::string& path, DecodedImage& out, std::string& error);

@@ -49,9 +49,8 @@ bool sameRun(const SDL_Event& a, const SDL_Event& b)
 // A key held that repeats while typing (not a modifier).
 bool editingKeyHeld(const InputFrame& input)
 {
-    for (SDL_Keycode k : input.held)
-        if (k != SDLK_LCTRL && k != SDLK_RCTRL && k != SDLK_LSHIFT && k != SDLK_RSHIFT &&
-            k != SDLK_LALT && k != SDLK_RALT && k != SDLK_LGUI && k != SDLK_RGUI) return true;
+    for (Key k : input.held)
+        if (!isModifierKey(k)) return true;
     return false;
 }
 
@@ -97,14 +96,14 @@ void ImGuiFeed::endEvents()
     flushMove();
 }
 
-double ImGuiFeed::nextFrameIn(Clock::TimePoint frameStart, const InputFrame& input) const
+Clock::Seconds ImGuiFeed::nextFrameIn(Clock::TimePoint frameStart, const InputFrame& input) const
 {
-    constexpr double kTick        = 0.1;   // 10 frames a second
-    constexpr double kTooltipRest = 0.6;   // every ImGui tooltip delay is shorter
-    if (!m_held.empty()) return 0.0;       // events wait for the next frame
+    constexpr Clock::Seconds kTick{ 0.1 };          // 10 frames a second
+    constexpr Clock::Seconds kTooltipRest{ 0.6 };   // every ImGui tooltip delay is shorter
+    if (!m_held.empty()) return kFrameNow;          // events wait for the next frame
     const ImGuiIO& io = ImGui::GetIO();
-    if (io.WantTextInput) return editingKeyHeld(input) ? double(io.KeyRepeatRate) : kTick;
-    const double sinceMove = std::max(0.0, Clock::msBetween(m_lastMove, frameStart) / 1000.0);
+    if (io.WantTextInput) return editingKeyHeld(input) ? Clock::Seconds(double(io.KeyRepeatRate)) : kTick;
+    const Clock::Seconds sinceMove = std::max(Clock::Seconds(0), Clock::between(m_lastMove, frameStart));
     if (ImGui::IsAnyItemHovered() && sinceMove < kTooltipRest) return kTick;
     return kNoFrame;
 }

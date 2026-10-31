@@ -69,7 +69,7 @@ bool RasterItem::rebuildInstances(const CanvasFrame& frame, const TileRect& rang
         // Not there yet: the matching part of the nearest coarser level that has it...
         for (int m = L + 1; m < kLevels; ++m) {
             const int up = m - L;
-            const TileKey parent = RasterTiles::parentKey(key, up);
+            const TileKey parent = TileLevels::parentKey(key, up);
             if (!m_tiles->atlas(m).contains(parent)) {
                 if (m_tiles->current(m, parent)) return;   // empty up there too
                 continue;

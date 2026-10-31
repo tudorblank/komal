@@ -3,7 +3,7 @@
 // final by then). Views keep their own items and update them from these; nothing re-reads the
 // whole project. Pixels travel separately, as dirty tiles through the node graph.
 
-#include "document/input-slot.hpp"
+#include "node/node.hpp"
 
 #include <functional>
 

@@ -39,17 +39,19 @@ public:
     TileReader reader() const { return m_grid.reader(); }
     template<class F> void forEachTile(F&& f) const { m_grid.forEachRead(std::forward<F>(f)); }
     size_t tileCount() const { assert(!m_pendingEdits); return m_grid.size(); }
+    size_t bytes() const { return m_grid.bytes(); }   // the memory its pixels take (history apart)
     uint64_t revision() const { return m_revision; }   // bumps on every commit that changed something
 
-    // ---- history
-    // An edit through a RasterEditor (the one way pixels change), recorded: one commit, which
-    // flip() undoes and redoes (kNoRasterCommit if nothing changed).
+    // ---- history: the only two ways pixels change
+    // An edit through a RasterEditor, recorded: one commit, which flip() undoes and redoes
+    // (kNoRasterCommit if nothing changed).
     RasterCommitId recordEdit(const std::function<void(RasterEditor&)>& body, EditSummary& summary);
     const RasterHistory& history() const { return m_history; }
     EditSummary flip(RasterCommitId id);   // undoes the commit, or redoes it if it is undone
 
 private:
     friend class RasterEditor;
+    EditSummary applyStep(TileDelta& step);   // swaps every entry with the current tile
 
     RasterId m_id;
     TileGrid m_grid;
@@ -71,11 +73,13 @@ private:
 };
 
 // === GATHER === //
+// An image outside the raster: RGBA8 premultiplied, row by row (width * height * 4 bytes). Made
+// canonical as it's gathered into tiles.
 struct FlatImage {
-    std::span<const RGBA> pixels;   // row by row, width * height entries, any alpha convention
+    std::span<const uint8_t> rgba;
     int width, height;
 
-    const RGBA* rowFrom(int x, int y) const { return &pixels[size_t(y) * width + x]; }
+    const uint8_t* rowFrom(int x, int y) const { return &rgba[(size_t(y) * size_t(width) + size_t(x)) * sizeof(RGBA)]; }
 };
 
 // out = the part of `image` (placed at imageX, imageY) that covers `area`.
@@ -126,15 +130,18 @@ inline bool gatherFromTiles(Tile& out, TileReader& source, const TileSpan& destA
 }
 
 // === RASTER EDITOR === //
-// One edit session on a raster. Edits are tracked per tile; commit() frees tiles that became
-// empty, updates bounds and the revision, and reports what changed.
+// One edit session on a raster, opened only by the raster itself (recordEdit, flip). Edits are
+// tracked per tile; commit() frees tiles that became empty, updates bounds and the revision, and
+// reports what changed.
 class RasterEditor {
-public:
+    friend class RasterData;
     explicit RasterEditor(RasterData& r) : m_r(r)
     {
         assert(!r.m_editor && "one RasterEditor per raster at a time");
         r.m_editor = this;
     }
+
+public:
     RasterEditor(const RasterEditor&) = delete;
     RasterEditor& operator=(const RasterEditor&) = delete;
     ~RasterEditor()
@@ -212,7 +219,7 @@ public:
         assert(params.mode != CompositeMode::Replace);
         assert(TileUtils::inWorld(imageX) && TileUtils::inWorld(imageY));
         assert(image.width > 0 && image.height > 0);
-        assert(image.pixels.size() == size_t(image.width) * size_t(image.height));
+        assert(image.rgba.size() == size_t(image.width) * size_t(image.height) * sizeof(RGBA));
 
         BoundsI imagePart{ 0, 0, image.width - 1, image.height - 1 };
         if (cropToImageRect) imagePart = imagePart.intersect(*cropToImageRect);
@@ -348,14 +355,14 @@ inline void lift(TileReader& src, const BoundsI& rect, TileGrid& out)
 }
 
 // Swaps every entry of `step` with the raster's current tile (undo and redo alike).
-[[nodiscard]] inline EditSummary applyStep(RasterData& r, TileDelta& step)
+inline EditSummary RasterData::applyStep(TileDelta& step)
 {
-    RasterEditor ed(r);   // no recorder: undo itself isn't recorded
+    RasterEditor ed(*this);   // no recorder: undo itself isn't recorded
     for (TileDelta::Entry& e : step.entries) {
         const auto [tx, ty] = TileUtils::unpackKey(e.key);
 
         std::unique_ptr<Tile> now;   // what's there right now
-        if (const Tile* cur = r.getReadTile(tx, ty)) {
+        if (const Tile* cur = getReadTile(tx, ty)) {
             now = std::make_unique<Tile>();
             now->copyFrom(*cur);
         }
@@ -383,5 +390,5 @@ inline RasterCommitId RasterData::recordEdit(const std::function<void(RasterEdit
 
 inline EditSummary RasterData::flip(RasterCommitId id)
 {
-    return applyStep(*this, m_history.at(id));
+    return applyStep(m_history.at(id));
 }

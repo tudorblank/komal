@@ -30,7 +30,7 @@
 
 ## Building
 
-You'll need CMake 3.24+, Ninja and a C++20 compiler. Everything else is downloaded at configure time. If SDL3 or abseil are installed system-wide, those are used instead.
+You'll need CMake 3.25+, Ninja and a C++20 compiler. Everything else is downloaded at configure time, pinned and checked by its hash. `-DKOMAL_SYSTEM_DEPS=ON` uses an installed SDL3 and abseil instead.
 
 ```sh
 # Linux
@@ -47,7 +47,7 @@ cmake --preset windows-msvc-x64
 cmake --build --preset windows-msvc-x64-release
 ```
 
-There are `-debug` variants of each, plus `windows-release` for cross-compiling from Linux with mingw-w64. On Linux, `cmake --install` puts the binary, a `.desktop` file and the icon in the usual places.
+There are `-debug` variants of each (warnings are errors there), `linux-asan` for AddressSanitizer and UBSan, plus `windows-release` for cross-compiling from Linux with mingw-w64. On Linux, `cmake --install` puts the binary, a `.desktop` file and the icon in the usual places.
 
 ## Credits
 

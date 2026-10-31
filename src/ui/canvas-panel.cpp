@@ -1,6 +1,8 @@
 #include "canvas-panel.hpp"
+#include "document/document-actions.hpp"
 #include "base/palette.hpp"
 #include "canvas/canvas-engine.hpp"
+#include "canvas/imgui-texture.hpp"
 #include "document/project.hpp"
 #include "ui/navigation.hpp"
 #include "ui/tools/tool-manager.hpp"
@@ -70,6 +72,23 @@ void CanvasPanel::onProjectEvent(const ProjectEvent& e)
     }
 }
 
+void CanvasPanel::releaseGpu()
+{
+    m_view.shutdown();
+    m_scene.releaseGpu();
+    m_ready = false;
+}
+
+void CanvasPanel::restoreGpu()
+{
+    if (!m_output) {   // never made (no GPU at start): made now
+        init();
+        return;
+    }
+    m_ready = ui().canvas.ready() && m_scene.init(ui().canvas.pipelines()) && m_view.init(m_scene);
+    if (m_ready) m_view.camera() = ui().project.canvasCamera();
+}
+
 void CanvasPanel::shutdown()
 {
     m_projectEvents.disconnect();
@@ -111,7 +130,7 @@ void CanvasPanel::draw()
             handleInput(origin);
 
             ImDrawList* dl = ImGui::GetWindowDrawList();
-            dl->AddImage((ImTextureID)(uintptr_t)m_view.texture(), origin, ImVec2(origin.x + avail.x, origin.y + avail.y));
+            dl->AddImage(imguiTexture(m_view.texture()), origin, ImVec2(origin.x + avail.x, origin.y + avail.y));
             m_view.drawOverlays(dl, origin.x, origin.y);
             drawHud(dl, origin);
         }
@@ -121,7 +140,7 @@ void CanvasPanel::draw()
 
 void CanvasPanel::tellSize(Vec2 size)
 {
-    if (size != ui().project.canvasViewport()) ui().actions.run(Actions::CanvasViewport, { { "width", size.x }, { "height", size.y } });
+    if (size != ui().project.canvasViewport()) ui().actions.run(Actions::CanvasViewport, { { DocArgs::kWidth, size.x }, { DocArgs::kHeight, size.y } });
 }
 
 bool CanvasPanel::dropTarget(const ImGuiWindow* window, ImVec2 screen, Vec2& world) const
@@ -143,14 +162,14 @@ void CanvasPanel::handleInput(const ImVec2& origin)
     // Navigation that works whatever the tool.
     if (hovered && (io.MouseWheel != 0.0f || io.MouseWheelH != 0.0f)) {
         if (ui().input.mods & ModPrimary)
-            ui().actions.run(Actions::CanvasZoom, { { "factor", std::pow(Navigation::kWheelZoomStep, io.MouseWheel) }, { "x", mouse.x }, { "y", mouse.y } });
+            ui().actions.run(Actions::CanvasZoom, { { DocArgs::kFactor, std::pow(Navigation::kWheelZoomStep, io.MouseWheel) }, { DocArgs::kX, mouse.x }, { DocArgs::kY, mouse.y } });
         else
-            ui().actions.run(Actions::CanvasPan, { { "dx", io.MouseWheelH * Navigation::kWheelPanStep }, { "dy", io.MouseWheel * Navigation::kWheelPanStep } });
+            ui().actions.run(Actions::CanvasPan, { { DocArgs::kDx, io.MouseWheelH * Navigation::kWheelPanStep }, { DocArgs::kDy, io.MouseWheel * Navigation::kWheelPanStep } });
     }
     if (active && ImGui::IsMouseDown(ImGuiMouseButton_Middle) && (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f))
-        ui().actions.run(Actions::CanvasPan, { { "dx", io.MouseDelta.x }, { "dy", io.MouseDelta.y } });
+        ui().actions.run(Actions::CanvasPan, { { DocArgs::kDx, io.MouseDelta.x }, { DocArgs::kDy, io.MouseDelta.y } });
     m_hasPointer = hovered || active;
-    ui().tools.setSpringHand(m_hasPointer && !io.WantTextInput && ui().input.isDown(SDLK_SPACE));
+    ui().tools.setSpringHand(m_hasPointer && !io.WantTextInput && ui().input.isDown(Key::Space));
     if (m_hasPointer) ui().actions.claimKeyboard(ActionScope::Canvas, KeyboardClaim::Pointer);   // [ ] brush size, ... next frame
 
     // The rest is the tool's: ImGui decides whether the pointer is ours, SDL gives every sample.
@@ -169,8 +188,8 @@ void CanvasPanel::updateOutlines()
     // Under the edit in progress: they follow a drag or a stroke as it goes.
     std::vector<BoundsI> outlined;
     const NodeSelection& selection = ui().project.selection();
-    for (NodeId id : selection.ids()) outlined.push_back(m_preview->bounds(id));
-    if (selection.empty() && ui().project.activeRaster()) outlined.push_back(m_preview->bounds(ui().project.activeRasterId()));
+    for (NodeId id : selection.ids()) outlined.push_back(m_preview->model().bounds(id));
+    if (selection.empty() && ui().project.activeRaster()) outlined.push_back(m_preview->model().bounds(ui().project.activeRasterId()));
     std::erase_if(outlined, [](const BoundsI& b) { return b.empty(); });
     while (m_selectionBounds.size() < outlined.size()) {
         m_selectionBounds.push_back(m_scene.addItem<OutlineItem>());
@@ -178,7 +197,7 @@ void CanvasPanel::updateOutlines()
     }
     for (size_t i = 0; i < m_selectionBounds.size(); ++i) {
         m_selectionBounds[i]->setVisible(i < outlined.size());
-        if (i < outlined.size()) m_selectionBounds[i]->setPixelBounds(outlined[i].minX, outlined[i].minY, outlined[i].maxX, outlined[i].maxY);
+        if (i < outlined.size()) m_selectionBounds[i]->setPixelBounds(outlined[i]);
     }
 
     // A drag that doesn't reach the master (nothing on the canvas changes): outline the area it
@@ -188,13 +207,13 @@ void CanvasPanel::updateOutlines()
     if (edited && (ui().project.isMaster(edited->id()) || ui().project.master().dependsOn(edited))) edited = nullptr;
     BoundsI from, to;
     if (edited) {
-        to = m_preview->bounds(edited->id());
+        to = m_preview->model().bounds(edited->id());
         if (pv->offsetOf(edited->id())) from = edited->bounds();
     }
     m_previewFrom->setVisible(!from.empty() && from != to);
-    if (!from.empty()) m_previewFrom->setPixelBounds(from.minX, from.minY, from.maxX, from.maxY);
+    if (!from.empty()) m_previewFrom->setPixelBounds(from);
     m_previewTo->setVisible(!to.empty());
-    if (!to.empty()) m_previewTo->setPixelBounds(to.minX, to.minY, to.maxX, to.maxY);
+    if (!to.empty()) m_previewTo->setPixelBounds(to);
 }
 
 void CanvasPanel::drawHud(ImDrawList* dl, const ImVec2& origin)

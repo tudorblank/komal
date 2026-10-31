@@ -22,7 +22,7 @@ void ToolManager::registerActions(ActionRegistry& actions)
     const auto idle = [this] { return !active().busy(); };
     for (const auto& t : m_tools) {
         Tool* tool = t.get();
-        actions.add({ .id = tool->pickAction(), .title = tool->name(), .kind = K::AppState, .shortcuts = { { tool->shortcut() } },
+        actions.add({ .id = tool->pickAction(), .title = tool->name(), .kind = K::AppState,
                       .enabled = idle, .checked = [this, tool] { return m_selected == tool; },
                       .run = [this, tool, &actions] {
                           select(*tool, actions);
@@ -30,19 +30,19 @@ void ToolManager::registerActions(ActionRegistry& actions)
                       } });
     }
 
-    // The colours: target, then the channels it changes (straight, 0..1).
-    const ArgSpec channel[] = { Arg::number("r", 0.0, 1.0), Arg::number("g", 0.0, 1.0), Arg::number("b", 0.0, 1.0), Arg::number("a", 0.0, 1.0) };
+    // The colours (ColorArgs).
+    using namespace ColorArgs;
+    const auto channel = [](ArgKey<float> key) { return Arg::number(key, 0.0, 1.0).optional(); };
     actions.add({ .id = Actions::ColorSet, .title = "Set Color", .kind = K::AppState,
-                  .args = { Arg::choice("target", { "primary", "secondary" }), channel[0].optional(), channel[1].optional(),
-                            channel[2].optional(), channel[3].optional() },
+                  .args = { Arg::choice(kTarget, { "primary", "secondary" }), channel(kR), channel(kG), channel(kB), channel(kA) },
                   .coalesce = true, .run = [this](const ActionArgs& a) {
-        float* c = a.text("target") == "secondary" ? m_colors.background : m_colors.foreground;
-        c[0] = float(a.number("r", c[0]));
-        c[1] = float(a.number("g", c[1]));
-        c[2] = float(a.number("b", c[2]));
-        c[3] = float(a.number("a", c[3]));
+        float* c = a.get(kTarget) == "secondary" ? m_colors.background : m_colors.foreground;
+        c[0] = a.get(kR, c[0]);
+        c[1] = a.get(kG, c[1]);
+        c[2] = a.get(kB, c[2]);
+        c[3] = a.get(kA, c[3]);
     } });
-    actions.add({ .id = Actions::ColorSwap, .title = "Swap Colors", .kind = K::AppState, .shortcuts = { { SDLK_X } },
+    actions.add({ .id = Actions::ColorSwap, .title = "Swap Colors", .kind = K::AppState,
                   .run = [this] { m_colors.swap(); } });
 
     for (const auto& t : m_tools) t->registerActions(actions, *this);
@@ -51,7 +51,7 @@ void ToolManager::registerActions(ActionRegistry& actions)
 void ToolManager::select(Tool& tool, ActionRegistry& actions)
 {
     if (&tool == m_selected) return;
-    m_selected->cancel(actions);
+    m_selected->finish(actions);
     m_selected = &tool;
 }
 

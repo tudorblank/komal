@@ -21,7 +21,7 @@
 //
 // The master has no body (no output; the canvas is its picture): its header sits on its stack.
 
-#include "document/input-slot.hpp"
+#include "node/node.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>   // ImRect

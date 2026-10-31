@@ -1,6 +1,6 @@
 #pragma once
-// What a RasterTiles reads: level 0 tiles from somewhere, which of them may hold something, and
-// which changed since it last asked. One kind per kind of pixels:
+// What levels of detail are made from (TileLevels): level 0 tiles from somewhere, which of them
+// may hold something, and which changed since it last asked. One kind per kind of pixels:
 //
 //   NodeOutputSource   what a node shows (its signals applied): the canvas, thumbnails, previews
 //   NodeWetSource      a node's raw wet (a raster's own pixels): what a preview reshapes

@@ -1,9 +1,11 @@
 #include "base/perf.hpp"
+#include "base/dev-switches.hpp"
 #include "base/log.hpp"
 
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <iterator>
 
 namespace Perf {
 namespace {
@@ -15,15 +17,16 @@ struct State {
     double sum[Count] = {};
     int    frames = 0, framesShown = 0;
     Clock::TimePoint windowStart = Clock::now();
-    bool   print = std::getenv("KOMAL_PERF") != nullptr;
+    bool   print = devSwitches().perfLog;
 };
 State g;
 
-constexpr const char* kNames[Count] = { "frame", "acquire", "stroke", "canvas", "canvas sync", "thumbnails", "graph" };
+constexpr const char* kNames[] = { "frame", "acquire", "stroke", "canvas", "canvas sync", "thumbnails", "graph" };
+static_assert(std::size(kNames) == Count, "a name per Counter, in its order");
 
 }
 
-void add(Counter c, double ms) { g.frame[c] += ms; }
+void add(Counter c, Clock::Seconds took) { g.frame[c] += Clock::Milliseconds(took).count(); }
 
 void endFrame()
 {
@@ -35,7 +38,7 @@ void endFrame()
     }
     ++g.frames;
     const Clock::TimePoint now = Clock::now();
-    if (Clock::msBetween(g.windowStart, now) < 1000.0) return;
+    if (Clock::between(g.windowStart, now) < Clock::Seconds(1.0)) return;
     if (g.print) {   // one line: fps, then each counter's average/worst ms
         char line[512];
         int n = std::snprintf(line, sizeof line, "%3d fps |", g.frames);
@@ -49,8 +52,8 @@ void endFrame()
     g.windowStart = now;
 }
 
-double average(Counter c) { return g.smooth[c]; }
-double worst(Counter c)   { return g.worstShown[c]; }
+Clock::Milliseconds average(Counter c) { return Clock::Milliseconds(g.smooth[c]); }
+Clock::Milliseconds worst(Counter c)   { return Clock::Milliseconds(g.worstShown[c]); }
 const char* name(Counter c) { return kNames[c]; }
 int fps() { return g.framesShown; }
 

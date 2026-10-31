@@ -3,6 +3,7 @@
 // Every action, in one registry: added once, found by id, run (or begun and ended, for a gesture)
 // with checked arguments, dispatched from shortcuts, and logged by kind.
 
+#include "base/clock.hpp"
 #include "command/action.hpp"
 
 #include <absl/container/flat_hash_map.h>
@@ -25,7 +26,7 @@ enum class KeyboardClaim : uint8_t {
 // One line of the log.
 struct ActionLogEntry {
     enum class Status : uint8_t { Done, Refused, Disabled, Cancelled };
-    double      seconds = 0.0;   // since the app started (base/clock.hpp)
+    Clock::Seconds at{};         // since the app started (base/clock.hpp)
     ActionKind  kind = ActionKind::Unset;
     ActionId    id;
     std::string args;            // as written
@@ -37,9 +38,12 @@ class ActionRegistry {
 public:
     ActionRegistry();
 
-    // Checked first, in every build: a unique id, a kind, run or begin to match it, and a shortcut
-    // that means one thing wherever it can fire. A malformed one is refused (logged).
+    // Checked first, in every build: a unique id, a kind, run or begin to match it. A malformed
+    // one is refused (logged).
     void add(Action action);
+    // A key for an action that's been added (the keymap, ui/keymap): one that means one thing
+    // wherever it can fire. False (logged) if not.
+    bool bind(ActionId id, Shortcut shortcut);
     const Action* find(ActionId id) const;
 
     // A command: runs and logs it. Refused (not done) if unknown or disabled.
@@ -79,7 +83,8 @@ private:
 
     std::string whyNot(const Action& action) const;   // empty: it may be added
     void record(const Action& a, const ActionArgs& args, ActionLogEntry::Status status, std::string why = {});
-    bool argsFit(const Action& a, std::span<const ArgSpec> specs, const ActionArgs& args);   // else refused, with why
+    // Else refused, with why: arguments against `specs`, the payload against `payload`.
+    bool argsFit(const Action& a, std::span<const ArgSpec> specs, const std::type_info* payload, const ActionArgs& args);
     bool isStep(const Action& a) const;
     void openStep(const Action& a)  { if (isStep(a) && m_openStep) m_openStep(a); }
     void closeStep(const Action& a) { if (isStep(a) && m_closeStep) m_closeStep(); }
@@ -88,7 +93,8 @@ private:
 
     std::vector<Action> m_actions;                       // in the order they were added (menus, dispatch)
     absl::flat_hash_map<std::string_view, size_t> m_index;        // name -> m_actions index
-    absl::flat_hash_map<std::string_view, ActionArgs> m_gestures;  // in progress: name -> begin's arguments
+    struct OpenGesture { ActionId id; ActionArgs args; };   // begin's arguments
+    absl::flat_hash_map<std::string_view, OpenGesture> m_gestures;   // in progress, by name
     std::deque<ActionLogEntry> m_log;
     std::function<void(const Action&)> m_openStep;
     std::function<void()>              m_closeStep;

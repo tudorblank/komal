@@ -40,11 +40,13 @@ public:
     PanelInfo info() const override;
     bool init() override;   // draws the engine's output tiles with its pipelines
     void shutdown() override;
+    void releaseGpu() override;
+    void restoreGpu() override;
 
     void draw() override;   // window, input, image, overlays
     // The view renders if anything changed (the engine synced the tiles before).
     void renderGpu(WGPUCommandEncoder enc) override;
-    double nextFrameIn() const override { return busy() ? 0.0 : kNoFrame; }
+    Clock::Seconds nextFrameIn() const override { return busy() ? kFrameNow : kNoFrame; }
     // A file dropped at `screen` (`window` topmost): true if it lands on the canvas, with its world point.
     bool dropTarget(const ImGuiWindow* window, ImVec2 screen, Vec2& world) const;
     bool busy() const { return m_visible && m_view.busy(); }   // still catching up: needs more frames

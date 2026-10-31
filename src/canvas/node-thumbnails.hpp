@@ -11,6 +11,7 @@
 // (PreviewPicture, the preview's thumbnail branch), and the node's tiles wait: once the edit is
 // over they catch up, and the slot keeps the preview's last picture until they have.
 
+#include "base/frames.hpp"
 #include "canvas/preview/preview-picture.hpp"
 #include "canvas/tiles/tile-cache.hpp"
 #include "gfx/slot-pages.hpp"
@@ -47,7 +48,8 @@ public:
     void refresh(const Project& project, const Deadline& budget);   // once a frame, after the views: tiles and draws (CanvasEngine)
     void renderGpu(WGPUCommandEncoder enc);            // the slots refresh() changed, and the previewed ones
 
-    double nextFrameIn() const { return m_nextFrameIn; }   // tiles left to build: now (base/frames.hpp)
+    Clock::Seconds nextFrameIn() const { return m_nextFrameIn; }   // tiles left to build: now (base/frames.hpp)
+    size_t bytes() const { return m_pages.bytes(); }   // the pages the pictures are in
 
 private:
     static constexpr int kPageSize = 2048;
@@ -59,7 +61,7 @@ private:
         TileDrawList draw;
         GpuUniform   camera, checker;
         SlotPages::Slot slot;                 // its picture, in m_pages
-        int  fitX = 0, fitY = 0, fitW = 0, fitH = 0;   // the picture in its slot, pixels
+        PictureFit fit{};     // the picture in its slot
         bool stale = true;    // fitted anew, or it showed a preview: the slot needs rendering
         bool shown = false;   // a picture is in the slot (or there's nothing to show)
         bool empty = true;
@@ -80,5 +82,5 @@ private:
     absl::flat_hash_map<NodeId, std::unique_ptr<Thumb>> m_thumbs;
     absl::flat_hash_set<NodeId> m_requested;   // drawn this frame
     std::vector<NodeId> m_toRender;            // by refresh(), for renderGpu()
-    double m_nextFrameIn = 0.0;   // set by refresh()
+    Clock::Seconds m_nextFrameIn = kFrameNow;   // set by refresh()
 };

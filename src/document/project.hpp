@@ -3,26 +3,23 @@
 // every change told right after it's made (`changed`). Built from blocks, each its own small world:
 //
 //   NodeRegistry    the nodes, by id and in creation order, and every raster's data
-//   Links           what feeds a node, and the rules for linking (NodeInputs)
+//   Links           the document's rules for links (the nodes' own: Node::link)
 //   GraphState      the graph as history keeps it: captured when a step ends, restored by undo
-//   History         the tree of steps: raster commits and graph states
+//   StepRecorder    the steps: the History tree, the step open now, what changed since a capture
 //   StrokeSession   the brush stroke being painted: its coverage, until it's committed
 //   EditPreview     the edit in progress (a drag or a stroke), shown on the GPU until it's applied
 //
-// History knows the graph changed by a revision every graph event bumps: a step that leaves the
-// graph alone (a stroke) captures nothing and shares the last step's state.
+// History knows the graph changed by the nodes graph events named: a step that leaves the graph
+// alone (a stroke) captures nothing and shares the last step's state.
 
 #include "base/signal.hpp"
 #include "document/canvas-camera.hpp"
 #include "document/edit-preview.hpp"
-#include "document/graph-state.hpp"
-#include "document/history.hpp"
-#include "document/image-load.hpp"
-#include "document/input-slot.hpp"
 #include "document/links.hpp"
 #include "document/node-registry.hpp"
 #include "document/node-selection.hpp"
 #include "document/project-event.hpp"
+#include "document/step-recorder.hpp"
 #include "document/stroke-session.hpp"
 #include "node/node-kinds.hpp"
 #include "raster/brush.hpp"
@@ -48,9 +45,16 @@ public:
     bool    preferredInput(NodeId id, InputSlot& out) const;   // where a link dropped on its body goes (none: false)
 
     // ---- graph edits: true when they changed something (nothing to change, or not allowed: false)
-    NodeId createNode(NodeType type, float x, float y);   // named after its kind; the first raster becomes the active one
+    // A new node, named after its kind (the first raster becomes the active one), wired as asked:
+    // fed by `from` (into its natural input), feeding `into` at `slot`. All of it, or nothing (kNoNodeId).
+    struct NodeWiring {
+        NodeId    from = kNoNodeId;
+        NodeId    into = kNoNodeId;
+        InputSlot slot;
+    };
+    NodeId addNode(NodeType type, float x, float y, const NodeWiring& wiring);
     // A new raster node holding an image, already cut into tiles where they go (tilesFromImage,
-    // any thread). Not undoable.
+    // any thread). Its pixels are a raster commit of the step it's made in.
     struct ImportOptions {
         bool  addToMaster = true;    // as the master's new top layer
         bool  makeActive  = true;    // the raster the canvas paints into
@@ -72,6 +76,10 @@ public:
     bool canConnect(NodeId from, NodeId to, const InputSlot& slot) const;
     bool connect(NodeId from, NodeId to, const InputSlot& slot);
     bool disconnect(NodeId to, const InputSlot& slot);
+    // The link feeding `slot` of `from` (from `source`), moved: onto `toSlot` of `to`, or (to
+    // kNoNodeId) off. Checked first, on the graph without it (Links::canMove): all of it, or nothing.
+    bool canMoveLink(NodeId source, NodeId from, const InputSlot& slot, NodeId to, const InputSlot& toSlot) const;
+    bool moveLink(NodeId source, NodeId from, const InputSlot& slot, NodeId to, const InputSlot& toSlot);
     bool moveLayer(NodeId compositor, size_t from, size_t to);
 
     bool setSignalScale(NodeId id, NodeSignal s, NodeChannel c, float v);
@@ -86,9 +94,11 @@ public:
 
     // ---- brush strokes on the active raster: only the stroke's coverage grows while painting
     // (previewed). endStroke() composes it over the raster: one raster commit, one history step.
+    // cancelStroke() drops it: the raster never changed.
     void beginStroke(const BrushParams& params, StrokePoint at);
     void strokeTo(std::span<const StrokePoint> path);   // through every point
     void endStroke();
+    void cancelStroke();
     bool strokeActive() const { return m_stroke.active(); }
     const StrokeSession& stroke() const { return m_stroke; }   // its coverage and brush, for the preview
     bool activeRasterEditable() const;   // there's an active raster and it takes strokes
@@ -98,12 +108,13 @@ public:
     // merge into it, and a step that changed nothing isn't kept. The active raster isn't history.
     void beginStep(std::string label);
     void endStep();
-    bool canUndo() const { return !m_stroke.active() && m_stepDepth == 0 && m_history.canUndo(); }
-    bool canRedo() const { return !m_stroke.active() && m_stepDepth == 0 && m_history.canRedo(); }
+    bool canUndo() const { return !m_stroke.active() && !m_steps.open() && history().canUndo(); }
+    bool canRedo() const { return !m_stroke.active() && !m_steps.open() && history().canRedo(); }
     bool undo();
     bool redo();
     bool goToHistory(StepId step);   // any step of the tree, across branches
-    const History& history() const { return m_history; }
+    const History& history() const { return m_steps.history(); }
+    NodeRegistry::PixelBytes pixelBytes() const { return m_nodes.pixelBytes(); }   // the Info panel's memory line
 
     // ---- what the views share, so none of them changes another: the canvas and the graph follow
     // these through events. Changed only by actions (selection.set, canvas.*); never undone.
@@ -119,13 +130,15 @@ public:
 
 private:
     static GraphKey key() { return {}; }   // lent to the blocks that edit the graph
+    NodeId createNode(NodeType type, float x, float y);   // named after its kind; the first raster becomes the active one
     RasterRootNode* rasterAt(NodeId id) const;   // the raster node with that id (null: none, or not a raster)
     void emit(ProjectEventType t, NodeId n = kNoNodeId) { emit(ProjectEvent{ t, n, kNoNodeId, {} }); }
     void emit(const ProjectEvent& e);
     EmitEvent emitter() { return [this](const ProjectEvent& e) { emit(e); }; }   // for the blocks that change the graph
-    void emitInputChanges(NodeId to, const NodeInputs& before);   // ... against its inputs now
+    void emitInputChanges(NodeId to, const NodeLinks& before);   // ... against its links now
     bool previewTouches(const absl::flat_hash_set<NodeId>& nodes) const;   // the edit in progress names one of them
     void flipRasterCommit(const RasterCommitRef& c);
+    void recordCommit(const RasterCommitRef& commit, const char* label);   // into the open step (or one of its own)
     void restoreGraph(const GraphState& target);
     void fallBackActiveRaster();   // the active raster went: the most recently made one, if any
 
@@ -133,14 +146,7 @@ private:
     std::shared_ptr<CompositorNode> m_master;
     NodeId m_active = kNoNodeId;
 
-    History m_history;
-    int m_stepDepth = 0;                          // open steps (nested ones merge)
-    std::string m_stepLabel;
-    std::vector<RasterCommitRef> m_stepCommits;   // made while it's open
-    std::shared_ptr<const GraphState> m_stepBefore;   // the graph when it opened
-    uint64_t m_graphRevision   = 0;   // bumped by every event that changes what a GraphState holds
-    uint64_t m_historyRevision = 0;   // ... when the current step's graph was last known to be the live one
-    uint64_t m_stepRevision    = 0;   // ... when the open step opened
+    StepRecorder m_steps{ m_nodes };
 
     NodeSelection m_selection;
     CanvasCamera  m_canvasCamera;

@@ -1,6 +1,8 @@
 #include "gfx/texture.hpp"
-#include "base/log.hpp"
+#include "gfx/error-scope.hpp"
 #include "gfx/handles.hpp"
+
+#include <string>
 
 bool GpuTexture::create(WGPUDevice device, const Desc& desc)
 {
@@ -13,11 +15,12 @@ bool GpuTexture::create(WGPUDevice device, const Desc& desc)
     td.usage         = desc.usage;
     td.mipLevelCount = 1;
     td.sampleCount   = 1;
+    GpuErrorScope scope(device);
     m_texture.reset(wgpuDeviceCreateTexture(device, &td));
     if (m_texture) m_view.reset(wgpuTextureCreateView(m_texture, nullptr));
-    if (!m_view) {   // out of memory, or too big: what it was for shows nothing
+    const std::string what = std::string(desc.label) + ": a " + std::to_string(desc.width) + "x" + std::to_string(desc.height) + " texture";
+    if (scope.failed(what.c_str()) || !m_view) {   // out of memory, or too big: what it was for shows nothing
         reset();
-        Log::error("gpu", "%s: no %ux%u texture", desc.label, desc.width, desc.height);
         return false;
     }
     m_width  = desc.width;

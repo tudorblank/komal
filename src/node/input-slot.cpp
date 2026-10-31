@@ -1,19 +1,12 @@
-#include "document/input-slot.hpp"
+#include "node/input-slot.hpp"
 
 #include <charconv>
-
-namespace {
-
-constexpr const char* kSignalNames[]  = { "main", "dry", "wet" };
-constexpr const char* kChannelNames[] = { "a", "r", "g", "b" };
-
-}
 
 std::string InputSlot::text() const
 {
     if (const auto* l = as<Layer>())    return "layer:" + std::to_string(l->index);
     if (const auto* n = as<NewLayer>()) return "new:" + std::to_string(n->at);
-    if (const auto* m = as<Mask>())     return std::string("mask:") + kSignalNames[int(m->signal)] + "." + kChannelNames[int(m->channel)];
+    if (const auto* m = as<Mask>())     return std::string("mask:") + signalId(m->signal) + "." + channelId(m->channel);
     return "input";
 }
 
@@ -40,8 +33,8 @@ std::optional<InputSlot> InputSlot::parse(std::string_view t)
         const size_t dot = m.find('.');
         if (dot == std::string_view::npos) return std::nullopt;
         int signal = -1, channel = -1;
-        for (int i = 0; i < kSignalCount; ++i)  if (m.substr(0, dot) == kSignalNames[i]) signal = i;
-        for (int i = 0; i < kChannelCount; ++i) if (m.substr(dot + 1) == kChannelNames[i]) channel = i;
+        for (int i = 0; i < kSignalCount; ++i)  if (m.substr(0, dot) == signalId(NodeSignal(i))) signal = i;
+        for (int i = 0; i < kChannelCount; ++i) if (m.substr(dot + 1) == channelId(NodeChannel(i))) channel = i;
         if (signal < 0 || channel < 0) return std::nullopt;
         return mask(NodeSignal(signal), NodeChannel(channel));
     }

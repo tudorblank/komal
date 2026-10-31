@@ -1,6 +1,7 @@
 #include "command/action-args.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 namespace {
@@ -9,7 +10,7 @@ void formatValue(std::string& out, const ActionValue& v)
 {
     char buf[32];
     if (const int64_t* i = std::get_if<int64_t>(&v)) {
-        std::snprintf(buf, sizeof buf, "%lld", (long long)*i);
+        std::snprintf(buf, sizeof buf, "%lld", static_cast<long long>(*i));
         out += buf;
     } else if (const double* d = std::get_if<double>(&v)) {
         std::snprintf(buf, sizeof buf, "%g", *d);
@@ -25,7 +26,7 @@ void formatValue(std::string& out, const ActionValue& v)
         out += '[';
         for (size_t k = 0; k < list->size(); ++k) {
             if (k) out += ',';
-            std::snprintf(buf, sizeof buf, "%lld", (long long)(*list)[k]);
+            std::snprintf(buf, sizeof buf, "%lld", static_cast<long long>((*list)[k]));
             out += buf;
         }
         out += ']';
@@ -41,7 +42,7 @@ std::string quoted(std::string_view name) { return "'" + std::string(name) + "'"
 ActionArgs& ActionArgs::add(ActionArg arg)
 {
     for (ActionArg& a : m_args)
-        if (a.name == arg.name) { a.value = std::move(arg.value); return *this; }
+        if (a.m_name == arg.m_name) { a.m_value = std::move(arg.m_value); return *this; }
     m_args.push_back(std::move(arg));
     return *this;
 }
@@ -49,45 +50,8 @@ ActionArgs& ActionArgs::add(ActionArg arg)
 const ActionValue* ActionArgs::value(std::string_view name) const
 {
     for (const ActionArg& a : m_args)
-        if (a.name == name) return &a.value;
+        if (a.m_name == name) return &a.m_value;
     return nullptr;
-}
-
-int64_t ActionArgs::integer(std::string_view name, int64_t fallback) const
-{
-    const ActionValue* v = value(name);
-    const int64_t* i = v ? std::get_if<int64_t>(v) : nullptr;
-    return i ? *i : fallback;
-}
-
-double ActionArgs::number(std::string_view name, double fallback) const
-{
-    const ActionValue* v = value(name);
-    if (!v) return fallback;
-    if (const double* d = std::get_if<double>(v)) return *d;
-    if (const int64_t* i = std::get_if<int64_t>(v)) return double(*i);
-    return fallback;
-}
-
-bool ActionArgs::flag(std::string_view name, bool fallback) const
-{
-    const ActionValue* v = value(name);
-    const bool* b = v ? std::get_if<bool>(v) : nullptr;
-    return b ? *b : fallback;
-}
-
-std::string ActionArgs::text(std::string_view name) const
-{
-    const ActionValue* v = value(name);
-    const std::string* s = v ? std::get_if<std::string>(v) : nullptr;
-    return s ? *s : std::string();
-}
-
-std::vector<int64_t> ActionArgs::list(std::string_view name) const
-{
-    const ActionValue* v = value(name);
-    const auto* l = v ? std::get_if<std::vector<int64_t>>(v) : nullptr;
-    return l ? *l : std::vector<int64_t>();
 }
 
 std::string ActionArgs::format() const
@@ -95,9 +59,9 @@ std::string ActionArgs::format() const
     std::string out;
     for (const ActionArg& a : m_args) {
         if (!out.empty()) out += ' ';
-        out += a.name;
+        out += a.m_name;
         out += '=';
-        formatValue(out, a.value);
+        formatValue(out, a.m_value);
     }
     return out;
 }
@@ -109,23 +73,11 @@ void ActionArgs::append(const ActionArgs& more)
 
 // ---------------------------------------------------------------- specs
 
-namespace Arg {
-
-ArgSpec integer(std::string_view name, double min, double max) { return { name, ArgSpec::Type::Integer, true, min, max, {} }; }
-ArgSpec id(std::string_view name) { return integer(name, 1.0, double(UINT32_MAX)); }
-ArgSpec number(std::string_view name, double min, double max) { return { name, ArgSpec::Type::Number, true, min, max, {} }; }
-ArgSpec flag(std::string_view name) { return { name, ArgSpec::Type::Flag, true, -kAny, kAny, {} }; }
-ArgSpec text(std::string_view name) { return { name, ArgSpec::Type::Text, true, -kAny, kAny, {} }; }
-ArgSpec choice(std::string_view name, std::vector<std::string_view> choices) { return { name, ArgSpec::Type::Text, true, -kAny, kAny, std::move(choices) }; }
-ArgSpec ids(std::string_view name) { return { name, ArgSpec::Type::Ids, true, -kAny, kAny, {} }; }
-
-}
-
 std::string checkArgs(std::span<const ArgSpec> specs, const ActionArgs& args)
 {
     for (const ActionArg& a : args.all())
-        if (std::none_of(specs.begin(), specs.end(), [&](const ArgSpec& s) { return s.name == a.name; }))
-            return "unknown argument " + quoted(a.name);
+        if (std::none_of(specs.begin(), specs.end(), [&](const ArgSpec& s) { return s.name == a.name(); }))
+            return "unknown argument " + quoted(a.name());
     for (const ArgSpec& s : specs) {
         const ActionValue* v = args.value(s.name);
         if (!v) {
@@ -144,6 +96,7 @@ std::string checkArgs(std::span<const ArgSpec> specs, const ActionArgs& args)
             const double* d = std::get_if<double>(v);
             const int64_t* i = std::get_if<int64_t>(v);
             if (!d && !i) return quoted(s.name) + " isn't a number";
+            if (d && !std::isfinite(*d)) return quoted(s.name) + " isn't finite";
             if (!inRange(d ? *d : double(*i))) return quoted(s.name) + " is out of range";
             break;
         }
@@ -166,4 +119,11 @@ std::string checkArgs(std::span<const ArgSpec> specs, const ActionArgs& args)
         }
     }
     return {};
+}
+
+std::string checkPayload(const std::type_info* takes, const std::any& payload)
+{
+    if (!takes) return payload.has_value() ? "it takes no payload" : std::string();
+    if (!payload.has_value()) return "its payload is missing";
+    return payload.type() == *takes ? std::string() : "its payload is of the wrong type";
 }

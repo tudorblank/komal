@@ -28,10 +28,16 @@ struct InputFrame;
 
 class UserInterface {
 public:
-    UserInterface();   // every panel, as each starts (open or not)
+    explicit UserInterface(ActionRegistry& actions);   // the editor's; every panel, as each starts (open or not)
 
     bool init(GpuDevice& gpu, Project& project, const InputFrame& input, const HostInfo& host);   // call after ImGui + wgpu are up
     void shutdown();              // call before they go down
+
+    // The GPU device is made again (it was lost): everything the interface made on it goes, then
+    // is made on the new one.
+    void releaseGpu();
+    bool restoreGpu(GpuDevice& gpu);
+    void notice(std::string text) { m_notices.post(std::move(text)); }   // for the user (ui/notices)
 
     void draw();                              // ImGui side
     void renderGpu(WGPUCommandEncoder enc);   // wgpu side (offscreen passes)
@@ -39,7 +45,7 @@ public:
     bool quitRequested() const { return m_quit; }
     // When the UI next needs a frame without new input (base/frames.hpp): tiles still
     // syncing, a throttled picture or thumbnail, a hold turning into a gesture.
-    double nextFrameIn() const;
+    Clock::Seconds nextFrameIn() const;
     void openFile(std::string path) { m_importer.open(std::move(path)); }   // any thread: File > Import, command line
     // A file dropped at window (x, y): imported if it lands on the canvas or the graph.
     void dropFile(std::string path, float x, float y) { m_drops.push_back({ std::move(path), ImVec2(x, y) }); }
@@ -55,7 +61,7 @@ private:
     void registerAppActions();   // ui/app-actions.cpp: every app-state action
     void dispatchDrops();
 
-    ActionRegistry m_actions;   // first: the panels and tools register into it
+    ActionRegistry& m_actions;  // the editor's (document/editor.hpp): the app's, panels' and tools' actions join the document's
     ToolManager    m_tools;     // before the panels that use it
     CanvasEngine   m_canvas;    // ... and what canvas views draw with
     std::optional<UiContext> m_context;   // what every panel reads (Panel::ui()), from init() on
@@ -76,4 +82,5 @@ private:
 
     bool m_initialized = false;
     bool m_quit = false;
+    bool m_toldOutOfMemory = false;   // the user knows the GPU is full
 };

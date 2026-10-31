@@ -26,7 +26,7 @@ public:
     void drawOverlays(ImDrawList* dl, float originX, float originY);   // screen position of the view
 
 private:
-    static constexpr double kMaxHoldMs = 1000.0;
+    static constexpr Clock::Seconds kMaxHold{ 1.0 };
 
     CanvasScene*    m_scene = nullptr;
     CanvasCamera    m_camera;

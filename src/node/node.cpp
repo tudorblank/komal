@@ -1,6 +1,7 @@
 #include "node.hpp"
 
 #include <algorithm>
+#include <iterator>
 
 namespace {
 
@@ -54,6 +55,23 @@ MaskTile g_fullMask;   // only its address is used: "255 everywhere"
 
 }
 
+// ============================ NAMES ============================
+namespace {
+
+constexpr const char* kSignalIds[]     = { "main", "dry", "wet" };   // NodeSignal order
+constexpr const char* kSignalLabels[]  = { "Main", "Dry", "Wet" };
+constexpr const char* kChannelIds[]    = { "a", "r", "g", "b" };     // NodeChannel order
+constexpr const char* kChannelLabels[] = { "A", "R", "G", "B" };
+static_assert(std::size(kSignalIds) == kSignalCount && std::size(kSignalLabels) == kSignalCount);
+static_assert(std::size(kChannelIds) == kChannelCount && std::size(kChannelLabels) == kChannelCount);
+
+}
+
+const char* signalId(NodeSignal s)      { return kSignalIds[size_t(s)]; }
+const char* signalLabel(NodeSignal s)   { return kSignalLabels[size_t(s)]; }
+const char* channelId(NodeChannel c)    { return kChannelIds[size_t(c)]; }
+const char* channelLabel(NodeChannel c) { return kChannelLabels[size_t(c)]; }
+
 // ============================ RENDER CONTEXT ============================
 const MaskTile* const RenderCtx::kFullMask = &g_fullMask;
 
@@ -79,8 +97,27 @@ bool RenderCtx::findMask(const Node* n, int tx, int ty, const MaskTile*& out) co
     return true;
 }
 
+// ============================ LINKS ============================
+std::vector<std::pair<NodePtr, InputSlot>> NodeLinks::all() const
+{
+    std::vector<std::pair<NodePtr, InputSlot>> out;
+    if (input) out.push_back({ input, InputSlot::input() });
+    for (uint32_t i = 0; i < uint32_t(layers.size()); ++i) out.push_back({ layers[i], InputSlot::stackLayer(i) });
+    for (int s = 0; s < kSignalCount; ++s)
+        for (int ch = 0; ch < kChannelCount; ++ch)
+            if (masks[s][ch]) out.push_back({ masks[s][ch], InputSlot::mask(NodeSignal(s), NodeChannel(ch)) });
+    return out;
+}
+
+bool NodeLinks::empty() const
+{
+    if (input || !layers.empty()) return false;
+    for (const auto& s : masks) for (const NodePtr& m : s) if (m) return false;
+    return true;
+}
+
 // ============================ NODE ============================
-Node::Node()
+Node::Node(Ports ports) : m_ports(ports)
 {
     m_signals[int(NodeSignal::Dry)].scale[int(NodeChannel::A)] = 0.0f;   // dry is off by default
 }
@@ -92,12 +129,12 @@ const Tile* Node::fetch(int tx, int ty, RenderCtx& ctx)
 
     // Main first: where its alpha is zero here, nothing below is fetched.
     Gain main[4];
-    if (!planGains(signal(NodeSignal::Main), tx, ty, ctx, main)) return nullptr;
+    if (!planGains(NodeSignal::Main, tx, ty, ctx, main)) return nullptr;
 
     if (!dryOn()) {
         // Main(Wet(raw)), folded into one pass when the masks allow.
         Gain wet[4];
-        if (!planGains(signal(NodeSignal::Wet), tx, ty, ctx, wet)) return nullptr;
+        if (!planGains(NodeSignal::Wet, tx, ty, ctx, wet)) return nullptr;
         Gain folded[4];
         if (foldGains(wet, main, folded)) return applyGains(fetchWet(tx, ty, ctx), folded, ctx);
         return applyGains(applyGains(fetchWet(tx, ty, ctx), wet, ctx), main, ctx);
@@ -122,7 +159,14 @@ BoundsI Node::bounds() const
     return m_bounds;
 }
 
-// ---------------------------------------------------------------- signals / masks
+// ---------------------------------------------------------------- signals
+
+bool Node::signalIsIdentity(NodeSignal s) const
+{
+    for (int c = 0; c < kChannelCount; ++c)
+        if (m_signals[int(s)].scale[c] != 1.0f || m_links.masks[int(s)][c]) return false;
+    return true;
+}
 
 void Node::setScale(GraphKey, NodeSignal sig, NodeChannel ch, float v)
 {
@@ -137,36 +181,134 @@ void Node::setScale(GraphKey, NodeSignal sig, NodeChannel ch, float v)
     else changeKnown(footprint(), Bounds::Keep, Evict::Output, [&] { slot = v; });
 }
 
-bool Node::linkMask(GraphKey, NodePtr mask, NodeSignal sig, NodeChannel ch)
+// ---------------------------------------------------------------- links
+
+std::span<const NodePtr> Node::inputs() const
 {
-    if (!hasSignal(sig) || !canDependOn(mask)) return false;
-    NodePtr& slot = m_signals[int(sig)].mask[int(ch)];
-    if (slot == mask) return true;
-    changeKnown(footprint(), Bounds::Keep, Evict::Output, [&] { slot = std::move(mask); });
-    return true;
+    switch (m_ports.inputs) {
+    case InputShape::One:   return { &m_links.input, m_links.input ? 1u : 0u };
+    case InputShape::Stack: return m_links.layers;
+    case InputShape::None:  break;
+    }
+    return {};
 }
 
-bool Node::hasMasks() const
+NodePtr Node::linkAt(const InputSlot& slot) const
 {
-    for (const auto& s : m_signals) for (const auto& m : s.mask) if (m) return true;
+    if (slot.is<InputSlot::Input>()) return m_links.input;
+    if (const auto* layer = slot.as<InputSlot::Layer>()) return layer->index < m_links.layers.size() ? m_links.layers[layer->index] : nullptr;
+    if (const auto* m = slot.as<InputSlot::Mask>()) return mask(m->signal, m->channel);
+    return nullptr;   // a new layer is a position, not a link
+}
+
+bool Node::canLink(const NodePtr& source, const InputSlot& slot) const
+{
+    if (!source || !canDependOn(source)) return false;   // also rules out cycles
+    const auto& layers = m_links.layers;
+    const bool inStack = std::find(layers.begin(), layers.end(), source) != layers.end();
+    if (slot.is<InputSlot::Input>()) return m_ports.inputs == InputShape::One;
+    if (const auto* layer = slot.as<InputSlot::Layer>())
+        return m_ports.inputs == InputShape::Stack && layer->index < layers.size() && (!inStack || layers[layer->index] == source);
+    if (const auto* at = slot.as<InputSlot::NewLayer>()) return m_ports.inputs == InputShape::Stack && at->at <= layers.size();
+    if (const auto* m = slot.as<InputSlot::Mask>()) return hasSignal(m->signal);
     return false;
 }
 
-bool Node::clearMasksTo(GraphKey, const NodePtr& n)
+// Each port's rule for what changes: an input moves the whole output (bounds too); a layer the
+// tiles it covers; a mask reshapes the output where it already is.
+void Node::link(GraphKey key, const NodePtr& source, const InputSlot& slot)
 {
-    if (!n || !usesAsMask(n.get())) return false;
-    changeKnown(footprint(), Bounds::Keep, Evict::Output, [&] {
-        for (auto& s : m_signals) for (auto& m : s.mask) if (m == n) m = nullptr;
-    });
-    return true;
+    assert(canLink(source, slot));
+    if (slot.is<InputSlot::Input>()) {
+        if (m_links.input != source) change([&] { m_links.input = source; });
+    } else if (const auto* layer = slot.as<InputSlot::Layer>()) {
+        NodePtr& at = m_links.layers[layer->index];
+        if (at == source) return;
+        TileSet dirty;
+        at->addFootprint(dirty);
+        source->addFootprint(dirty);
+        changeKnown(std::move(dirty), Bounds::Recompute, Evict::All, [&] { at = source; });
+    } else if (const auto* pos = slot.as<InputSlot::NewLayer>()) {
+        auto& layers = m_links.layers;
+        if (const auto it = std::find(layers.begin(), layers.end(), source); it != layers.end()) {   // in it already: it moves
+            const size_t from = size_t(it - layers.begin());
+            const size_t to = pos->at > from ? pos->at - 1 : pos->at;   // it leaves its own place first
+            if (to != from) moveLayer(key, from, to);
+            return;
+        }
+        TileSet dirty;
+        source->addFootprint(dirty);
+        changeKnown(std::move(dirty), Bounds::Recompute, Evict::All,
+                    [&] { layers.insert(layers.begin() + std::ptrdiff_t(std::min<size_t>(pos->at, layers.size())), source); });
+    } else if (const auto* m = slot.as<InputSlot::Mask>()) {
+        NodePtr& held = m_links.masks[int(m->signal)][int(m->channel)];
+        if (held != source) changeKnown(footprint(), Bounds::Keep, Evict::Output, [&] { held = source; });
+    }
 }
 
-void Node::unlinkAllMasks(GraphKey)
+void Node::unlink(GraphKey, const InputSlot& slot)
 {
-    if (!hasMasks()) return;
-    changeKnown(footprint(), Bounds::Keep, Evict::Output, [&] {
-        for (auto& s : m_signals) for (auto& m : s.mask) m = nullptr;
+    if (slot.is<InputSlot::Input>()) {
+        if (m_links.input) change([&] { m_links.input = nullptr; });
+    } else if (const auto* layer = slot.as<InputSlot::Layer>()) {
+        auto& layers = m_links.layers;
+        if (layer->index >= layers.size()) return;
+        TileSet dirty;
+        layers[layer->index]->addFootprint(dirty);
+        changeKnown(std::move(dirty), Bounds::Recompute, Evict::All, [&] { layers.erase(layers.begin() + std::ptrdiff_t(layer->index)); });
+    } else if (const auto* m = slot.as<InputSlot::Mask>()) {
+        NodePtr& held = m_links.masks[int(m->signal)][int(m->channel)];
+        if (held) changeKnown(footprint(), Bounds::Keep, Evict::Output, [&] { held = nullptr; });
+    }   // a new layer is a position: nothing feeds it
+}
+
+void Node::moveLayer(GraphKey, size_t from, size_t to)
+{
+    auto& layers = m_links.layers;
+    if (from >= layers.size() || to >= layers.size() || from == to) return;
+    // Only tiles where the moved layer overlaps the layers it crosses can change.
+    TileSet moved, others;
+    layers[from]->addFootprint(moved);
+    for (size_t i = std::min(from, to); i <= std::max(from, to); ++i)
+        if (i != from) layers[i]->addFootprint(others);
+    TileSet dirty;
+    for (TileKey k : moved) if (others.contains(k)) dirty.insert(k);
+    changeKnown(std::move(dirty), Bounds::Keep, Evict::All, [&] {
+        NodePtr n = std::move(layers[from]);
+        layers.erase(layers.begin() + std::ptrdiff_t(from));
+        layers.insert(layers.begin() + std::ptrdiff_t(to), std::move(n));
     });
+}
+
+void Node::unlinkSource(GraphKey key, const Node& source)
+{
+    for (const auto& [from, slot] : m_links.all())   // a copy: each unlink edits the links
+        if (from.get() == &source) {
+            // A layer's row moves down as the ones under it go: find it again.
+            if (slot.is<InputSlot::Layer>()) {
+                const auto& layers = m_links.layers;
+                const auto it = std::find_if(layers.begin(), layers.end(), [&](const NodePtr& l) { return l.get() == &source; });
+                if (it != layers.end()) unlink(key, InputSlot::stackLayer(uint32_t(it - layers.begin())));
+            } else {
+                unlink(key, slot);
+            }
+        }
+}
+
+void Node::setLinks(GraphKey key, const NodeLinks& want)
+{
+    if (m_links == want) return;
+    if (!m_links.empty()) change([&] { m_links = NodeLinks{}; });   // all it held goes first
+    if (want.input && canLink(want.input, InputSlot::input())) link(key, want.input, InputSlot::input());
+    for (const NodePtr& l : want.layers) {
+        const InputSlot top = InputSlot::newLayer(uint32_t(m_links.layers.size()));
+        if (l && canLink(l, top)) link(key, l, top);
+    }
+    for (int s = 0; s < kSignalCount; ++s)
+        for (int ch = 0; ch < kChannelCount; ++ch) {
+            const InputSlot slot = InputSlot::mask(NodeSignal(s), NodeChannel(ch));
+            if (const NodePtr& m = want.masks[s][ch]; m && canLink(m, slot)) link(key, m, slot);
+        }
 }
 
 // ---------------------------------------------------------------- graph
@@ -176,7 +318,7 @@ std::vector<NodePtr> Node::allDeps() const
     std::vector<NodePtr> out;
     auto add = [&](const NodePtr& n) { if (n && std::find(out.begin(), out.end(), n) == out.end()) out.push_back(n); };
     for (const auto& in : inputs()) add(in);
-    for (const auto& s : m_signals) for (const auto& m : s.mask) add(m);
+    for (const auto& s : m_links.masks) for (const auto& m : s) add(m);
     return out;
 }
 
@@ -188,7 +330,7 @@ bool Node::usesAsInput(const Node* n) const
 
 bool Node::usesAsMask(const Node* n) const
 {
-    for (const auto& s : m_signals) for (const auto& m : s.mask) if (m.get() == n) return true;
+    for (const auto& s : m_links.masks) for (const auto& m : s) if (m.get() == n) return true;
     return false;
 }
 
@@ -211,26 +353,18 @@ void Node::removeFromGraph(GraphKey key)
 {
     std::vector<NodePtr> users;   // snapshot: the loop below edits m_listeners
     for (auto& w : m_listeners) if (auto l = w.lock()) users.push_back(std::move(l));
-
-    const NodePtr self = shared_from_this();
-    for (auto& u : users) {
-        if (u->usesAsInput(this)) u->replaceInputInstance(key, self, nullptr);
-        u->clearMasksTo(key, self);
-    }
-    detachAllInputs(key);
-    unlinkAllMasks(key);
+    for (auto& u : users) u->unlinkSource(key, *this);
+    setLinks(key, NodeLinks{});
 }
 
-void Node::dependencyDirty(const Node* from, const TileSet& tiles)
+void Node::receive(const Node& from, const TileSet& tiles, Incoming& in) const
 {
-    const bool asInput = usesAsInput(from);
-    TileSet out;
-    if (asInput) {
-        mapInputTiles(tiles, out);
-        if (dryOn()) out.insert(tiles.begin(), tiles.end());   // dry passes the input unmapped
+    if (usesAsInput(&from)) {
+        mapInputTiles(tiles, in.tiles);
+        if (dryOn()) in.tiles.insert(tiles.begin(), tiles.end());   // dry passes the input unmapped
+        in.raw = true;
     }
-    if (usesAsMask(from)) out.insert(tiles.begin(), tiles.end());
-    emitDirty(out, asInput ? Evict::All : Evict::Output);
+    if (usesAsMask(&from)) in.tiles.insert(tiles.begin(), tiles.end());
 }
 
 // ---------------------------------------------------------------- change propagation
@@ -266,23 +400,98 @@ std::shared_ptr<TileWatch> Node::watchOutput()
     return watch;
 }
 
-void Node::emitDirty(const TileSet& tiles, Evict e)
+void Node::takeDirty(const TileSet& tiles, Evict e)
 {
-    ++m_revision;
-    if (tiles.empty()) return;
-
     for (const auto& w : m_watches)
         if (auto watch = w.lock()) watch->add(tiles);
     std::erase_if(m_watches, [](const std::weak_ptr<TileWatch>& w) { return w.expired(); });
-
     for (TileKey k : tiles) {
         const auto p = TileUtils::unpackKey(k);
         evictOutputTile(p.x, p.y);                    // always
-        if (e == Evict::All) evictRawTile(p.x, p.y);  // only when my inputs changed
+        if (e == Evict::All) evictRawTile(p.x, p.y);  // only when what it reads changed
     }
-    for (auto& w : std::vector<std::weak_ptr<Node>>(m_listeners))
-        if (auto l = w.lock()) l->dependencyDirty(this, tiles);
-    std::erase_if(m_listeners, [](const std::weak_ptr<Node>& w) { return w.expired(); });
+}
+
+const Node::Downstream& Node::downstreamOrder()
+{
+    if (m_downstream) return *m_downstream;
+    m_downstream = std::make_unique<Downstream>();
+    Downstream& d = *m_downstream;
+
+    // Everything reachable through listeners, and how many of the reached (or this) each one reads.
+    absl::flat_hash_map<const Node*, int> waiting;
+    std::vector<Node*> todo{ this };
+    absl::flat_hash_set<const Node*> seen{ this };
+    while (!todo.empty()) {
+        Node* n = todo.back();
+        todo.pop_back();
+        for (const auto& w : n->m_listeners)
+            if (const NodePtr l = w.lock()) {
+                ++waiting[l.get()];
+                if (seen.insert(l.get()).second) todo.push_back(l.get());
+            }
+    }
+    // Kahn's algorithm: a node goes once everything it reads that's reached has gone.
+    std::vector<Node*> ready{ this };
+    for (size_t i = 0; i < ready.size(); ++i)
+        for (const auto& w : ready[i]->m_listeners)
+            if (const NodePtr l = w.lock(); l && --waiting[l.get()] == 0) {
+                d.index.emplace(l.get(), uint32_t(d.order.size()));
+                d.order.push_back(l);
+                ready.push_back(l.get());
+            }
+    assert(d.order.size() + 1 == seen.size() && "the graph is acyclic");
+    return d;
+}
+
+std::vector<NodePtr> Node::downstream()
+{
+    std::vector<NodePtr> out;
+    for (const auto& w : downstreamOrder().order)
+        if (NodePtr n = w.lock()) out.push_back(std::move(n));
+    return out;
+}
+
+void Node::dropOrders()
+{
+    // Everything upstream has this node's downstream in its own.
+    std::vector<Node*> todo{ this };
+    absl::flat_hash_set<const Node*> seen{ this };
+    while (!todo.empty()) {
+        Node* n = todo.back();
+        todo.pop_back();
+        n->m_downstream.reset();
+        for (const NodePtr& d : n->allDeps())
+            if (seen.insert(d.get()).second) todo.push_back(d.get());
+    }
+}
+
+void Node::emitDirty(const TileSet& tiles, Evict e)
+{
+    if (tiles.empty()) return;
+    takeDirty(tiles, e);
+    std::erase_if(m_listeners, [](const std::weak_ptr<Node>& w) { return w.expired(); });   // nodes gone: nothing to tell
+    if (m_listeners.empty()) return;
+
+    // Downstream, each node once: it takes what everything it reads sent it, then passes it on.
+    const Downstream& d = downstreamOrder();
+    std::vector<NodePtr> nodes;   // held for the walk
+    nodes.reserve(d.order.size());
+    for (const auto& w : d.order) nodes.push_back(w.lock());
+    std::vector<Incoming> incoming(nodes.size());
+    const auto send = [&](const Node& from, const TileSet& out) {
+        for (const auto& w : from.m_listeners)
+            if (const NodePtr l = w.lock())
+                if (const auto it = d.index.find(l.get()); it != d.index.end()) l->receive(from, out, incoming[it->second]);
+    };
+    send(*this, tiles);
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        if (!nodes[i] || incoming[i].tiles.empty()) continue;
+        Node& n = *nodes[i];
+        const TileSet in = std::move(incoming[i].tiles);
+        n.takeDirty(in, incoming[i].raw ? Evict::All : Evict::Output);
+        send(n, in);
+    }
 }
 
 void Node::invalidateBounds()
@@ -298,13 +507,19 @@ void Node::rewire()
 {
     assert(!dependsOn(this));
     std::vector<NodePtr> now = allDeps();
+    std::vector<NodePtr> relisted;   // deps whose listeners changed: their orders, and those upstream, are stale
     for (auto& d : m_wired)
-        if (std::find(now.begin(), now.end(), d) == now.end())
+        if (std::find(now.begin(), now.end(), d) == now.end()) {
             std::erase_if(d->m_listeners, [&](const std::weak_ptr<Node>& w) { auto l = w.lock(); return !l || l.get() == this; });
+            relisted.push_back(d);
+        }
     for (auto& d : now)
-        if (std::find(m_wired.begin(), m_wired.end(), d) == m_wired.end())
+        if (std::find(m_wired.begin(), m_wired.end(), d) == m_wired.end()) {
             d->m_listeners.push_back(weak_from_this());
+            relisted.push_back(d);
+        }
     m_wired = std::move(now);
+    for (const NodePtr& d : relisted) d->dropOrders();
 }
 
 // ---------------------------------------------------------------- signal pipeline
@@ -334,13 +549,15 @@ const MaskTile* Node::maskTile(Node& mask, int tx, int ty, RenderCtx& ctx)
     return m;
 }
 
-bool Node::planGains(const SignalChannels& s, int tx, int ty, RenderCtx& ctx, Gain (&g)[4])
+bool Node::planGains(NodeSignal sig, int tx, int ty, RenderCtx& ctx, Gain (&g)[4])
 {
+    const SignalChannels& s = signal(sig);
     for (int c = 0; c < kChannelCount; ++c) {
         g[c].k = gainByte(s.scale[c]);
         g[c].perPixel = nullptr;
-        if (g[c].k != 0 && s.mask[c]) {
-            const MaskTile* m = maskTile(*s.mask[c], tx, ty, ctx);
+        const NodePtr& maskNode = mask(sig, NodeChannel(c));
+        if (g[c].k != 0 && maskNode) {
+            const MaskTile* m = maskTile(*maskNode, tx, ty, ctx);
             if (!m) g[c].k = 0;                                // mask is 0 here
             else if (m != RenderCtx::kFullMask) g[c].perPixel = m->v;
         }
@@ -360,7 +577,7 @@ const Tile* Node::applyGains(const Tile* raw, const Gain (&g)[4], RenderCtx& ctx
 const Tile* Node::renderSignal(NodeSignal sig, int tx, int ty, RenderCtx& ctx)
 {
     Gain g[4];
-    if (!planGains(signal(sig), tx, ty, ctx, g)) return nullptr;   // before fetching
+    if (!planGains(sig, tx, ty, ctx, g)) return nullptr;   // before fetching
     const Tile* raw = sig == NodeSignal::Wet ? fetchWet(tx, ty, ctx) : fetchDry(tx, ty, ctx);
     return applyGains(raw, g, ctx);
 }

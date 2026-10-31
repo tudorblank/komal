@@ -1,4 +1,4 @@
-#include "canvas/tiles/downsample.hpp"
+#include "raster/downsample.hpp"
 
 void downsampleInto(RGBA* dst, const Tile* src, int levels, int px, int py)
 {
@@ -7,7 +7,7 @@ void downsampleInto(RGBA* dst, const Tile* src, int levels, int px, int py)
     RGBA* out = dst + size_t(py * sub) * N + px * sub;
     if (!src) {
         for (int y = 0; y < sub; ++y)
-            for (int x = 0; x < sub; ++x) out[size_t(y) * N + x] = transparent();
+            for (int x = 0; x < sub; ++x) out[size_t(y * N + x)] = transparent();
         return;
     }
     const RGBA* s = src->getReadAll();
@@ -33,7 +33,7 @@ void downsampleInto(RGBA* dst, const Tile* src, int levels, int px, int py)
                 const RGBA* row = s + size_t(y * block + j) * N + x * block;
                 for (int i = 0; i < block; ++i) { r += row[i].r; g += row[i].g; b += row[i].b; a += row[i].a; }
             }
-            out[size_t(y) * N + x] = { uint8_t((r + half) >> shift), uint8_t((g + half) >> shift), uint8_t((b + half) >> shift),
+            out[size_t(y * N + x)] = { uint8_t((r + half) >> shift), uint8_t((g + half) >> shift), uint8_t((b + half) >> shift),
                                        uint8_t((a + half) >> shift) };
         }
 }

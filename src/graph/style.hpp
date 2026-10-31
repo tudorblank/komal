@@ -89,10 +89,7 @@ constexpr ImU32 kMapEdge     = IM_COL32( 96,  96,  96, 255);
 constexpr ImU32 kMapMaskEdge = IM_COL32( 70,  70,  70, 255);
 
 // ---- sliders
-constexpr ImU32 kTrack      = IM_COL32( 20,  20,  20, 255);
-constexpr ImU32 kTrackFill  = Palette::kAccentDim.packed();
-constexpr ImU32 kGrab       = Palette::kGrab.packed();
-constexpr ImU32 kGrabActive = Palette::kGrabHot.packed();
+constexpr ImU32 kTrack      = IM_COL32( 20,  20,  20, 255);   // a node's slider track (the rest: look/slider-look.hpp)
 constexpr ImU32 kChannelColor[4] = {   // A, R, G, B
     IM_COL32(220, 220, 220, 255), IM_COL32(236, 112, 112, 255),
     IM_COL32(122, 206, 122, 255), IM_COL32(118, 152, 240, 255) };

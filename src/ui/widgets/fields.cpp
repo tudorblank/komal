@@ -48,7 +48,7 @@ bool hexField(const char* id, float rgb[3], float width)
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const ImGuiID key = ImGui::GetID(id);
     char hex[8];
-    std::snprintf(hex, sizeof hex, "%02X%02X%02X", int(rgb[0] * 255.0f + 0.5f), int(rgb[1] * 255.0f + 0.5f), int(rgb[2] * 255.0f + 0.5f));
+    std::snprintf(hex, sizeof hex, "%02X%02X%02X", unitToByte(rgb[0]), unitToByte(rgb[1]), unitToByte(rgb[2]));
     takeFocusRequest(key, hex);
 
     bool applied = false;

@@ -25,11 +25,10 @@ bool slider(const char* id, float& v, float min, float max, float width, bool lo
     }
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float th = std::max(2.0f, std::round(3.0f * metrics().unit));
+    const float u = metrics().unit;
     const float xv = std::round(tr.x0 + (tr.x1 - tr.x0) * std::clamp(toT(v), 0.0f, 1.0f));
-    dl->AddRectFilled(ImVec2(tr.x0, tr.cy - th * 0.5f), ImVec2(tr.x1, tr.cy + th * 0.5f), kTrack, th * 0.5f);
-    dl->AddRectFilled(ImVec2(tr.x0, tr.cy - th * 0.5f), ImVec2(xv, tr.cy + th * 0.5f), kTrackFill, th * 0.5f);
-    drawGrab(xv, tr.cy, tr.hot);
+    SliderLook::drawTrack(dl, tr.x0, tr.x1, tr.cy, xv, u);
+    SliderLook::drawGrab(dl, xv, tr.cy, u, tr.hot);
     return changed;
 }
 
@@ -40,7 +39,7 @@ bool figureSlider(const char* id, float& v, float min, float max, float width, S
     const auto fromT = [&](float t) { return log ? min * std::pow(max / min, t) : min + (max - min) * t; };
 
     const Metrics m = metrics();
-    const float grabHalfW = std::round(3.0f * m.unit) + 1.0f;   // the standard grab, with its rim
+    const float grabHalfW = SliderLook::grabReach(m.unit);
     float t = 0.0f;
     Track tr{};
     bool changed = false;
@@ -92,12 +91,12 @@ bool figureSlider(const char* id, float& v, float min, float max, float width, S
     };
     const float xv = std::round(tr.x0 + (tr.x1 - tr.x0) * std::clamp(toT(v), 0.0f, 1.0f));
     const float from = figure == SliderFigure::Wave ? std::round(tr.x0 + (tr.x1 - tr.x0) * std::clamp(toT(0.0f), 0.0f, 1.0f)) : fx0;
-    drawFigure(kTrack);
+    drawFigure(SliderLook::kTrack);
     dl->PushClipRect(ImVec2(std::min(from, xv), fy0), ImVec2(std::max(from, xv), fy1), true);
-    drawFigure(kTrackFill);
+    drawFigure(SliderLook::kTrackFill);
     dl->PopClipRect();
 
-    drawGrab(xv, tr.cy, tr.hot, std::round(m.boxHeight * 0.38f));
+    SliderLook::drawGrab(dl, xv, tr.cy, m.unit, tr.hot, std::round(m.boxHeight * 0.38f));
     return changed;
 }
 
@@ -117,7 +116,7 @@ bool gradientSlider(const char* id, float& v, const ImU32* stops, int count, flo
     }
     // Rounded ends: the panel colour drawn over the gradient's corners.
     dl->AddRect(ImVec2(tr.x0 - 1.0f, y0 - 1.0f), ImVec2(tr.x1 + 1.0f, y1 + 1.0f), ImGui::GetColorU32(ImGuiCol_WindowBg), th * 0.5f + 1.0f, 0, 2.0f);
-    drawGrab(std::round(tr.x0 + len * std::clamp(v, 0.0f, 1.0f)), tr.cy, tr.hot);
+    SliderLook::drawGrab(dl, std::round(tr.x0 + len * std::clamp(v, 0.0f, 1.0f)), tr.cy, metrics().unit, tr.hot);
     return changed;
 }
 

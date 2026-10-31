@@ -3,6 +3,7 @@
 
 #include "raster/tile.hpp"
 
+#include <cassert>
 #include <memory>
 #include <vector>
 
@@ -10,35 +11,46 @@
 using TileId = uint32_t;
 constexpr TileId kNoTileId = 0xFFFFFFFFu;
 
+// Tiles in blocks of 16; ids stay valid while held. A block whose tiles are all free gives its
+// memory back, and is made again when one of its ids is used again.
 class TilePool {
 public:
     TileId allocate()
     {
+        TileId id;
         if (!m_freeIds.empty()) {   // reuse released ones first
-            const TileId id = m_freeIds.back();
+            id = m_freeIds.back();
             m_freeIds.pop_back();
-            return id;
+        } else {
+            id = m_nextFreshId++;
+            if ((id >> kBlockShift) >= m_blocks.size()) {   // new block when the last one is full
+                m_blocks.emplace_back();
+                m_live.push_back(0);
+            }
         }
-        const TileId id = m_nextFreshId;
-        if ((id >> kBlockShift) >= m_blocks.size())   // new block when the last one is full
-            m_blocks.push_back(std::make_unique<Tile[]>(kBlockTiles));
-        ++m_nextFreshId;
+        const size_t block = id >> kBlockShift;
+        if (!m_blocks[block]) m_blocks[block] = std::make_unique<Tile[]>(kBlockTiles);   // new, or given back before
+        ++m_live[block];
         return id;
     }
     void release(TileId id)
     {
         assert(id < m_nextFreshId);
+        const size_t block = id >> kBlockShift;
         getWrite(id).clear();
         m_freeIds.push_back(id);
+        if (--m_live[block] == 0) m_blocks[block].reset();   // nothing in it: its memory goes
     }
 
     const Tile& getRead(TileId id) const { return m_blocks[id >> kBlockShift][id & kBlockMask]; }
     Tile&       getWrite(TileId id)      { return m_blocks[id >> kBlockShift][id & kBlockMask]; }
     size_t liveCount() const { return m_nextFreshId - m_freeIds.size(); }
+    size_t bytes() const { return size_t(std::count_if(m_blocks.begin(), m_blocks.end(), [](const auto& b) { return b != nullptr; })) * kBlockTiles * sizeof(Tile); }
 
     void clear()
     {
         m_blocks.clear();
+        m_live.clear();
         m_freeIds.clear();
         m_nextFreshId = 0;
     }
@@ -49,6 +61,7 @@ private:
     static constexpr uint32_t kBlockMask  = kBlockTiles - 1;
 
     std::vector<std::unique_ptr<Tile[]>> m_blocks;   // blocks never move: tile addresses are stable
+    std::vector<uint8_t> m_live;                     // per block: tiles held
     std::vector<TileId> m_freeIds;
     uint32_t m_nextFreshId = 0;
 };
@@ -62,7 +75,8 @@ class TileGrid {
         Page() { std::fill(std::begin(slots), std::end(slots), kNoTileId); }
     };
     static constexpr PageKey pageKeyOf(int tx, int ty)
-    { return TileUtils::packKey(TileUtils::tileToPage(tx), TileUtils::tileToPage(ty)); }
+    { return PageKey(TileUtils::packKey(TileUtils::tileToPage(tx), TileUtils::tileToPage(ty))); }
+    static constexpr PageKey kNoPage = PageKey(kNoKey);   // no page is this far out
     static constexpr int pageSlotOf(int tx, int ty)
     { return TileUtils::tileToPageLocal(ty) * TileUtils::kPageDim + TileUtils::tileToPageLocal(tx); }
 
@@ -93,7 +107,7 @@ public:
     private:
         const TileGrid* m_g;
         uint32_t    m_epoch;
-        PageKey     m_key  = kNoKey;   // no page has this key
+        PageKey     m_key  = kNoPage;
         const Page* m_page = nullptr;
     };
     ReadAccessor reader() const { return ReadAccessor(*this); }
@@ -105,6 +119,7 @@ public:
         return id == kNoTileId ? nullptr : &m_pool.getRead(id);
     }
     size_t size() const { return m_pool.liveCount(); }
+    size_t bytes() const { return m_pool.bytes(); }   // the memory its tiles take
 
     // write
     Tile* getWriteTile(int tx, int ty)
@@ -152,7 +167,7 @@ public:
     template<class F> void forEachRead(F&& f) const
     {
         for (const auto& [pageKey, page] : m_pages) {
-            const TileUtils::KeyXY p = TileUtils::unpackKey(pageKey);
+            const TileUtils::KeyXY p = TileUtils::unpackKey(uint64_t(pageKey));
             for (int s = 0; s < kPageSlots; ++s) {
                 if (page->slots[s] == kNoTileId) continue;
                 f(p.x * TileUtils::kPageDim + (s & TileUtils::kPageMask),
@@ -165,7 +180,7 @@ public:
     {
         ++m_epoch;
         for (auto& [pageKey, page] : m_pages) {
-            const TileUtils::KeyXY p = TileUtils::unpackKey(pageKey);
+            const TileUtils::KeyXY p = TileUtils::unpackKey(uint64_t(pageKey));
             for (int s = 0; s < kPageSlots; ++s) {
                 if (page->slots[s] == kNoTileId) continue;
                 f(p.x * TileUtils::kPageDim + (s & TileUtils::kPageMask),

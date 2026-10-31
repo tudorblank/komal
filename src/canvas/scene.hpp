@@ -16,7 +16,8 @@
 class CanvasScene {
 public:
     bool init(const CanvasPipelines& pipelines);   // the engine's (CanvasEngine), which outlive it
-    void shutdown();   // releases every item's GPU resources
+    void shutdown();     // releases every item's GPU resources, and the items
+    void releaseGpu();   // every item's GPU resources, the items kept (they make them again as they draw)
     ~CanvasScene() { shutdown(); }
 
     const CanvasPipelines& pipelines() const { return *m_pipelines; }

@@ -1,10 +1,12 @@
 #include "pipelines.hpp"
+#include "gfx/error-scope.hpp"
 #include "canvas/tiles/atlas.hpp"   // ChunkInstance layout
 #include "base/math.hpp"
 #include "base/palette.hpp"
 
 #include <cstddef>
 #include <initializer_list>
+#include <string>
 #include <vector>
 
 extern const unsigned char kShaderColor[];           // generated from shaders/*.wgsl, see CMakeLists.txt
@@ -13,6 +15,7 @@ extern const unsigned char kShaderPreviewSignal[];
 extern const unsigned char kShaderPreviewBlit[];
 extern const unsigned char kShaderPreviewStroke[];
 extern const unsigned char kShaderChecker[];
+extern const unsigned char kShaderFullscreen[];   // the full-screen passes' vertex stage
 
 namespace {
 
@@ -64,13 +67,17 @@ struct PipelineDesc {
     std::vector<WGPUBindGroupLayout>  groups;
     const WGPUBlendState*             blend        = nullptr;   // null: overwrite
     const WGPUVertexBufferLayout*     vertexBuffer = nullptr;
-    // Quads from vertex_index (strip), or one full-screen triangle (list).
+    // Quads from vertex_index (strip), or one full-screen triangle (list: the shader holds its
+    // fragment stage only, after shaders/fullscreen.wgsl's vertex stage).
     WGPUPrimitiveTopology             topology     = WGPUPrimitiveTopology_TriangleStrip;
 };
+constexpr auto kFullscreen = WGPUPrimitiveTopology_TriangleList;
 
 WGPURenderPipeline makePipeline(const GpuHandles& ctx, const PipelineDesc& d)
 {
-    const GpuObject<WGPUShaderModule> module{ createShaderModule(ctx, reinterpret_cast<const char*>(d.wgsl), d.label) };
+    const char* body = reinterpret_cast<const char*>(d.wgsl);
+    const std::string wgsl = d.topology == kFullscreen ? std::string(reinterpret_cast<const char*>(kShaderFullscreen)) + body : std::string(body);
+    const GpuObject<WGPUShaderModule> module{ createShaderModule(ctx, wgsl.c_str(), d.label) };
     if (!module) return nullptr;
 
     WGPUColorTargetState target{};
@@ -112,7 +119,7 @@ CheckerParams pictureChecker(float originX, float originY)
 {
     CheckerParams c{};
     const auto dark = Palette::kPictureCheckerA.floats(), light = Palette::kPictureCheckerB.floats();
-    for (int i = 0; i < 3; ++i) { c.colorA[i] = dark[i]; c.colorB[i] = light[i]; }
+    for (size_t i = 0; i < 3; ++i) { c.colorA[i] = dark[i]; c.colorB[i] = light[i]; }
     c.colorA[3] = c.colorB[3] = 1.0f;
     c.origin[0] = originX;
     c.origin[1] = originY;
@@ -123,7 +130,7 @@ CheckerParams pictureChecker(float originX, float originY)
 bool CanvasPipelines::create(const GpuHandles& context)
 {
     ctx = context;
-    constexpr auto kFullscreen = WGPUPrimitiveTopology_TriangleList;
+    GpuErrorScope scope(ctx.device);   // a pipeline that fails comes back invalid, not null
     cameraLayout.reset(uniformLayout(ctx, "Canvas Camera Layout", WGPUShaderStage_Vertex, sizeof(Mat4::m)));
 
     // ---- solid rectangles
@@ -187,10 +194,14 @@ bool CanvasPipelines::create(const GpuHandles& context)
     blitLayout.reset(textureLayout(ctx, "Blit Layout", 1));
     blitPipeline.reset(makePipeline(ctx, { "preview-blit.wgsl", kShaderPreviewBlit, { blitLayout }, &kPremultiplied, nullptr, kFullscreen }));
 
-    return cameraLayout && colorLayout && colorPipeline && atlasLayout && atlasPipeline && atlasSampler &&
-           previewParamsLayout && previewTexturesLayout && previewSignalPipeline && previewStrokeLayout && previewStrokeTexturesLayout &&
-           previewStrokePipeline && blitLayout && blitPipeline &&
-           checkerLayout && checkerPipeline;
+    const bool made = cameraLayout && colorLayout && colorPipeline && atlasLayout && atlasPipeline && atlasSampler &&
+                      previewParamsLayout && previewTexturesLayout && previewSignalPipeline && previewStrokeLayout && previewStrokeTexturesLayout &&
+                      previewStrokePipeline && blitLayout && blitPipeline && checkerLayout && checkerPipeline;
+    if (scope.failed("the canvas pipelines") || !made) {
+        release();
+        return false;
+    }
+    return true;
 }
 
 void CanvasPipelines::release()

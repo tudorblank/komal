@@ -1,6 +1,8 @@
 #include "ui/navigator.hpp"
+#include "document/document-actions.hpp"
 #include "base/math.hpp"
 #include "canvas/canvas-engine.hpp"
+#include "canvas/imgui-texture.hpp"
 #include "command/input.hpp"
 #include "ui/navigation.hpp"
 #include "base/frames.hpp"
@@ -81,6 +83,25 @@ bool Navigator::init()
     return true;
 }
 
+void Navigator::releaseGpu()
+{
+    m_previewPicture.release();
+    m_view.shutdown();
+    m_scene.releaseGpu();
+    m_ready = false;
+    m_pictureShown = false;
+}
+
+void Navigator::restoreGpu()
+{
+    if (!m_checker) {   // never made (no GPU at start): made now
+        init();
+        return;
+    }
+    m_pipelines = &ui().canvas.pipelines();
+    m_ready = ui().canvas.ready() && m_scene.init(ui().canvas.pipelines()) && m_view.init(m_scene);
+}
+
 void Navigator::shutdown()
 {
     m_previewPicture.release();
@@ -129,9 +150,9 @@ void Navigator::renderGpu(WGPUCommandEncoder enc)
     m_view.render(enc, ui().canvas.budget(CanvasEngine::Work::Navigator));   // only when the tiles or the map changed
 }
 
-double Navigator::nextFrameIn() const
+Clock::Seconds Navigator::nextFrameIn() const
 {
-    return m_pictureShown && (m_view.busy() || m_previewWaiting || m_handoff) ? 0.0 : kNoFrame;
+    return m_pictureShown && (m_view.busy() || m_previewWaiting || m_handoff) ? kFrameNow : kNoFrame;
 }
 
 bool Navigator::showsPreview()
@@ -149,12 +170,12 @@ bool Navigator::showsPreview()
 
 void Navigator::zoomBy(float factor)
 {
-    ui().actions.run(Actions::CanvasZoom, { { "factor", factor } });
+    ui().actions.run(Actions::CanvasZoom, { { DocArgs::kFactor, factor } });
 }
 
 void Navigator::rotateTo(float degrees)
 {
-    ui().actions.run(Actions::CanvasRotate, { { "degrees", degrees } });
+    ui().actions.run(Actions::CanvasRotate, { { DocArgs::kDegrees, degrees } });
 }
 
 void Navigator::drawMap(ImVec2 size)
@@ -170,14 +191,14 @@ void Navigator::drawMap(ImVec2 size)
     dl->AddRectFilled(map.Min, map.Max, ImGui::GetColorU32(ImGuiCol_MenuBarBg), rounding);   // the theme's dark grey
 
     const ImGuiIO& io = ImGui::GetIO();
-    const float inset = kMapInset * (ImGui::GetFontSize() / 15.0f);
+    const float inset = kMapInset * Widgets::metrics().unit;
     const float iw = std::max(1.0f, size.x - 2.0f * inset), ih = std::max(1.0f, size.y - 2.0f * inset);
     // Under the edit: the picture renders this frame fitted to what the master covers now; handing
     // back after it, the picture shows what it last fitted.
     const bool preview = showsPreview();
     const NodeId master = ui().project.master().id();
     const bool live = m_preview->active() && m_preview->plan().reaches(master);
-    const BoundsI b = !preview ? ui().project.master().bounds() : live ? m_preview->bounds(master) : m_previewPicture.bounds();
+    const BoundsI b = !preview ? ui().project.master().bounds() : live ? m_preview->model().bounds(master) : m_previewPicture.bounds();
     if (b.empty()) {
         const char* text = "Nothing on the canvas yet";
         const ImVec2 t = ImGui::CalcTextSize(text);
@@ -186,10 +207,9 @@ void Navigator::drawMap(ImVec2 size)
     }
 
     // The master's bounds, as large as the map allows, proportions kept, centred.
-    const float bw = float(b.maxX - b.minX + 1), bh = float(b.maxY - b.minY + 1);
-    const float k = fitScale(b, iw, ih);   // map points per world pixel
-    const ImVec2 offset(map.Min.x + inset + (iw - bw * k) * 0.5f - float(b.minX) * k,
-                        map.Min.y + inset + (ih - bh * k) * 0.5f - float(b.minY) * k);
+    const RectFit fit = fitCentred(b, iw, ih);
+    const float k = fit.scale;   // map points per world pixel
+    const ImVec2 offset(map.Min.x + inset + fit.x - float(b.minX) * k, map.Min.y + inset + fit.y - float(b.minY) * k);
     const auto toMap   = [&](Vec2 w) { return ImVec2(offset.x + w.x * k, offset.y + w.y * k); };
     const auto toWorld = [&](ImVec2 s) { return Vec2{ (s.x - offset.x) / k, (s.y - offset.y) / k }; };
     const auto viewQuad = [&](ImVec2 (&q)[4]) {
@@ -212,7 +232,7 @@ void Navigator::drawMap(ImVec2 size)
     if (!active) m_dragging = false;
     if (m_dragging) {
         const Vec2 m = toWorld(io.MousePos), to = { m.x + m_grab.x, m.y + m_grab.y };
-        if (to != cam.screenToWorld(center)) ui().actions.run(Actions::CanvasCenterOn, { { "x", to.x }, { "y", to.y } });
+        if (to != cam.screenToWorld(center)) ui().actions.run(Actions::CanvasCenterOn, { { DocArgs::kX, to.x }, { DocArgs::kY, to.y } });
     }
 
     // The picture: a view of the output's tiles over exactly the bounds, rendered in renderGpu().
@@ -228,10 +248,11 @@ void Navigator::drawMap(ImVec2 size)
         m_pictureShown = true;
         if (preview) {
             const GpuTexture& t = m_previewPicture.texture();
-            const ImVec2 uv1(float(m_previewPicture.width()) / float(t.width()), float(m_previewPicture.height()) / float(t.height()));
-            dl->AddImage((ImTextureID)(uintptr_t)t.view(), c0, c1, ImVec2(0.0f, 0.0f), uv1);
+            const PictureFit& f = m_previewPicture.fit();
+            const ImageUv uv = pictureUv(0.0f, 0.0f, float(f.width), float(f.height), float(t.width()), float(t.height()));
+            dl->AddImage(imguiTexture(t.view()), c0, c1, uv.uv0, uv.uv1);
         } else {
-            dl->AddImage((ImTextureID)(uintptr_t)m_view.texture(), c0, c1);
+            dl->AddImage(imguiTexture(m_view.texture()), c0, c1);
         }
     } else {
         dl->AddRectFilled(c0, c1, kMapEmpty);   // too thin to render

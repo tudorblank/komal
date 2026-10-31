@@ -1,5 +1,5 @@
 #include "handles.hpp"
-#include "base/log.hpp"
+#include "gfx/error-scope.hpp"
 
 WGPUShaderModule createShaderModule(const GpuHandles& ctx, const char* wgsl, const char* label)
 {
@@ -16,15 +16,12 @@ WGPUShaderModule createShaderModule(const GpuHandles& ctx, const char* wgsl, con
 bool GpuUniform::create(WGPUDevice device, WGPUBindGroupLayout layout, uint64_t size, const char* label)
 {
     release();
+    GpuErrorScope scope(device);
     WGPUBufferDescriptor bd{};
     bd.label = sv(label);
     bd.size  = size;
     bd.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst;
     buffer.reset(wgpuDeviceCreateBuffer(device, &bd));
-    if (!buffer) {
-        Log::error("gpu", "%s: no uniform buffer", label);
-        return false;
-    }
 
     WGPUBindGroupEntry e{};
     e.binding = 0;
@@ -36,9 +33,9 @@ bool GpuUniform::create(WGPUDevice device, WGPUBindGroupLayout layout, uint64_t 
     gd.entryCount = 1;
     gd.entries    = &e;
     group.reset(wgpuDeviceCreateBindGroup(device, &gd));
-    if (!group) {
-        Log::error("gpu", "%s: no bind group", label);
+    if (scope.failed(label) || !group) {
         release();
+        return false;
     }
-    return bool(group);
+    return true;
 }

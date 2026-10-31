@@ -1,23 +1,28 @@
 #include "app/window-state.hpp"
+#include "base/file.hpp"
+#include "base/log.hpp"
 
 #include <cstdio>
+#include <string>
+#include <vector>
 
 WindowState WindowState::load(const std::string& path)
 {
+    std::vector<uint8_t> bytes;
+    std::string error;
+    if (!File::read(path, bytes, error)) return {};   // none yet
+    const std::string text(bytes.begin(), bytes.end());
     WindowState s;
-    if (FILE* f = std::fopen(path.c_str(), "r")) {
-        int m = 0;
-        if (std::fscanf(f, "%d %d %d", &s.width, &s.height, &m) == 3) s.maximized = m != 0;
-        else s = {};
-        std::fclose(f);
-    }
+    int m = 0;
+    if (std::sscanf(text.c_str(), "%d %d %d", &s.width, &s.height, &m) != 3) return {};
+    s.maximized = m != 0;
     return s;
 }
 
 void WindowState::save(const std::string& path) const
 {
-    if (FILE* f = std::fopen(path.c_str(), "w")) {
-        std::fprintf(f, "%d %d %d\n", width, height, maximized ? 1 : 0);
-        std::fclose(f);
-    }
+    char text[64];
+    std::snprintf(text, sizeof text, "%d %d %d\n", width, height, maximized ? 1 : 0);
+    std::string error;
+    if (!File::write(path, std::string(text), error)) Log::error("settings", "%s: %s", path.c_str(), error.c_str());
 }

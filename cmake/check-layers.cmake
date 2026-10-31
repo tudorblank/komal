@@ -1,0 +1,103 @@
+# The source folders are layers, bottom first. A file may include its own folder and the folders
+# below it, never one above, and only the libraries its layer may use. The build runs this before
+# every build (CMakeLists.txt) and stops on any wrong include, listing every one.
+#
+#   base       Signal, Deadline, Log, Perf, math, palette, files: the standard library only
+#   raster     pixels, tiles, grids, rasters, brush strokes                + abseil
+#   node       the node graph: signals, masks, the render path             + abseil
+#   command    input and the actions it triggers (the one way in)          + abseil
+#   document   the Project: nodes, rasters, history, the document's actions + abseil, stb_image
+#   gfx        the GPU: device, objects, pages of slots                    + abseil, webgpu
+#   look       the app's look drawn with ImGui, shared by every view       + abseil, ImGui
+#   canvas     the canvas engine                                           + webgpu, ImGui
+#   graph      the graph engine                                            + ImGui's internals
+#   ui         widgets, panels, tools
+#   app        the platform: the window, the loop, frames; main            anything (SDL lives here)
+#   tests      the core (base .. document) only                            + doctest
+#
+#   cmake -DSRC=<src dir> -DTESTS=<tests dir> -P check-layers.cmake
+
+set(LAYERS base raster node command document gfx look canvas graph ui app)
+
+# What each layer may include with <...>, as regexes; a standard header is a bare name.
+set(STD "^[a-z_0-9]+$")
+set(LIBS_base     "${STD}")
+set(LIBS_raster   "${STD}" "^absl/")
+set(LIBS_node     ${LIBS_raster})
+set(LIBS_command  ${LIBS_raster})
+set(LIBS_document ${LIBS_raster} "^stb_image\\.h$")
+set(LIBS_gfx      ${LIBS_raster} "^webgpu/")
+set(LIBS_look     ${LIBS_raster} "^imgui\\.h$")
+set(LIBS_canvas   ${LIBS_gfx} "^imgui\\.h$")
+set(LIBS_graph    ${LIBS_canvas} "^imgui_internal\\.h$")
+set(LIBS_ui       ${LIBS_graph})
+set(LIBS_app      ".*")
+set(LIBS_tests    ${LIBS_raster} "^doctest/")
+
+set(problems "")
+
+# rank: a layer's place in LAYERS; tests rank as the top of the core (document).
+function(check_file path rel layer rank)
+    file(STRINGS "${path}" lines REGEX "^[ \t]*#[ \t]*include")
+    foreach(line IN LISTS lines)
+        if(NOT line MATCHES "^[ \t]*#[ \t]*include[ \t]*([<\"])([^>\"]+)[>\"]")
+            continue()
+        endif()
+        set(kind "${CMAKE_MATCH_1}")
+        set(name "${CMAKE_MATCH_2}")
+        if(kind STREQUAL "<")
+            set(allowed FALSE)
+            foreach(rule IN LISTS LIBS_${layer})
+                if(name MATCHES "${rule}")
+                    set(allowed TRUE)
+                    break()
+                endif()
+            endforeach()
+            if(NOT allowed)
+                list(APPEND problems "${rel}: includes <${name}> (not a library ${layer} may use)")
+            endif()
+            continue()
+        endif()
+        if(NOT name MATCHES "/")
+            continue()   # "x.hpp": its own folder
+        endif()
+        string(REGEX REPLACE "/.*" "" target "${name}")
+        list(FIND LAYERS "${target}" target_rank)
+        if(target_rank EQUAL -1)
+            list(APPEND problems "${rel}: includes \"${name}\" ('${target}' isn't a layer)")
+        elseif(target_rank GREATER rank)
+            list(APPEND problems "${rel}: includes \"${name}\" (${target} is above ${layer})")
+        endif()
+    endforeach()
+    set(problems "${problems}" PARENT_SCOPE)
+endfunction()
+
+file(GLOB_RECURSE sources LIST_DIRECTORIES false "${SRC}/*.hpp" "${SRC}/*.cpp")
+list(SORT sources)
+foreach(path IN LISTS sources)
+    file(RELATIVE_PATH rel "${SRC}" "${path}")
+    string(REGEX REPLACE "/.*" "" layer "${rel}")
+    list(FIND LAYERS "${layer}" rank)
+    if(rank EQUAL -1)
+        list(APPEND problems "${rel}: folder '${layer}' isn't a layer (add it to cmake/check-layers.cmake)")
+        continue()
+    endif()
+    check_file("${path}" "${rel}" "${layer}" ${rank})
+endforeach()
+
+if(TESTS)
+    list(FIND LAYERS document core_top)
+    file(GLOB_RECURSE tests LIST_DIRECTORIES false "${TESTS}/*.hpp" "${TESTS}/*.cpp")
+    list(SORT tests)
+    foreach(path IN LISTS tests)
+        file(RELATIVE_PATH rel "${TESTS}" "${path}")
+        check_file("${path}" "tests/${rel}" tests ${core_top})
+    endforeach()
+endif()
+
+if(problems)
+    foreach(p IN LISTS problems)
+        message("layer check: ${p}")
+    endforeach()
+    message(FATAL_ERROR "includes break the layers (see above)")
+endif()

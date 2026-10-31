@@ -14,10 +14,10 @@ class Notices {
 public:
     void post(std::string text);   // main thread
     void draw();                   // once a frame, after the panels
-    double nextFrameIn() const;    // until the oldest one goes (base/frames.hpp)
+    Clock::Seconds nextFrameIn() const;   // until the oldest one goes (base/frames.hpp)
 
 private:
-    static constexpr double kShowMs  = 6000.0;
+    static constexpr Clock::Seconds kShow{ 6.0 };
     static constexpr size_t kMaxShown = 4;   // older ones make room
 
     struct Notice {

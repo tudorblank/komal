@@ -1,9 +1,10 @@
 #pragma once
 #include "app/imgui-feed.hpp"
+#include "app/input-collector.hpp"
+#include "app/window-surface.hpp"
 #include "base/clock.hpp"
 #include "base/frames.hpp"
-#include "command/input.hpp"
-#include "document/project.hpp"
+#include "document/editor.hpp"
 #include "gfx/device.hpp"
 #include "ui/ui-main.hpp"
 
@@ -34,11 +35,13 @@ private:
     bool processEvents();         // true if any arrived
     void handleEvent(const SDL_Event& e);   // the app's own: quit, scale, size, drops
 
+    WindowSurface m_surface;   // before the device: outlives its surface
     GpuDevice m_gpu;
-    Project m_project;
+    Editor m_editor;   // the document and its actions
 
-    UserInterface m_userInterface;
-    HostInfo      m_host{ .window = nullptr, .uiScale = 0.0f, .gpu = {} };   // what the interface reads about the window; scale 0: not styled yet
+    UserInterface m_userInterface{ m_editor.actions() };
+    HostInfo      m_host{ .uiScale = 0.0f, .gpu = {}, .showImportDialog = {} };   // what the interface reads about the window; scale 0: not styled yet
+    void showImportDialog();
     std::string m_prefDir;   // where settings live ("" if unknown: the working directory)
     std::string m_iniPath;   // layout file
     int m_normalW = 0, m_normalH = 0;   // the window's size when not maximized
@@ -46,14 +49,20 @@ private:
 
     void applyContentScale();
     void renderFrame();
+    bool initGpu();
+    void initImGuiRenderer();
+    bool rebuildGpu();         // the device was lost: everything on the GPU made again
+    bool m_imguiGpu = true;    // ImGui's renderer is up (it isn't between a loss and the rebuild)
+    int  m_gpuResetAt = 0;     // KOMAL_GPU_RESET_AT=n: the device is "lost" at frame n (tries the rebuild)
+    int  m_framesDrawn = 0;
 
     // frames (see the top). What input changes can take a few frames to show (a popup measures itself hidden first,
     // a field focuses a frame after it opens, hover follows a layout change a frame late).
     static constexpr int kFramesAfterInput = 3;
-    static constexpr int kNoImageRetryMs   = 100; // between tries while the surface gives no image
+    static constexpr Clock::Milliseconds kNoImageRetry{ 100.0 };   // between tries while the surface gives no image
     int      m_framesAfterInput = kFramesAfterInput;   // still to render (the first frames too)
     Clock::TimePoint m_frameStart{};                   // what nextFrameIn() counts from
     bool     m_noImage = false;                        // the last frame got no swapchain image
-    double nextFrameIn() const;
+    Clock::Seconds nextFrameIn() const;
     void   waitForFrame();
 };

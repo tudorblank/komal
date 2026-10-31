@@ -61,8 +61,24 @@ endforeach()
 if(WGPU_DIR)
     message(STATUS "wgpu-native: using vendored copy in ${WGPU_DIR}")
 else()
+    # The pinned release's zips, by their hash. Another version is downloaded unchecked.
+    set(_hash_v27.0.2.0_linux-x86_64         4264ba136c0ea3b654f756ba34320f7d868d41716bb8cb7d36ccad4a2c48cdb2)
+    set(_hash_v27.0.2.0_linux-aarch64        76f1f493716d5e67b80c08850471f2ac6d1a45cb694d68c8e56537ed115d29f0)
+    set(_hash_v27.0.2.0_macos-x86_64         e2a2951d087d51f902d764bb667f67460f26f57f8fe2d7c834d819b91b893525)
+    set(_hash_v27.0.2.0_macos-aarch64        5233eea32720936c0757d8fd91ca2fb5336f4c90297d76541b2975146df50876)
+    set(_hash_v27.0.2.0_windows-x86_64-gnu   7ff026f39b79d2c48c696c4a21ebb86f7a12634f8921205a27a55ebdbc89567e)
+    set(_hash_v27.0.2.0_windows-x86_64-msvc  0df0231284cd9ab59dfc382f435caf1275f4372ae0635ef1261d6fe1d58c5a0e)
+    set(_hash_v27.0.2.0_windows-aarch64-msvc 85510bebf7c8c8183b7fd508994b34cc2762612e9c534689dea62b6e30d7d76f)
+    set(_hash "${_hash_${WGPU_NATIVE_VERSION}_${_plat}}")
+    if(_hash)
+        set(_hash_arg URL_HASH SHA256=${_hash})
+    else()
+        set(_hash_arg)
+        message(WARNING "wgpu-native ${WGPU_NATIVE_VERSION} (${_plat}): no pinned hash, downloaded unchecked")
+    endif()
     FetchContent_Declare(wgpu_native_dl
         URL https://github.com/gfx-rs/wgpu-native/releases/download/${WGPU_NATIVE_VERSION}/wgpu-${_plat}-release.zip
+        ${_hash_arg}
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
         INACTIVITY_TIMEOUT 30
         TIMEOUT 300)

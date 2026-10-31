@@ -4,7 +4,7 @@
 // picture: the canvas has one, the navigator one, each previewed thumbnail one.
 //
 //   if (renderer.plan(preview, node)) {
-//       const PreviewSpace space = PreviewSpace::fitted(renderer.bounds(), w, h);
+//       const PreviewSpace space = PreviewSpace::fitted(renderer.bounds(), fitInto(renderer.bounds(), maxW, maxH));
 //       if (renderer.render(preview, space, pipelines, encoder, budget)) ... renderer.result() is new
 //   }
 //
@@ -19,7 +19,7 @@
 // leaf pass whose texture already shows it is skipped.
 
 #include "canvas/item.hpp"
-#include "canvas/preview/preview-plan.hpp"
+#include "document/preview-plan.hpp"
 #include "canvas/tiles/atlas.hpp"
 #include "gfx/texture.hpp"
 
@@ -40,7 +40,7 @@ struct PreviewSpace {
     int      level = 0;
 
     static PreviewSpace ofView(const CanvasFrame& frame);                                   // a canvas view's
-    static PreviewSpace fitted(const BoundsI& bounds, uint32_t width, uint32_t height);   // bounds filling width x height
+    static PreviewSpace fitted(const BoundsI& bounds, const PictureFit& fit);   // bounds as fitted, from the picture's corner
 };
 
 class PreviewRenderer {
@@ -52,7 +52,7 @@ public:
 
     // This frame's passes for `node`'s output under the edit. False: the edit doesn't reach it.
     bool    plan(const Preview& preview, NodeId node);
-    BoundsI bounds() const;   // world: what the planned output can cover (Preview::bounds)
+    BoundsI bounds() const;   // world: what the planned output can cover (PreviewModel::bounds)
     // Brings the leaf tiles the passes read up to date within the budget; once all are there,
     // records the passes into `enc`, unless the result already shows exactly this. True: a new
     // result was recorded.
@@ -72,7 +72,7 @@ private:
         int  pixels = -1, coverage = -1;              // Stroke: the raster's own pixels and the coverage (passes)
         std::vector<Layer> layers;                    // Stack: bottom first
         int  node = -1, wet = -1, dry = -1;           // Signal: whose signals, applied to which passes
-        int  masks[kPreviewMaskTextures];
+        int  masks[kPreviewMaskTextures] = {};        // Signal: the passes of its masks (-1: none), set when planned
     };
     struct Built { int node, leaf; Vec2 offset; int op; };   // built this frame: a node (or leaf) seen through an offset
     // What a leaf pass drew into its target: the same again needs no pass.
