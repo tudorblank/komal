@@ -1,15 +1,30 @@
 #pragma once
 // The app's interface: the menu bar, the dock layout and every panel, and where a dropped file
 // goes (the panel under it). Panels never reach each other: they share the project. Panels are
-// one list (ui/panel.hpp): their View toggles, close buttons, default layout, draw order, GPU
-// work and frames all come from it.
+// one list (ui/panels/panel-base.hpp): their View toggles, close buttons, default layout, draw
+// order, GPU work and frames all come from it.
+//
+// The ui folder, by job:
+//
+//   style/     the look, defined once: theme (reads a theme file, assets/themes/), palette (every
+//              colour by its job, made from the theme: the one source), fonts, ui-style (ImGui's
+//              theme, the sizes, each component's style), graph-style (the graph view's)
+//   render/    the one way to draw: Painter (the surface), skins (each control drawn from its
+//              style and its state)
+//   widgets/   the controls panels are built from: what they do and where they go on a row;
+//              each borrows its style and hands it to its skin
+//   panels/    the windows (the canvas and the graph among them, with their engines)
+//   tools/     the canvas tools: the brush, the hand
+//
+// Only style/ reads the palette; only render/ touches ImGui's draw lists.
 
-#include "canvas/canvas-engine.hpp"
+#include "ui/panels/canvas/canvas-engine.hpp"
 #include "command/actions.hpp"
 #include "ui/dockspace.hpp"
+#include "ui/input-owner.hpp"
 #include "ui/image-importer.hpp"
 #include "ui/notices.hpp"
-#include "ui/panel.hpp"
+#include "ui/panels/panel-base.hpp"
 #include "ui/tools/tool-manager.hpp"
 
 #include <imgui.h>
@@ -63,6 +78,7 @@ private:
 
     ActionRegistry& m_actions;  // the editor's (document/editor.hpp): the app's, panels' and tools' actions join the document's
     ToolManager    m_tools;     // before the panels that use it
+    InputOwner     m_owner;     // who has the keyboard this frame
     CanvasEngine   m_canvas;    // ... and what canvas views draw with
     std::optional<UiContext> m_context;   // what every panel reads (Panel::ui()), from init() on
 

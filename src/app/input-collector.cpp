@@ -7,23 +7,23 @@
 
 namespace {
 
-bool fromPen(SDL_MouseID which) { return which == SDL_PEN_MOUSEID; }   // a pen also reported as a mouse
+    bool fromPen(SDL_MouseID which) { return which == SDL_PEN_MOUSEID; }   // a pen also reported as a mouse
 
-uint8_t keyMods(SDL_Keymod m)
-{
-    return uint8_t((m & SDL_KMOD_CTRL  ? ModCtrl  : 0) | (m & SDL_KMOD_SHIFT ? ModShift : 0) |
-                   (m & SDL_KMOD_ALT   ? ModAlt   : 0) | (m & SDL_KMOD_GUI   ? ModSuper : 0));
-}
-
-bool mouseButton(Uint8 sdlButton, PointerButton& out)
-{
-    switch (sdlButton) {
-    case SDL_BUTTON_LEFT:   out = PointerButton::Primary;   return true;
-    case SDL_BUTTON_RIGHT:  out = PointerButton::Secondary; return true;
-    case SDL_BUTTON_MIDDLE: out = PointerButton::Middle;    return true;
-    default:                return false;   // X1 / X2: not pointer buttons for tools
+    uint8_t keyMods(SDL_Keymod m)
+    {
+        return uint8_t((m & SDL_KMOD_CTRL  ? ModCtrl  : 0) | (m & SDL_KMOD_SHIFT ? ModShift : 0) |
+                    (m & SDL_KMOD_ALT   ? ModAlt   : 0) | (m & SDL_KMOD_GUI   ? ModSuper : 0));
     }
-}
+
+    bool mouseButton(Uint8 sdlButton, PointerButton& out)
+    {
+        switch (sdlButton) {
+        case SDL_BUTTON_LEFT:   out = PointerButton::Primary;   return true;
+        case SDL_BUTTON_RIGHT:  out = PointerButton::Secondary; return true;
+        case SDL_BUTTON_MIDDLE: out = PointerButton::Middle;    return true;
+        default:                return false;   // X1 / X2: not pointer buttons for tools
+        }
+    }
 
 }
 
@@ -127,7 +127,7 @@ void InputCollector::handle(const SDL_Event& e)
 {
     InputFrame::Pen& pen = m_frame.pen;
     switch (e.type) {
-    // ---- keyboard ---- //
+    // ---- keyboard
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP: {
         KeyEvent k;
@@ -148,7 +148,7 @@ void InputCollector::handle(const SDL_Event& e)
         releaseAll();
         break;
 
-    // ---- mouse ---- //
+    // ---- mouse
     case SDL_EVENT_MOUSE_MOTION: {
         if (fromPen(e.motion.which)) break;
         PointerEvent ev;
@@ -169,7 +169,7 @@ void InputCollector::handle(const SDL_Event& e)
         push(ev);
         break;
     }
-    // ---- pen ---- //
+    // ---- pen
     case SDL_EVENT_PEN_PROXIMITY_IN:
         pen.present = true;
         break;

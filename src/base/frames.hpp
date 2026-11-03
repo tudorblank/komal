@@ -14,5 +14,5 @@ constexpr Clock::Seconds kFrameNow{ 0.0 };
 using MainLoopWaker = void (*)();
 void installMainLoopWaker(MainLoopWaker waker);   // until one is installed, waking does nothing
 
-// Any thread: a frame soon, even if the loop is asleep.
+// any thread: a frame soon, even if the loop is asleep.
 void wakeMainLoop();

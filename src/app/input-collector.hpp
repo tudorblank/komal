@@ -1,11 +1,9 @@
 #pragma once
-// SDL's events as InputFrames (command/input.hpp): the platform's keys, buttons and pen turned into
-// the app's own. Feed it every event, in order, as it arrives.
 
 #include "command/input.hpp"
-
 #include <SDL3/SDL_events.h>
 
+// SDL events -> InputFrame [input.hpp] (SDL grabber)
 class InputCollector {
 public:
     void beginFrame();   // before the frame's events (a frame that wasn't drawn keeps its input)

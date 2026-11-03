@@ -11,7 +11,7 @@
 //   if (levels.sync()) ...                         // once a frame: true when it started over
 //   levels.build(budget, level, key, [&](int l, TileKey k, const Tile* pixels) { ... });
 
-#include "base/deadline.hpp"
+#include "base/clock.hpp"
 #include "node/tile-source.hpp"
 #include "raster/downsample.hpp"
 

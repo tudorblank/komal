@@ -1,4 +1,4 @@
-#include "ui/widgets/detail.hpp"
+#include "ui/widgets/interaction.hpp"
 #include "command/actions.hpp"
 
 using namespace Widgets::detail;

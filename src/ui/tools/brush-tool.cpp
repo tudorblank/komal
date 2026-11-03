@@ -1,8 +1,8 @@
 #include "brush-tool.hpp"
 #include "document/document-actions.hpp"
 #include "document/project.hpp"
-#include "canvas/scene.hpp"
-#include "ui/theme.hpp"
+#include "ui/panels/canvas/scene.hpp"
+#include "ui/style/ui-style.hpp"
 #include "ui/tools/tool-manager.hpp"
 #include "ui/widgets/widgets.hpp"
 
@@ -19,21 +19,21 @@ constexpr ArgKey<bool>  kErase{ "erase" };
 
 }
 
-void BrushTool::drawIcon(ImDrawList* dl, ImVec2 c, float size, ImU32 color) const
+void BrushTool::drawIcon(const Painter& draw, ImVec2 c, float size, ImU32 color) const
 {
     // A round brush: handle down to the ferrule, the tip below it.
     const float s = size * 0.5f;
-    dl->AddLine(ImVec2(c.x + s * 0.75f, c.y - s * 0.75f), ImVec2(c.x - s * 0.05f, c.y + s * 0.05f), color, std::max(1.5f, s * 0.22f));
-    dl->AddQuadFilled(ImVec2(c.x - s * 0.05f, c.y - s * 0.20f), ImVec2(c.x + s * 0.20f, c.y + s * 0.05f),
-                      ImVec2(c.x - s * 0.10f, c.y + s * 0.35f), ImVec2(c.x - s * 0.35f, c.y + s * 0.10f), color);
-    dl->AddTriangleFilled(ImVec2(c.x - s * 0.35f, c.y + s * 0.10f), ImVec2(c.x - s * 0.10f, c.y + s * 0.35f),
-                          ImVec2(c.x - s * 0.80f, c.y + s * 0.80f), color);
+    draw.line(ImVec2(c.x + s * 0.75f, c.y - s * 0.75f), ImVec2(c.x - s * 0.05f, c.y + s * 0.05f), color, std::max(1.5f, s * 0.22f));
+    draw.fillQuad(ImVec2(c.x - s * 0.05f, c.y - s * 0.20f), ImVec2(c.x + s * 0.20f, c.y + s * 0.05f),
+                  ImVec2(c.x - s * 0.10f, c.y + s * 0.35f), ImVec2(c.x - s * 0.35f, c.y + s * 0.10f), color);
+    draw.fillTriangle(ImVec2(c.x - s * 0.35f, c.y + s * 0.10f), ImVec2(c.x - s * 0.10f, c.y + s * 0.35f),
+                      ImVec2(c.x - s * 0.80f, c.y + s * 0.80f), color);
 }
 
 void BrushTool::drawProperties(ToolContext& ctx)
 {
     using namespace Widgets;
-    const Metrics m = metrics();
+    const Style::Metrics& m = Style::metrics();
     ActionRegistry& actions = ctx.actions;
     // Each control edits a copy; a change runs the setting's action (which writes it here).
     const auto row = [&](const char* label, ActionId action, float value, float min, float max, const char* format, bool log = false) {

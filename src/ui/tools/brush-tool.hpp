@@ -1,7 +1,7 @@
 #pragma once
 #include "command/pointer-capture.hpp"
 #include "raster/brush.hpp"
-#include "ui/tools/tool.hpp"
+#include "ui/tools/tool-base.hpp"
 
 #include <vector>
 
@@ -15,7 +15,7 @@ public:
 
     const char* name() const override { return "Brush"; }
     ActionId pickAction() const override { return Actions::ToolBrush; }
-    void drawIcon(ImDrawList* dl, ImVec2 center, float size, ImU32 color) const override;
+    void drawIcon(const Painter& draw, ImVec2 center, float size, ImU32 color) const override;
 
     void drawProperties(ToolContext& ctx) override;
     void canvasInput(const CanvasInput& in) override;

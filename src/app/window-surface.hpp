@@ -1,7 +1,5 @@
 #pragma once
-// Where the GPU draws the main window: a wgpu surface over the SDL window, made the way each
-// platform wants it (a Win32 window, a Metal layer, Wayland or X11). Owns what it made on the
-// way (macOS: the Metal view), released once the GPU device has let go of the surface.
+// cross platform window surface for WebGPU (Metal, Vulkan, D3D12, OpenGL)
 
 #include <webgpu/webgpu.h>
 

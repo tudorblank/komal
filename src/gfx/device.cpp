@@ -9,44 +9,44 @@
 
 namespace {
 
-void logSv(const char* tag, WGPUStringView m)
-{
-    if (!m.data) return;
-    if (m.length == WGPU_STRLEN) Log::info("wgpu", "%s: %s", tag, m.data);
-    else Log::info("wgpu", "%s: %.*s", tag, int(m.length), m.data);
-}
+    void logSv(const char* tag, WGPUStringView m)
+    {
+        if (!m.data) return;
+        if (m.length == WGPU_STRLEN) Log::info("wgpu", "%s: %s", tag, m.data);
+        else Log::info("wgpu", "%s: %.*s", tag, int(m.length), m.data);
+    }
 
-struct AdapterRequest { WGPUAdapter adapter = nullptr; };
-struct DeviceRequest  { WGPUDevice  device  = nullptr; };
+    struct AdapterRequest { WGPUAdapter adapter = nullptr; };
+    struct DeviceRequest  { WGPUDevice  device  = nullptr; };
 
-void onAdapter(WGPURequestAdapterStatus status, WGPUAdapter adapter, WGPUStringView msg, void* u1, void*)
-{
-    if (status == WGPURequestAdapterStatus_Success)
-        static_cast<AdapterRequest*>(u1)->adapter = adapter;
-    else
-        logSv("RequestAdapter failed", msg);
-}
+    void onAdapter(WGPURequestAdapterStatus status, WGPUAdapter adapter, WGPUStringView msg, void* u1, void*)
+    {
+        if (status == WGPURequestAdapterStatus_Success)
+            static_cast<AdapterRequest*>(u1)->adapter = adapter;
+        else
+            logSv("RequestAdapter failed", msg);
+    }
 
-void onDevice(WGPURequestDeviceStatus status, WGPUDevice device, WGPUStringView msg, void* u1, void*)
-{
-    if (status == WGPURequestDeviceStatus_Success)
-        static_cast<DeviceRequest*>(u1)->device = device;
-    else
-        logSv("RequestDevice failed", msg);
-}
+    void onDevice(WGPURequestDeviceStatus status, WGPUDevice device, WGPUStringView msg, void* u1, void*)
+    {
+        if (status == WGPURequestDeviceStatus_Success)
+            static_cast<DeviceRequest*>(u1)->device = device;
+        else
+            logSv("RequestDevice failed", msg);
+    }
 
-void onUncapturedError(const WGPUDevice*, WGPUErrorType, WGPUStringView msg, void*, void*)
-{ logSv("error", msg); }
-// Lost for good (a driver reset, a GPU removed): the app makes everything again. Releasing it
-// ourselves (Destroyed, InstanceDropped) isn't a loss.
-void onDeviceLost(const WGPUDevice*, WGPUDeviceLostReason reason, WGPUStringView msg, void* lost, void*)
-{
-    if (reason == WGPUDeviceLostReason_Destroyed || reason == WGPUDeviceLostReason_InstanceDropped) return;
-    logSv("device lost", msg);
-    static_cast<std::atomic<bool>*>(lost)->store(true);
-}
-bool isSrgb(WGPUTextureFormat f)
-{ return f == WGPUTextureFormat_BGRA8UnormSrgb || f == WGPUTextureFormat_RGBA8UnormSrgb; }
+    void onUncapturedError(const WGPUDevice*, WGPUErrorType, WGPUStringView msg, void*, void*)
+    { logSv("error", msg); }
+    // Lost for good (a driver reset, a GPU removed): the app makes everything again. Releasing it
+    // ourselves (Destroyed, InstanceDropped) isn't a loss.
+    void onDeviceLost(const WGPUDevice*, WGPUDeviceLostReason reason, WGPUStringView msg, void* lost, void*)
+    {
+        if (reason == WGPUDeviceLostReason_Destroyed || reason == WGPUDeviceLostReason_InstanceDropped) return;
+        logSv("device lost", msg);
+        static_cast<std::atomic<bool>*>(lost)->store(true);
+    }
+    bool isSrgb(WGPUTextureFormat f)
+    { return f == WGPUTextureFormat_BGRA8UnormSrgb || f == WGPUTextureFormat_RGBA8UnormSrgb; }
 
 }
 
@@ -114,8 +114,9 @@ bool GpuDevice::init(const SurfaceMaker& makeSurface, int pixelW, int pixelH)
     m_device = dreq.device;
     if (!m_device) return false;
 
-    m_queue = wgpuDeviceGetQueue(m_device);
+    m_queue = wgpuDeviceGetQueue(m_device); // ---- queue
 
+    // ---- format, present mode, frame latency
     WGPUSurfaceCapabilities caps{};
     wgpuSurfaceGetCapabilities(m_surface, m_adapter, &caps);
     m_format = caps.formatCount ? caps.formats[0] : WGPUTextureFormat_BGRA8Unorm;
@@ -143,17 +144,6 @@ bool GpuDevice::init(const SurfaceMaker& makeSurface, int pixelW, int pixelH)
     return true;
 }
 
-const char* GpuDevice::presentModeName() const
-{
-    switch (m_presentMode) {
-        case WGPUPresentMode_Fifo:        return "Fifo (vsync)";
-        case WGPUPresentMode_FifoRelaxed: return "FifoRelaxed";
-        case WGPUPresentMode_Mailbox:     return "Mailbox";
-        case WGPUPresentMode_Immediate:   return "Immediate (no vsync)";
-        default:                          return "?";
-    }
-}
-
 void GpuDevice::configureSurface()
 {
     m_surfaceStale = false;
@@ -175,10 +165,22 @@ void GpuDevice::configureSurface()
     wgpuSurfaceConfigure(m_surface, &cfg);
 }
 
+const char* GpuDevice::presentModeName() const
+{
+    switch (m_presentMode) {
+        case WGPUPresentMode_Fifo:        return "Fifo (vsync)";
+        case WGPUPresentMode_FifoRelaxed: return "FifoRelaxed";
+        case WGPUPresentMode_Mailbox:     return "Mailbox";
+        case WGPUPresentMode_Immediate:   return "Immediate (no vsync)";
+        default:                          return "?";
+    }
+}
+
 void GpuDevice::resize(int w, int h)
 {
     if (w == m_width && h == m_height && !m_surfaceStale) return;
-    m_width = w; m_height = h;
+    m_width  = w;
+    m_height = h;
     configureSurface();
 }
 
@@ -210,9 +212,9 @@ bool GpuDevice::acquire(GpuFrame& f)
             return false;
     }
 
-    f.width   = wgpuTextureGetWidth(f.surfaceTexture.texture);
-    f.height  = wgpuTextureGetHeight(f.surfaceTexture.texture);
-    f.view    = wgpuTextureCreateView(f.surfaceTexture.texture, nullptr);
+    f.width  = wgpuTextureGetWidth(f.surfaceTexture.texture);
+    f.height = wgpuTextureGetHeight(f.surfaceTexture.texture);
+    f.view   = wgpuTextureCreateView(f.surfaceTexture.texture, nullptr);
 
     WGPUCommandEncoderDescriptor edesc{};
     f.encoder = wgpuDeviceCreateCommandEncoder(m_device, &edesc);

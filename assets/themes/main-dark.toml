@@ -1,0 +1,50 @@
+# Main Dark: Komal's own look.
+#
+# A theme is the colours the look is made of; the palette (src/ui/style/palette.cpp) gives each
+# one its jobs. Colours are "#RRGGBB". Every key must be there.
+
+name = "Main Dark"
+
+# The ramp: 24 steps the surfaces, lines and text are made of. A step is a slot, not a grey:
+# give it any colour. In a dark theme they climb from dark to light; a light theme turns that
+# round. Each comment is what the step is used for.
+ramp = [
+    "#0A0A0A",   #  0  rims: grabs, node borders, ports
+    "#0E0E0E",   #  1  the window, behind every panel
+    "#111111",   #  2  title and menu bars, tabs
+    "#141414",   #  3  the canvas and the graph's, a node's slider track
+    "#161616",   #  4  a panel
+    "#1C1C1C",   #  5  popups, notices, a node's insets
+    "#202020",   #  6  fields, table headers
+    "#252525",   #  7  buttons, a node's body, a selected row
+    "#2B2B2B",   #  8  borders, a field under the mouse
+    "#303030",   #  9  a button under the mouse, a node's rows, a slider's track
+    "#383838",   # 10  a button held, a scrollbar
+    "#3E3E3E",   # 11  a picture not loaded yet
+    "#474747",   # 12  a scrollbar under the mouse
+    "#505050",   # 13  a scrollbar held, a resize grip
+    "#5E5E5E",   # 14  a toggle's edge
+    "#696969",   # 15  a node's border under the mouse
+    "#767676",   # 16  dim text, icons off
+    "#8C8C8C",   # 17  a toggle under the mouse
+    "#9B9B9B",   # 18  a node's dim text, mask ports
+    "#CDCDCD",   # 19  a slider's grab
+    "#DBDBDB",   # 20  text
+    "#E7E7E7",   # 21  a node's title
+    "#F0F0F0",   # 22  icons on
+    "#FFFFFF",   # 23  the front: a grab under the mouse; faint lines and glows (with an alpha)
+]
+
+shadow = "#000000"   # under and behind things, with an alpha
+
+# Colours by family: a slot, like a terminal theme's "red" (any red, or not red at all).
+[hues]
+accent     = "#8CB4F5"   # selections, focus, checked things
+accentDeep = "#6888BA"   # a slider's filled part
+red        = "#D64848"   # outlines on maps, notices
+rose       = "#EC7070"   # the R channel
+green      = "#7ACE7A"   # the G channel
+blue       = "#7698F0"   # the B channel
+maroon     = "#642424"   # the master node's title bar
+orange     = "#FFA028"   # the raster the canvas paints into
+yellow     = "#C7C729"   # image ports and links

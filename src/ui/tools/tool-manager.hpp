@@ -1,6 +1,6 @@
 #pragma once
 #include "command/actions.hpp"
-#include "ui/tools/tool.hpp"
+#include "ui/tools/tool-base.hpp"
 
 #include <memory>
 #include <string>

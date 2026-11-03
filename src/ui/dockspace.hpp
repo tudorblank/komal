@@ -3,7 +3,7 @@
 // scales with the window. ImGui alone gives the whole size difference to one side; here the
 // canvas and graph areas grow, the side column keeps its width, and stacked panels keep their shares.
 
-#include "ui/panel.hpp"
+#include "ui/panels/panel-base.hpp"
 
 #include <absl/container/flat_hash_map.h>
 #include <vector>

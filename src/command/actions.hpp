@@ -18,11 +18,6 @@
 struct PrimaryKey {};   // in help text: the platform's command modifier
 using HelpPart = std::variant<std::string_view, ActionId, PrimaryKey>;
 
-enum class KeyboardClaim : uint8_t {
-    Focus,     // the panel's window is focused
-    Pointer,   // the pointer is over the panel (or held on it)
-};
-
 // One line of the log.
 struct ActionLogEntry {
     enum class Status : uint8_t { Done, Refused, Disabled, Cancelled };
@@ -62,10 +57,10 @@ public:
     // begins), close after it ran (or ended, was cancelled, or refused to begin).
     void setUndoSteps(std::function<void(const Action&)> open, std::function<void()> close);
 
-    void claimKeyboard(ActionScope scope, KeyboardClaim claim);   // the first of the strongest wins
-    // Runs the enabled actions whose shortcut went down this frame: global ones, and those of the
-    // scope claimed last frame. Once a frame, before the panels draw.
-    void dispatch(const InputFrame& input, bool typing);
+    // Runs the enabled actions whose shortcut went down this frame: global ones, and those of
+    // `scope` (the panel the keyboard belongs to: the UI decides, ui/input-owner.hpp). Once a
+    // frame, before the panels draw; not while a field is being typed into.
+    void dispatch(const InputFrame& input, ActionScope scope);
     // Once a frame, after the panels: `interacting` while a control is held or a key is down
     // (coalesced app-state runs are logged once that ends; a gesture still open then lost its
     // end, and is cancelled).
@@ -100,9 +95,6 @@ private:
     std::function<void()>              m_closeStep;
     ActionLogEntry m_pending;          // a coalescing run, logged once its interaction ends
     bool           m_hasPending = false;
-    ActionScope   m_claimScope = ActionScope::Global;   // for the next dispatch
-    KeyboardClaim m_claim      = KeyboardClaim::Focus;
-    bool          m_claimed    = false;
 };
 
 std::string shortcutLabel(const Shortcut& s);   // Cmd on macOS

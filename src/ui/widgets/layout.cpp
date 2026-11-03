@@ -1,40 +1,14 @@
-#include "ui/widgets/detail.hpp"
-#include "ui/theme.hpp"
+#include "ui/widgets/interaction.hpp"
 
 using namespace Widgets::detail;
 
 namespace Widgets {
 
-const Metrics& metrics()
-{
-    // Worked out again only when what it comes from changes: the font size and the style.
-    static Metrics m;
-    static float madeFor[3] = { -1.0f, -1.0f, -1.0f };
-    const float font = ImGui::GetFontSize(), frame = ImGui::GetFrameHeight(), spacing = ImGui::GetStyle().ItemSpacing.x;
-    if (font == madeFor[0] && frame == madeFor[1] && spacing == madeFor[2]) return m;
-    madeFor[0] = font;
-    madeFor[1] = frame;
-    madeFor[2] = spacing;
-    const float u = font / kBaseFontSize;
-    m.unit            = u;
-    m.rowHeight       = frame;
-    m.boxHeight       = std::round(font + 6.0f * u);
-    m.fieldWidth      = std::round(font * 3.6f);
-    m.labelWidth      = std::round(font * 5.0f);
-    m.shortLabelWidth = std::round(font * 1.1f);
-    m.spacing         = spacing;
-    m.groupSpacing    = std::round(font);
-    m.rounding        = std::round(3.0f * u);
-    m.panelPadding    = std::round(10.0f * u);
-    m.sectionGap      = std::round(6.0f * u);
-    return m;
-}
-
 // ---------------------------------------------------------------- panels
 
 PanelWindow::PanelWindow(const Panel& panel, ActionRegistry& actions, ImGuiWindowFlags flags, Padding padding)
 {
-    const float p = padding == Padding::Panel ? metrics().panelPadding : 0.0f;
+    const float p = padding == Padding::Panel ? Style::metrics().panelPadding : 0.0f;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(p, p));
     bool keep = true;
     m_shown = ImGui::Begin(panel.title(), &keep, flags);
@@ -53,12 +27,12 @@ PanelWindow::~PanelWindow()
 
 void sectionGap()
 {
-    ImGui::Dummy(ImVec2(0.0f, metrics().sectionGap));
+    ImGui::Dummy(ImVec2(0.0f, Style::metrics().sectionGap));
 }
 
 float stackHeight(int rows, int headings, int gaps)
 {
-    const Metrics m = metrics();
+    const Style::Metrics& m = Style::metrics();
     const float sy = ImGui::GetStyle().ItemSpacing.y;
     // Each item is followed by the item spacing; the last one's is dropped (the panel's padding follows).
     const int items = rows + headings + gaps;
@@ -77,22 +51,22 @@ void rowLabel(const char* text, float width)
     const float x = ImGui::GetCursorPosX();
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(text);
-    ImGui::SameLine(x + (width > 0.0f ? width : metrics().labelWidth));
+    ImGui::SameLine(x + (width > 0.0f ? width : Style::metrics().labelWidth));
 }
 
 void sameRow()
 {
-    ImGui::SameLine(0.0f, metrics().spacing);
+    ImGui::SameLine(0.0f, Style::metrics().spacing);
 }
 
 void nextGroup()
 {
-    ImGui::SameLine(0.0f, metrics().groupSpacing);
+    ImGui::SameLine(0.0f, Style::metrics().groupSpacing);
 }
 
 float stretchWidth(float reservedRight)
 {
-    return std::max(8.0f, ImGui::GetContentRegionAvail().x - (reservedRight > 0.0f ? reservedRight + metrics().spacing : 0.0f));
+    return std::max(8.0f, ImGui::GetContentRegionAvail().x - (reservedRight > 0.0f ? reservedRight + Style::metrics().spacing : 0.0f));
 }
 
 void alignRight(float width)

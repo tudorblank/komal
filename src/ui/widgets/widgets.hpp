@@ -2,9 +2,14 @@
 // The UI's controls and the one layout standard they follow. Panels use these instead of
 // ImGui's own sliders, fields, buttons and toggles, so everything matches.
 //
+// A control is three parts, each in its own place: its style (ui/style: colours and sizes, from
+// the palette), what it does (here: the mouse, the keyboard, its value, where it goes on its row),
+// and how it's drawn (its skin, ui/render). A control borrows its style and hands it to its
+// skin; it never holds a colour or a size of its own.
+//
 // Tool windows open with PanelWindow: panelPadding on every side, sectionGap between sections.
 // Every row is rowHeight tall; every box (field, button, swatch) is boxHeight tall, centred in
-// it. A row reads left to right:
+// it (Style::metrics()). A row reads left to right:
 //
 //   [label column] [controls, the last one stretching] [value field, flush right]
 //
@@ -12,7 +17,8 @@
 // they line up down a panel and across panels.
 
 #include "command/actions.hpp"
-#include "ui/panel.hpp"
+#include "ui/panels/panel-base.hpp"
+#include "ui/render/skins.hpp"
 
 #include <imgui.h>
 #include <cstddef>
@@ -21,21 +27,6 @@
 #include <string_view>
 
 namespace Widgets {
-
-struct Metrics {
-    float unit;              // UI scale: font size / kBaseFontSize (ui/theme.hpp)
-    float rowHeight;         // every row
-    float boxHeight;         // fields, buttons, swatches
-    float fieldWidth;        // value fields
-    float labelWidth;        // the label column of property rows
-    float shortLabelWidth;   // ... for one-letter labels (H, S, B)
-    float spacing;           // between controls in a row
-    float groupSpacing;      // between the options of a group (toggles)
-    float rounding;
-    float panelPadding;      // inside a panel, every side
-    float sectionGap;        // between a panel's sections
-};
-const Metrics& metrics();   // worked out once per font size and style
 
 constexpr float kNoDefault = std::numeric_limits<float>::quiet_NaN();
 
@@ -71,7 +62,7 @@ float stretchWidth(float reservedRight = 0.0f);         // from the cursor to th
 void  alignRight(float width);                          // the next control on this row ends at the right edge
 
 // ---- controls
-enum class Icon { Minus, Plus, RotateLeft, RotateRight };
+using Icon = Skin::Icon;   // an icon button's icon: Minus, Plus, RotateLeft, RotateRight
 
 bool button(const char* label, float width = 0.0f);     // 0: fits the label
 bool iconButton(const char* id, Icon icon);             // a square box
@@ -85,7 +76,7 @@ bool gradientSlider(const char* id, float& v, const ImU32* stops, int count, flo
 // the value runs, the part the value covers in the slider blue, under a box-tall grab. Ramp: a
 // wedge growing left to right (zoom). Wave: falls and rises about the middle, filled from there
 // (rotation). Otherwise as slider().
-enum class SliderFigure { Ramp, Wave };
+using SliderFigure = Skin::Figure;
 bool figureSlider(const char* id, float& v, float min, float max, float width, SliderFigure figure,
                   bool logarithmic = false, float defaultValue = kNoDefault);
 

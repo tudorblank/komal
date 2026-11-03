@@ -1,25 +1,27 @@
 #pragma once
-// Input reaches the app two ways, from the same platform events (app/: Application, InputCollector):
+
+// Input reaches the app two ways, from the same platform events (app/input.hpp, its one door):
 //
-//   ImGui (Application)      widgets, windows, docking, text; and who has the pointer: a panel
+//   ImGui's io               widgets, windows, docking, text; and who has the pointer: a panel
 //                            owns it while ImGui says its item is hovered or held
 //   InputFrame (here)        every pointer sample with its pen data, for the tools of the panel
 //                            that owns the pointer; buttons held; key presses for shortcuts
 //                            (ActionRegistry, dispatched once a frame); held keys (Space for the hand)
 //
 // Widgets read ImGui only; tools read the InputFrame only, and only while their panel owns the
-// pointer. Nothing here knows the platform: the app turns its events into these.
+// pointer. Who owns the pointer and the keyboard is decided in one place (ui/input-owner.hpp).
+// Nothing here knows the platform: the app turns its events into these.
 
 #include <cstdint>
 #include <vector>
 
+// ---- MOUSE / PEN
 enum class PointerDevice : uint8_t {
     Mouse,
     Pen,      // a pen's drawing tip
     Eraser,   // a pen's eraser end
 };
 
-// Buttons, the same for every device.
 enum class PointerButton : uint8_t {
     Primary   = 0,   // left mouse button, pen tip touching
     Secondary = 1,   // right mouse button, pen barrel button 1
@@ -37,8 +39,7 @@ struct PointerEvent {
     uint64_t      timeNs   = 0;                        // the platform's timestamp
 };
 
-// A key, by what it types in the keyboard's layout (not by where it sits). The keys the app can
-// bind or read; any other is Unknown.
+// ---- KEYBOARD
 enum class Key : uint8_t {
     Unknown,
     A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
@@ -53,7 +54,6 @@ enum class Key : uint8_t {
 const char* keyName(Key key);   // as help text shows it: "Z", "Delete", "["
 bool isModifierKey(Key key);    // Ctrl, Shift, Alt, Super (either side)
 
-// Modifier keys, left and right alike.
 enum KeyMod : uint8_t {
     ModNone  = 0,
     ModCtrl  = 1 << 0,
@@ -75,22 +75,20 @@ struct KeyEvent {
     uint64_t timeNs = 0;
 };
 
-// A key with an exact set of modifiers: Shortcut{ Key::Z, ModPrimary | ModShift }.
+// a key with an exact set of modifiers: Shortcut{ Key::Z, ModPrimary | ModShift }.
 struct Shortcut {
     Key     key  = Key::Unknown;
     uint8_t mods = ModNone;
     bool operator==(const Shortcut&) const = default;
 };
 
-// one frame worth of input
+// ---- FRAME (one frame worth of input)
 struct InputFrame {
+
+    // ---- pointer
     std::vector<PointerEvent> pointer;   // in the order they happened
 
-    std::vector<KeyEvent> keys;          // in the order they happened
-    uint8_t mods = ModNone;              // modifiers held now
-    std::vector<Key> held;               // keys held now
-
-    // Pointer buttons held now, a bit per PointerButton (1 << button). The pen's tip is its Primary.
+    // held NOW; 1 bit per PointerButton (1 << button)
     uint8_t mouseButtons = 0;
     uint8_t penButtons   = 0;
     bool anyButtonHeld() const { return mouseButtons != 0 || penButtons != 0; }
@@ -99,11 +97,7 @@ struct InputFrame {
         return ((unsigned(device == PointerDevice::Mouse ? mouseButtons : penButtons) >> unsigned(b)) & 1u) != 0;
     }
 
-    // Went down this frame with exactly these modifiers (repeats count only if asked).
-    bool pressed(Shortcut s, bool repeats = false) const;
-    bool isDown(Key key) const;
-
-    // The pen as it was last reported (not reset between frames).
+    // the pen as it was last reported (not reset between frames).
     struct Pen {
         bool  present  = false;   // a pen has been used since the app started
         bool  touching = false;
@@ -112,4 +106,13 @@ struct InputFrame {
         float tiltX = 0.0f, tiltY = 0.0f;
     } pen;
     PointerDevice lastDevice = PointerDevice::Mouse;
+
+    // ---- keyboard
+    std::vector<KeyEvent> keys;          // in the order they happened
+    uint8_t mods = ModNone;              // modifiers held now
+    std::vector<Key> held;               // keys held now
+
+    // went down this frame with exactly these modifiers (repeats count only if asked).
+    bool pressed(Shortcut s, bool repeats = false) const;
+    bool isDown(Key key) const;
 };

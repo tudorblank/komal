@@ -238,19 +238,9 @@ bool ActionRegistry::isStep(const Action& a) const
 
 // ---------------------------------------------------------------- shortcuts
 
-void ActionRegistry::claimKeyboard(ActionScope scope, KeyboardClaim claim)
+void ActionRegistry::dispatch(const InputFrame& input, ActionScope panel)
 {
-    if (m_claimed && claim <= m_claim) return;
-    m_claimScope = scope;
-    m_claim      = claim;
-    m_claimed    = true;
-}
-
-void ActionRegistry::dispatch(const InputFrame& input, bool typing)
-{
-    const ActionScope panel = m_claimed ? m_claimScope : ActionScope::Global;
-    m_claimed = false;   // claimed afresh while this frame draws
-    if (typing || input.keys.empty()) return;
+    if (input.keys.empty()) return;
     // By id: a handler may add actions (the vector may grow under a reference).
     std::vector<ActionId> fired;
     for (const Action& a : m_actions) {

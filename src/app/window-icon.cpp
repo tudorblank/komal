@@ -3,7 +3,7 @@
 #include <SDL3/SDL.h>
 #include <stb_image.h>
 
-extern const unsigned char kAppIcon[];   // assets/komal-icon-256.png
+extern const unsigned char kAppIcon[];   // assets/icon/komal-icon-256.png
 extern const unsigned int  kAppIconSize;
 
 void setWindowIcon(SDL_Window* window)

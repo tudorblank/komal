@@ -63,7 +63,6 @@ inline constexpr ActionId ViewColor{ "view.color" };
 inline constexpr ActionId ViewToolProperties{ "view.toolProperties" };
 inline constexpr ActionId ViewHistoryTree{ "view.historyTree" };
 inline constexpr ActionId ViewInfo{ "view.info" };
-inline constexpr ActionId ViewImguiDemo{ "view.imguiDemo" };
 
 // ---- tools (ui/tools)
 inline constexpr ActionId ToolBrush{ "tool.brush" };   // each tool's pick (Tool::pickAction)

@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <cmath>
 
-void HandTool::drawIcon(ImDrawList* dl, ImVec2 c, float size, ImU32 color) const
+void HandTool::drawIcon(const Painter& draw, ImVec2 c, float size, ImU32 color) const
 {
     // An open hand: four fingers over a palm, the thumb to the left.
     const float s = size * 0.5f;
@@ -14,11 +14,11 @@ void HandTool::drawIcon(ImDrawList* dl, ImVec2 c, float size, ImU32 color) const
     const float tops[4] = { -0.55f, -0.80f, -0.75f, -0.50f };
     for (int i = 0; i < 4; ++i) {
         const float x = c.x - s * 0.45f + float(i) * fw * 1.15f;
-        dl->AddRectFilled(ImVec2(x, c.y + tops[i] * s), ImVec2(x + fw, c.y + s * 0.1f), color, fw * 0.5f);
+        draw.fillRect(ImVec2(x, c.y + tops[i] * s), ImVec2(x + fw, c.y + s * 0.1f), color, fw * 0.5f);
     }
-    dl->AddRectFilled(ImVec2(c.x - s * 0.47f, c.y - s * 0.05f), ImVec2(c.x + s * 0.47f, c.y + s * 0.80f), color, s * 0.3f);
-    dl->AddQuadFilled(ImVec2(c.x - s * 0.47f, c.y + s * 0.15f), ImVec2(c.x - s * 0.85f, c.y - s * 0.20f),
-                      ImVec2(c.x - s * 0.70f, c.y - s * 0.35f), ImVec2(c.x - s * 0.30f, c.y - s * 0.05f), color);
+    draw.fillRect(ImVec2(c.x - s * 0.47f, c.y - s * 0.05f), ImVec2(c.x + s * 0.47f, c.y + s * 0.80f), color, s * 0.3f);
+    draw.fillQuad(ImVec2(c.x - s * 0.47f, c.y + s * 0.15f), ImVec2(c.x - s * 0.85f, c.y - s * 0.20f),
+                  ImVec2(c.x - s * 0.70f, c.y - s * 0.35f), ImVec2(c.x - s * 0.30f, c.y - s * 0.05f), color);
 }
 
 void HandTool::drawProperties(ToolContext& ctx)

@@ -1,12 +1,13 @@
 #include "application.hpp"
+#include "app/imgui-frames.hpp"
 #include "app/window-icon.hpp"
 #include "app/window-state.hpp"
 #include "base/dev-switches.hpp"
 #include "base/log.hpp"
-#include "base/palette.hpp"
 #include "base/perf.hpp"
 #include "gfx/render-pass.hpp"
-#include "ui/theme.hpp"
+#include "ui/style/fonts.hpp"
+#include "ui/style/ui-style.hpp"
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
@@ -18,7 +19,7 @@
 #include <string>
 
 namespace {
-    // The main loop's waker (base/frames.hpp): an event wakes SDL_WaitEvent from any thread.
+    // main loop's waker (base/frames.hpp): an event wakes SDL_WaitEvent from any thread.
     void pushWakeEvent()
     {
         SDL_Event e{};
@@ -36,16 +37,26 @@ namespace {
 
 Application::~Application() { shutdown(); }
 
-bool Application::init(const char* title, int width, int height)
+bool Application::init(const char* title, int width, int height, std::string_view theme)
 {
+    // ---- the look's colours: before anything is drawn
+    std::string why;
+    if (!Style::useTheme(theme, why)) {
+        Log::error("ui", "theme %s", why.c_str());
+        if (!Style::useTheme("main-dark", why)) {
+            Log::error("ui", "theme %s", why.c_str());
+            return false;
+        }
+    }
+
     // ---- SDL (window)
 #if defined(__linux__)
-    // Prefer X11 (XWayland): swapchains pace better there. Wayland if X11 is unavailable.
+    // swapchains pace better on x11/xwayland; wayland if x11 unavailable
     if (!SDL_getenv("SDL_VIDEO_DRIVER"))
         SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "x11,wayland");
 #endif
 
-    // The app id: desktops match the window to komal.desktop by it.
+    // app id
     SDL_SetAppMetadata("Komal", nullptr, "komal");
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -54,7 +65,7 @@ bool Application::init(const char* title, int width, int height)
     }
     installMainLoopWaker(&pushWakeEvent);
 
-    // Settings: ~/.local/share/Komal, %APPDATA%\Komal, ~/Library/Application Support/Komal.
+    // settings: ~/.local/share/Komal, %APPDATA%\Komal, ~/Library/Application Support/Komal.
     if (char* dir = SDL_GetPrefPath(nullptr, "Komal")) {
         m_prefDir = dir;
         SDL_free(dir);
@@ -91,12 +102,12 @@ bool Application::init(const char* title, int width, int height)
     setWindowIcon(m_window);
 
     // ---- project (CPU)
-    m_editor.project().init();
+    m_workspace.project().init();
 
     // ---- GPU init (wgpu)
     if (!initGpu()) return false;
 
-    // ---- UI init (ImGui)
+    // ---- imgui init
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -105,18 +116,18 @@ bool Application::init(const char* title, int width, int height)
 
     m_iniPath = m_prefDir + "imgui.ini";   // the layout
     io.IniFilename = m_iniPath.c_str();
-    io.ConfigInputTrickleEventQueue = false;   // ImGuiFeed does it, without the backlog
+    io.ConfigInputTrickleEventQueue = false;   // ImGuiInputBridge does it, without the backlog
 
-    loadUiFonts();
+    Fonts::load();
 
-    // ---- ImGui on the GPU
+    // ---- imgui on the GPU
     ImGui_ImplSDL3_InitForOther(m_window);
     initImGuiRenderer();
     m_imguiReady = true;
 
-    // ---- the interface
+    // ---- user interface
     m_host.showImportDialog = [this] { showImportDialog(); };
-    if (!m_userInterface.init(m_gpu, m_editor.project(), m_input.frame(), m_host))
+    if (!m_userInterface.init(m_gpu, m_workspace.project(), m_input.frame(), m_host))
         Log::error("ui", "init failed (canvas viewport disabled)");
     applyContentScale();
     
@@ -129,7 +140,7 @@ bool Application::initGpu()
 {
     int pw = 0, ph = 0;
     SDL_GetWindowSizeInPixels(m_window, &pw, &ph);
-    return m_gpu.init([this](WGPUInstance instance) { return m_surface.create(instance, m_window); }, pw, ph);
+    return m_gpu.init([this](WGPUInstance instance) { return m_winSurface.create(instance, m_window); }, pw, ph);
 }
 
 void Application::initImGuiRenderer()
@@ -161,10 +172,10 @@ bool Application::rebuildGpu()
         m_imguiGpu = false;
     }
     m_gpu.shutdown();
-    m_surface.release();
+    m_winSurface.release();
     if (!initGpu()) {   // no device yet (a driver still resetting): tried again in a while
         m_gpu.shutdown();
-        m_surface.release();
+        m_winSurface.release();
         return false;
     }
     initImGuiRenderer();
@@ -191,7 +202,7 @@ int Application::exec()
 Clock::Seconds Application::nextFrameIn() const
 {
     if (m_framesAfterInput > 0) return kFrameNow;
-    return std::min(m_userInterface.nextFrameIn(), m_imguiFeed.nextFrameIn(m_frameStart, m_input.frame()));
+    return std::min(m_userInterface.nextFrameIn(), imguiNextFrameIn(m_input, m_frameStart));
 }
 
 void Application::waitForFrame()
@@ -213,16 +224,14 @@ void Application::waitForFrame()
 bool Application::processEvents()
 {
     m_input.beginFrame();
-    m_imguiFeed.beginFrame();
     bool any = false;
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         any = true;
         m_input.handle(e);
-        m_imguiFeed.push(e);
         handleEvent(e);
     }
-    m_imguiFeed.endEvents();
+    m_input.endEvents();
     return any;
 }
 
@@ -254,7 +263,7 @@ void Application::showImportDialog()
         { "Images", "png;jpg;jpeg;bmp;tga;psd;gif" },
         { "All files", "*" },
     };
-    // Answers on its own thread: openFile() is safe from any.
+    // answers on its own thread: openFile() is safe from any
     SDL_ShowOpenFileDialog([](void* self, const char* const* files, int) {
         if (!files) return;   // an error, or cancelled
         for (; *files; ++files) static_cast<Application*>(self)->m_userInterface.openFile(*files);
@@ -266,7 +275,7 @@ void Application::applyContentScale()
     const float scale = contentScale(m_window);
     if (scale == m_host.uiScale) return;
     m_host.uiScale = scale;
-    applyUiStyle(scale);
+    Style::apply(scale);
 }
 
 void Application::renderFrame()
@@ -311,7 +320,7 @@ void Application::renderFrame()
     m_userInterface.renderGpu(frame.encoder);
 
     {
-        const auto clear = Palette::kWindowBackground.floats();
+        const auto clear = Style::windowBackground().floats();
         const GpuRenderPass pass(frame.encoder, frame.view, GpuRenderPass::Load::Clear, "Surface", clear.data());
         ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), pass);
     }
@@ -337,7 +346,7 @@ void Application::shutdown()
         m_imguiReady = false;
     }
     m_gpu.shutdown();
-    m_surface.release();
+    m_winSurface.release();
     if (m_window) {
         if (!m_prefDir.empty())
             WindowState{ m_normalW, m_normalH, (SDL_GetWindowFlags(m_window) & SDL_WINDOW_MAXIMIZED) != 0 }.save(m_prefDir + "window.cfg");

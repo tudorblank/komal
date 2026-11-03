@@ -1,7 +1,7 @@
-#include "ui/widgets/detail.hpp"
-#include "ui/theme.hpp"
+#include "ui/widgets/interaction.hpp"
+#include "base/color.hpp"
+#include "ui/style/fonts.hpp"
 
-#include <cstdio>
 #include <cstring>
 
 using namespace Widgets::detail;
@@ -10,8 +10,9 @@ namespace Widgets {
 
 bool numberField(const char* id, float& v, float min, float max, const char* format, float width, const char* prefix)
 {
-    if (width <= 0.0f) width = metrics().fieldWidth;
-    NumberFont font;
+    const Style::Styles& s = Style::get();
+    if (width <= 0.0f) width = s.metrics.fieldWidth;
+    Fonts::Numbers font;
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const ImGuiID key = ImGui::GetID(id);
     char plain[32];   // typed without the format's decorations
@@ -27,24 +28,17 @@ bool numberField(const char* id, float& v, float min, float max, const char* for
 
     bool clicked = false, hot = false;
     const ImRect box = boxItem(id, width, clicked, hot);
-    drawBox(box, hot);
-    ImRect inner = box;
-    if (prefix) {
-        const float pad = ImGui::GetStyle().FramePadding.x * 0.75f;
-        ImGui::GetWindowDrawList()->AddText(ImVec2(box.Min.x + pad, std::round(box.GetCenter().y - ImGui::GetFontSize() * 0.5f)),
-                                            ImGui::GetColorU32(ImGuiCol_TextDisabled), prefix);
-        inner.Min.x += pad + ImGui::CalcTextSize(prefix).x;
-    }
     char text[32];
     std::snprintf(text, sizeof text, format, v);
-    textCentered(inner, text, nullptr, ImGui::GetColorU32(ImGuiCol_Text));
+    Skin::valueBox(Painter::window(), s.box, box.Min, box.Max, hot, text, prefix);
     if (clicked) beginEdit(key, plain);
     return false;
 }
 
 bool hexField(const char* id, float rgb[3], float width)
 {
-    NumberFont font;
+    const Style::Styles& s = Style::get();
+    Fonts::Numbers font;
     const ImVec2 p = ImGui::GetCursorScreenPos();
     const ImGuiID key = ImGui::GetID(id);
     char hex[8];
@@ -65,10 +59,9 @@ bool hexField(const char* id, float rgb[3], float width)
 
     bool clicked = false, hot = false;
     const ImRect box = boxItem(id, width, clicked, hot);
-    drawBox(box, hot);
     char shown[12];
     std::snprintf(shown, sizeof shown, "#%s", hex);
-    textCentered(box, shown, nullptr, ImGui::GetColorU32(ImGuiCol_Text));
+    Skin::valueBox(Painter::window(), s.box, box.Min, box.Max, hot, shown);
     if (clicked) beginEdit(key, hex);
     return false;
 }
@@ -89,22 +82,14 @@ bool textField(const char* id, char* buf, size_t size, float width)
 
     bool clicked = false, hot = false;
     const ImRect box = boxItem(id, width, clicked, hot);
-    drawBox(box, hot);
-    const ImVec2 at(box.Min.x + ImGui::GetStyle().FramePadding.x, std::round(box.GetCenter().y - ImGui::GetFontSize() * 0.5f));
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->PushClipRect(box.Min, box.Max, true);
-    dl->AddText(at, ImGui::GetColorU32(ImGuiCol_Text), buf);
-    dl->PopClipRect();
+    Skin::textBox(Painter::window(), Style::get().box, box.Min, box.Max, hot, buf);
     if (clicked) beginEdit(key, buf);
     return false;
 }
 
 bool searchField(const char* id, const char* hint, char* buf, size_t size, float width)
 {
-    const Metrics m = metrics();
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, (m.boxHeight - ImGui::GetFontSize()) * 0.5f));
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, m.rounding);
-    ImGui::SetNextItemWidth(width);
+    boxShapedInput(width);
     const bool changed = ImGui::InputTextWithHint(id, hint, buf, size);
     ImGui::PopStyleVar(2);
     return changed;

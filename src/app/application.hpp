@@ -1,68 +1,73 @@
 #pragma once
-#include "app/imgui-feed.hpp"
-#include "app/input-collector.hpp"
+#include "app/input.hpp"
 #include "app/window-surface.hpp"
 #include "base/clock.hpp"
 #include "base/frames.hpp"
-#include "document/editor.hpp"
+#include "document/workspace.hpp"
 #include "gfx/device.hpp"
 #include "ui/ui-main.hpp"
 
 #include <SDL3/SDL_events.h>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 struct SDL_Window;
 
-// Runs the frames (base/frames.hpp): draws on demand, and installs the main loop's waker.
+// runs the frames - draws on demand + installs the main loop's waker
 class Application {
 public:
     ~Application();
 
-    bool init(const char* title, int width, int height);
-    int exec(); // runs the main loop, returns exit code
+    // theme: a built-in one (assets/themes/<theme>.toml); main-dark if it can't be read
+    bool init(const char* title, int width, int height, std::string_view theme = "main-dark");
+    int  exec();
     void openFile(const char* path) { m_userInterface.openFile(path); } // imported once running
 
 private:
     bool m_running = false;
-    SDL_Window* m_window = nullptr;
     void shutdown();
 
-    // input / events: every SDL event goes to all three, as it is polled (see command/input.hpp)
-    InputCollector m_input;       // raw: every pointer sample and key, for tools and shortcuts
-    ImGuiFeed      m_imguiFeed;   // ImGui's copy (app/imgui-feed.hpp)
-    bool processEvents();         // true if any arrived
+    // window
+    SDL_Window* m_window = nullptr;
+    int m_normalW = 0, m_normalH = 0;   // non-maximized size
+    std::string m_prefDir;  // settings
+    std::string m_iniPath;  // imgui layout
+
+    Workspace m_workspace;  // project + actions
+
+    // input / events (from SDL)
+    Input m_input;          // every event, to the UI's InputFrame and to ImGui (app/input.hpp)
+    bool processEvents();
     void handleEvent(const SDL_Event& e);   // the app's own: quit, scale, size, drops
 
-    WindowSurface m_surface;   // before the device: outlives its surface
+    // gpu
+    WindowSurface m_winSurface; // surface helper
     GpuDevice m_gpu;
-    Editor m_editor;   // the document and its actions
-
-    UserInterface m_userInterface{ m_editor.actions() };
-    HostInfo      m_host{ .uiScale = 0.0f, .gpu = {}, .showImportDialog = {} };   // what the interface reads about the window; scale 0: not styled yet
-    void showImportDialog();
-    std::string m_prefDir;   // where settings live ("" if unknown: the working directory)
-    std::string m_iniPath;   // layout file
-    int m_normalW = 0, m_normalH = 0;   // the window's size when not maximized
-    bool m_imguiReady = false;
-
-    void applyContentScale();
-    void renderFrame();
     bool initGpu();
-    void initImGuiRenderer();
-    bool rebuildGpu();         // the device was lost: everything on the GPU made again
-    bool m_imguiGpu = true;    // ImGui's renderer is up (it isn't between a loss and the rebuild)
-    int  m_gpuResetAt = 0;     // KOMAL_GPU_RESET_AT=n: the device is "lost" at frame n (tries the rebuild)
-    int  m_framesDrawn = 0;
+    bool rebuildGpu();      // (device lost)
+    int  m_gpuResetAt = 0;  // (KOMAL_GPU_RESET_AT=n) device lost at frame n (for rebuild)
 
-    // frames (see the top). What input changes can take a few frames to show (a popup measures itself hidden first,
-    // a field focuses a frame after it opens, hover follows a layout change a frame late).
+    // ui
+    UserInterface m_userInterface{ m_workspace.actions() };
+    bool m_imguiReady = false;
+    HostInfo m_host{ .uiScale = 0.0f, .gpu = {}, .showImportDialog = {} };   // what the interface reads about the window; scale 0: not styled yet
+    void showImportDialog();
+    void applyContentScale();
+    
+    // render
+    void renderFrame();
+    int  m_framesDrawn = 0;
+    void initImGuiRenderer();
+    bool m_imguiGpu = true;
+
+    // frames - input changes can take a few frames to show
     static constexpr int kFramesAfterInput = 3;
     static constexpr Clock::Milliseconds kNoImageRetry{ 100.0 };   // between tries while the surface gives no image
-    int      m_framesAfterInput = kFramesAfterInput;   // still to render (the first frames too)
-    Clock::TimePoint m_frameStart{};                   // what nextFrameIn() counts from
-    bool     m_noImage = false;                        // the last frame got no swapchain image
+    int m_framesAfterInput = kFramesAfterInput;     // still to render (the first frames too)
+    Clock::TimePoint m_frameStart{};                // what nextFrameIn() counts from
+    bool m_noImage = false;                         // the last frame got no swapchain image
     Clock::Seconds nextFrameIn() const;
-    void   waitForFrame();
+    void waitForFrame();
 };

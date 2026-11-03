@@ -1,6 +1,6 @@
 #include "command/actions.hpp"
 #include "document/document-actions.hpp"
-#include "document/editor.hpp"
+#include "document/workspace.hpp"
 #include "helpers.hpp"
 
 #include <doctest/doctest.h>
@@ -195,20 +195,20 @@ TEST_CASE("a stroke is made from its arguments alone: what the log keeps")
     CHECK(actions.log().back().args.find("device=pen") != std::string::npos);
 }
 
-TEST_CASE("an editor is driven by its actions alone, no interface")
+TEST_CASE("a workspace is driven by its actions alone, no interface")
 {
-    Editor editor;
-    editor.project().init();
-    const Project& p = editor.project();
-    const ActionResult made = editor.actions().run(Actions::NodeAdd, { { DocArgs::kType, "move" }, { DocArgs::kX, 10.0f }, { DocArgs::kY, 20.0f },
+    Workspace workspace;
+    workspace.project().init();
+    const Project& p = workspace.project();
+    const ActionResult made = workspace.actions().run(Actions::NodeAdd, { { DocArgs::kType, "move" }, { DocArgs::kX, 10.0f }, { DocArgs::kY, 20.0f },
                                                                         { DocArgs::kFrom, p.activeRasterId() } });
     REQUIRE(made);
     const NodeId id = NodeId(made.made);
     REQUIRE(p.find(id));
     CHECK(p.find(id)->x() == 10.0f);
-    CHECK(editor.actions().run(Actions::MoveSet, { { DocArgs::kNode, id }, { DocArgs::kOffsetX, 5 }, { DocArgs::kOffsetY, -3 } }));
-    CHECK(editor.actions().run(Actions::EditUndo));
-    CHECK(editor.actions().run(Actions::EditUndo));
+    CHECK(workspace.actions().run(Actions::MoveSet, { { DocArgs::kNode, id }, { DocArgs::kOffsetX, 5 }, { DocArgs::kOffsetY, -3 } }));
+    CHECK(workspace.actions().run(Actions::EditUndo));
+    CHECK(workspace.actions().run(Actions::EditUndo));
     CHECK_FALSE(p.find(id));   // both steps undone
-    CHECK(editor.actions().log().size() >= 4);
+    CHECK(workspace.actions().log().size() >= 4);
 }

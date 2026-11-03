@@ -1,12 +1,8 @@
 #include "base/clock.hpp"
 
 namespace {
-
-const Clock::TimePoint kStart = Clock::now();
-
+    const Clock::TimePoint kStart = Clock::now();
 }
 
 Clock::Seconds Clock::sinceStart()
-{
-    return Clock::since(kStart);
-}
+{ return Clock::since(kStart); }

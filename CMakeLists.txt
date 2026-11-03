@@ -85,7 +85,17 @@ FetchContent_Declare(doctest
     TIMEOUT 300
     SOURCE_SUBDIR doctest)
 
-FetchContent_MakeAvailable(SDL3 imgui absl stb doctest)
+# ---------------------------------------------------------------- toml++ (theme files)
+# One header: its own CMake files aren't used (SOURCE_SUBDIR holds none).
+FetchContent_Declare(tomlplusplus
+    URL https://github.com/marzer/tomlplusplus/archive/refs/tags/v3.4.0.tar.gz
+    URL_HASH SHA256=8517f65938a4faae9ccf8ebb36631a38c1cadfb5efa85d9a72e15b9e97d25155
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    INACTIVITY_TIMEOUT 30
+    TIMEOUT 300
+    SOURCE_SUBDIR include)
+
+FetchContent_MakeAvailable(SDL3 imgui absl stb doctest tomlplusplus)
 
 # ---------------------------------------------------------------- wgpu-native
 include(cmake/wgpu-native.cmake)   # defines target: wgpu_native
@@ -93,24 +103,28 @@ include(cmake/embed-file.cmake)    # defines: embed_file()
 
 # ---------------------------------------------------------------- embedded assets
 # Fonts and the window icon baked into the binary, so there is nothing to ship or locate at
-# runtime: Manrope for the UI, JetBrains Mono for numbers you can type in (see ui/theme.hpp).
+# runtime: Manrope for the UI, JetBrains Mono for numbers you can type in (see ui/style/fonts.hpp).
 set(GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
 set(ASSETS_DIR ${CMAKE_SOURCE_DIR}/assets)
-embed_file(${GENERATED_DIR}/font-ui.cpp      ${ASSETS_DIR}/Manrope-Regular.ttf     kFontUi)
-embed_file(${GENERATED_DIR}/font-numbers.cpp ${ASSETS_DIR}/JetBrainsMono-Light.ttf kFontNumbers)
-embed_file(${GENERATED_DIR}/app-icon.cpp     ${ASSETS_DIR}/komal-icon-256.png      kAppIcon)
+embed_file(${GENERATED_DIR}/font-ui.cpp      ${ASSETS_DIR}/fonts/Manrope-Regular.ttf     kFontUi)
+embed_file(${GENERATED_DIR}/font-numbers.cpp ${ASSETS_DIR}/fonts/JetBrainsMono-Light.ttf kFontNumbers)
+embed_file(${GENERATED_DIR}/theme-main-dark.cpp  ${ASSETS_DIR}/themes/main-dark.toml  kThemeMainDark)
+embed_file(${GENERATED_DIR}/theme-main-light.cpp ${ASSETS_DIR}/themes/main-light.toml kThemeMainLight)
+embed_file(${GENERATED_DIR}/app-icon.cpp     ${ASSETS_DIR}/icon/komal-icon-256.png      kAppIcon)
 # WGSL compiled into the binary: no shader files to ship or find relative to the working dir.
-embed_file(${GENERATED_DIR}/shader-texture.cpp ${CMAKE_SOURCE_DIR}/src/canvas/shaders/texture.wgsl kShaderTexture)
-embed_file(${GENERATED_DIR}/shader-color.cpp   ${CMAKE_SOURCE_DIR}/src/canvas/shaders/color.wgsl   kShaderColor)
-embed_file(${GENERATED_DIR}/shader-preview-signal.cpp ${CMAKE_SOURCE_DIR}/src/canvas/shaders/preview-signal.wgsl kShaderPreviewSignal)
-embed_file(${GENERATED_DIR}/shader-preview-blit.cpp   ${CMAKE_SOURCE_DIR}/src/canvas/shaders/preview-blit.wgsl   kShaderPreviewBlit)
-embed_file(${GENERATED_DIR}/shader-checker.cpp        ${CMAKE_SOURCE_DIR}/src/canvas/shaders/checker.wgsl        kShaderChecker)
-embed_file(${GENERATED_DIR}/shader-preview-stroke.cpp ${CMAKE_SOURCE_DIR}/src/canvas/shaders/preview-stroke.wgsl kShaderPreviewStroke)
-embed_file(${GENERATED_DIR}/shader-fullscreen.cpp     ${CMAKE_SOURCE_DIR}/src/canvas/shaders/fullscreen.wgsl     kShaderFullscreen)
+embed_file(${GENERATED_DIR}/shader-texture.cpp ${CMAKE_SOURCE_DIR}/src/ui/panels/canvas/shaders/texture.wgsl kShaderTexture)
+embed_file(${GENERATED_DIR}/shader-color.cpp   ${CMAKE_SOURCE_DIR}/src/ui/panels/canvas/shaders/color.wgsl   kShaderColor)
+embed_file(${GENERATED_DIR}/shader-preview-signal.cpp ${CMAKE_SOURCE_DIR}/src/ui/panels/canvas/shaders/preview-signal.wgsl kShaderPreviewSignal)
+embed_file(${GENERATED_DIR}/shader-preview-blit.cpp   ${CMAKE_SOURCE_DIR}/src/ui/panels/canvas/shaders/preview-blit.wgsl   kShaderPreviewBlit)
+embed_file(${GENERATED_DIR}/shader-checker.cpp        ${CMAKE_SOURCE_DIR}/src/ui/panels/canvas/shaders/checker.wgsl        kShaderChecker)
+embed_file(${GENERATED_DIR}/shader-preview-stroke.cpp ${CMAKE_SOURCE_DIR}/src/ui/panels/canvas/shaders/preview-stroke.wgsl kShaderPreviewStroke)
+embed_file(${GENERATED_DIR}/shader-fullscreen.cpp     ${CMAKE_SOURCE_DIR}/src/ui/panels/canvas/shaders/fullscreen.wgsl     kShaderFullscreen)
 set(GENERATED_SOURCES
     ${GENERATED_DIR}/font-ui.cpp
     ${GENERATED_DIR}/font-numbers.cpp
     ${GENERATED_DIR}/app-icon.cpp
+    ${GENERATED_DIR}/theme-main-dark.cpp
+    ${GENERATED_DIR}/theme-main-light.cpp
     ${GENERATED_DIR}/shader-texture.cpp
     ${GENERATED_DIR}/shader-color.cpp
     ${GENERATED_DIR}/shader-preview-signal.cpp
@@ -129,7 +143,8 @@ add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_wgpu.cpp)
 target_include_directories(imgui SYSTEM PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
-target_compile_definitions(imgui PUBLIC IMGUI_IMPL_WEBGPU_BACKEND_WGPU)  # wgpu-native flavour
+target_compile_definitions(imgui PUBLIC IMGUI_IMPL_WEBGPU_BACKEND_WGPU   # wgpu-native flavour
+                                         IMGUI_DISABLE_DEMO_WINDOWS)      # no demo window: imgui_demo.cpp leaves stubs
 target_link_libraries(imgui PUBLIC SDL3::SDL3 wgpu_native)
 
 # ---------------------------------------------------------------- warnings
@@ -168,7 +183,8 @@ file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS src/*.cpp src/*.hpp)
 list(FILTER APP_SOURCES EXCLUDE REGEX "/src/(base|raster|node|command|document)/")
 add_executable(${PROJECT_NAME} ${APP_SOURCES} ${GENERATED_SOURCES})
 target_include_directories(${PROJECT_NAME} PRIVATE src)
-target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${stb_SOURCE_DIR})   # the window icon
+target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${stb_SOURCE_DIR}    # the window icon
+                                                          ${tomlplusplus_SOURCE_DIR}/include)   # theme files
 target_link_libraries(${PROJECT_NAME} PRIVATE komal-core imgui SDL3::SDL3 wgpu_native
                                               absl::flat_hash_map absl::flat_hash_set absl::hash)
 komal_warnings(${PROJECT_NAME})
@@ -201,15 +217,15 @@ if(KOMAL_TESTS)
 endif()
 
 # ---------------------------------------------------------------- app icon
-# The source is assets/komal-icon.png; cmake/make-icons.py derives the files used here from it.
-# At runtime the window gets assets/komal-icon-256.png (embedded above) on every platform.
+# The source is assets/icon/komal-icon.png; cmake/make-icons.py derives the files used here from it.
+# At runtime the window gets assets/icon/komal-icon-256.png (embedded above) on every platform.
 if(WIN32)
     # The .exe's own icon (Explorer, taskbar pins, Alt+Tab before the window exists).
-    file(WRITE ${GENERATED_DIR}/komal.rc "IDI_APP_ICON ICON \"${ASSETS_DIR}/komal-icon.ico\"\n")
+    file(WRITE ${GENERATED_DIR}/komal.rc "IDI_APP_ICON ICON \"${ASSETS_DIR}/icon/komal-icon.ico\"\n")
     target_sources(${PROJECT_NAME} PRIVATE ${GENERATED_DIR}/komal.rc)
 elseif(APPLE)
     # An app bundle (Komal.app), so Finder and the Dock show the icon.
-    set(APP_ICNS ${ASSETS_DIR}/komal-icon.icns)
+    set(APP_ICNS ${ASSETS_DIR}/icon/komal-icon.icns)
     set_source_files_properties(${APP_ICNS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
     target_sources(${PROJECT_NAME} PRIVATE ${APP_ICNS})
     set_target_properties(${PROJECT_NAME} PROPERTIES
@@ -234,7 +250,7 @@ MimeType=image/png;image/jpeg;image/bmp;image/gif;image/x-tga;image/vnd.adobe.ph
     install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     install(FILES $<TARGET_FILE:wgpu_native> DESTINATION ${CMAKE_INSTALL_BINDIR})   # found through $ORIGIN
     install(FILES ${GENERATED_DIR}/komal.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
-    install(FILES ${ASSETS_DIR}/komal-icon-256.png DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps
+    install(FILES ${ASSETS_DIR}/icon/komal-icon-256.png DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps
             RENAME komal.png)
 endif()
 

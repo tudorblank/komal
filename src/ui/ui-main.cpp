@@ -3,16 +3,15 @@
 #include "command/input.hpp"
 #include "document/document-actions.hpp"
 #include "document/project.hpp"
-#include "ui/canvas-panel.hpp"
-#include "ui/demo-panel.hpp"
-#include "ui/graph-panel/panel.hpp"
-#include "ui/history-panel.hpp"
-#include "ui/info-panel.hpp"
+#include "ui/panels/canvas/canvas-panel.hpp"
+#include "ui/panels/graph/graph-panel.hpp"
+#include "ui/panels/history-panel.hpp"
+#include "ui/panels/info-panel.hpp"
 #include "ui/keymap.hpp"
-#include "ui/navigator.hpp"
-#include "ui/tools/color-panel.hpp"
-#include "ui/tools/tool-properties-panel.hpp"
-#include "ui/tools/toolbox-panel.hpp"
+#include "ui/panels/navigator-panel.hpp"
+#include "ui/panels/color-panel.hpp"
+#include "ui/panels/tool-properties-panel.hpp"
+#include "ui/panels/toolbox-panel.hpp"
 #include "ui/widgets/widgets.hpp"
 
 #include <imgui.h>
@@ -30,7 +29,6 @@ UserInterface::UserInterface(ActionRegistry& actions) : m_actions(actions)
     addPanel<ToolPropertiesPanel>();
     addPanel<HistoryPanel>();
     addPanel<InfoPanel>();
-    addPanel<DemoPanel>();
 
     for (PanelEntry& e : m_panels) m_drawOrder.push_back(&e);
     std::stable_partition(m_drawOrder.begin(), m_drawOrder.end(), [](const PanelEntry* e) { return e->info.phase == DrawPhase::Edit; });
@@ -58,7 +56,7 @@ bool UserInterface::init(GpuDevice& gpu, Project& project, const InputFrame& inp
     // interface actions (framing, selecting, opening menus) as they init.
     registerAppActions();
     bool ok = m_canvas.init(gpu, project);
-    m_context.emplace(UiContext{ gpu, project, m_actions, m_tools, input, m_canvas, m_canvas.thumbnails(), host });
+    m_context.emplace(UiContext{ gpu, project, m_actions, m_tools, input, m_owner, m_canvas, m_canvas.thumbnails(), host });
     for (PanelEntry& e : m_panels) {
         e.panel->m_ui = &*m_context;
         ok = e.panel->init() && ok;   // one failing leaves the rest working
@@ -115,7 +113,8 @@ void UserInterface::draw()
     for (const std::string& why : polled.failed) m_notices.post("Couldn't import " + why);
     if (m_canvas.outOfMemory() && !m_toldOutOfMemory) m_notices.post("Out of GPU memory: parts of the picture can't be shown");
     m_toldOutOfMemory = m_canvas.outOfMemory();
-    m_actions.dispatch(*m_input, ImGui::GetIO().WantTextInput);   // the frame's shortcuts, all of them, before the panels
+    m_owner.beginFrame();
+    if (!m_owner.typing()) m_actions.dispatch(*m_input, m_owner.keyboard());   // the frame's shortcuts, all of them, before the panels
     drawMenuBar();
 
     // Bars under the menu bar, then the dockspace takes the rest. Then everything else, Edit

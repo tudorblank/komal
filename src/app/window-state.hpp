@@ -1,6 +1,5 @@
 #pragma once
-// The main window's size between runs, in window.cfg in the settings folder: saved on exit,
-// opened with on the next start.
+// main window's size between runs, in window.cfg
 
 #include <string>
 

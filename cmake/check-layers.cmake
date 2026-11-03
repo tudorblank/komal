@@ -8,16 +8,14 @@
 #   command    input and the actions it triggers (the one way in)          + abseil
 #   document   the Project: nodes, rasters, history, the document's actions + abseil, stb_image
 #   gfx        the GPU: device, objects, pages of slots                    + abseil, webgpu
-#   look       the app's look drawn with ImGui, shared by every view       + abseil, ImGui
-#   canvas     the canvas engine                                           + webgpu, ImGui
-#   graph      the graph engine                                            + ImGui's internals
-#   ui         widgets, panels, tools
+#   ui         the interface: its look, widgets, panels (the canvas and the graph among them), tools
+#                                                                          + webgpu, ImGui (and its internals), toml++
 #   app        the platform: the window, the loop, frames; main            anything (SDL lives here)
 #   tests      the core (base .. document) only                            + doctest
 #
 #   cmake -DSRC=<src dir> -DTESTS=<tests dir> -P check-layers.cmake
 
-set(LAYERS base raster node command document gfx look canvas graph ui app)
+set(LAYERS base raster node command document gfx ui app)
 
 # What each layer may include with <...>, as regexes; a standard header is a bare name.
 set(STD "^[a-z_0-9]+$")
@@ -27,12 +25,19 @@ set(LIBS_node     ${LIBS_raster})
 set(LIBS_command  ${LIBS_raster})
 set(LIBS_document ${LIBS_raster} "^stb_image\\.h$")
 set(LIBS_gfx      ${LIBS_raster} "^webgpu/")
-set(LIBS_look     ${LIBS_raster} "^imgui\\.h$")
-set(LIBS_canvas   ${LIBS_gfx} "^imgui\\.h$")
-set(LIBS_graph    ${LIBS_canvas} "^imgui_internal\\.h$")
-set(LIBS_ui       ${LIBS_graph})
+set(LIBS_ui       ${LIBS_gfx} "^imgui\\.h$" "^imgui_internal\\.h$" "^toml\\+\\+/")
 set(LIBS_app      ".*")
 set(LIBS_tests    ${LIBS_raster} "^doctest/")
+
+# Headers private to a folder: only files inside it (and the header's own .cpp) may include them.
+# "header|folder/" (a folder, or any path prefix).
+#   the theme: only the palette reads it (it gives each colour a role)
+#   the palette: only the styles read colour tokens; everything else borrows a style
+#   the widgets' internals: panels use widgets.hpp
+set(PRIVATE
+    "ui/style/palette.hpp|ui/style/"
+    "ui/style/theme.hpp|ui/style/palette."
+    "ui/widgets/interaction.hpp|ui/widgets/")
 
 set(problems "")
 
@@ -61,6 +66,16 @@ function(check_file path rel layer rank)
         if(NOT name MATCHES "/")
             continue()   # "x.hpp": its own folder
         endif()
+        foreach(entry IN LISTS PRIVATE)
+            string(REPLACE "|" ";" pair "${entry}")
+            list(GET pair 0 header)
+            list(GET pair 1 folder)
+            string(FIND "${rel}" "${folder}" at)
+            string(REGEX REPLACE "\\.hpp$" ".cpp" own "${header}")   # its own source may
+            if(name STREQUAL header AND NOT at EQUAL 0 AND NOT rel STREQUAL own)
+                list(APPEND problems "${rel}: includes \"${name}\" (private to ${folder})")
+            endif()
+        endforeach()
         string(REGEX REPLACE "/.*" "" target "${name}")
         list(FIND LAYERS "${target}" target_rank)
         if(target_rank EQUAL -1)

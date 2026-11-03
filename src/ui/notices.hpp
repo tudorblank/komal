@@ -5,7 +5,7 @@
 //
 //   notices.post("Couldn't import photo.png: unknown format");
 
-#include "base/deadline.hpp"
+#include "base/clock.hpp"
 
 #include <deque>
 #include <string>

@@ -1,0 +1,50 @@
+# Main Light: a first draft, light surfaces and dark text.
+#
+# A theme is the colours the look is made of; the palette (src/ui/style/palette.cpp) gives each
+# one its jobs. Colours are "#RRGGBB". Every key must be there.
+
+name = "Main Light"
+
+# The ramp: 24 steps the surfaces, lines and text are made of. A step is a slot, not a grey:
+# give it any colour. In a dark theme they climb from dark to light; a light theme turns that
+# round. Each comment is what the step is used for.
+ramp = [
+    "#969696",   #  0  rims: grabs, node borders, ports
+    "#C4C4C4",   #  1  the window, behind every panel
+    "#D6D6D6",   #  2  title and menu bars, tabs
+    "#E2E2E2",   #  3  the canvas and the graph's, a node's slider track
+    "#ECECEC",   #  4  a panel
+    "#F6F6F6",   #  5  popups, notices, a node's insets
+    "#FCFCFC",   #  6  fields, table headers
+    "#DEDEDE",   #  7  buttons, a node's body, a selected row
+    "#D2D2D2",   #  8  borders, a field under the mouse
+    "#C8C8C8",   #  9  a button under the mouse, a node's rows, a slider's track
+    "#BCBCBC",   # 10  a button held, a scrollbar
+    "#B0B0B0",   # 11  a picture not loaded yet
+    "#A6A6A6",   # 12  a scrollbar under the mouse
+    "#969696",   # 13  a scrollbar held, a resize grip
+    "#848484",   # 14  a toggle's edge
+    "#6E6E6E",   # 15  a node's border under the mouse
+    "#808080",   # 16  dim text, icons off
+    "#646464",   # 17  a toggle under the mouse
+    "#606060",   # 18  a node's dim text, mask ports
+    "#484848",   # 19  a slider's grab
+    "#222222",   # 20  text
+    "#141414",   # 21  a node's title
+    "#1C1C1C",   # 22  icons on
+    "#000000",   # 23  the front: a grab under the mouse; faint lines and glows (with an alpha)
+]
+
+shadow = "#000000"   # under and behind things, with an alpha
+
+# Colours by family: a slot, like a terminal theme's "red" (any red, or not red at all).
+[hues]
+accent     = "#4278D7"   # selections, focus, checked things
+accentDeep = "#78A0E1"   # a slider's filled part
+red        = "#C83232"   # outlines on maps, notices
+rose       = "#D25050"   # the R channel
+green      = "#3C963C"   # the G channel
+blue       = "#3C64D2"   # the B channel
+maroon     = "#DEACA6"   # the master node's title bar
+orange     = "#E68214"   # the raster the canvas paints into
+yellow     = "#AF9600"   # image ports and links
