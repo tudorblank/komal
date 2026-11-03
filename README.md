@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/komal-icon.png" width="128" height="128" alt="Komal icon">
+  <img src="assets/icon/komal-icon.png" width="128" height="128" alt="Komal icon">
 </p>
 
 <h1 align="center">Komal</h1>
@@ -22,10 +22,13 @@
 ## What it does
 
 - **Infinite canvas.** Pixels live in 64×64 tiles that only exist where you've painted, so the canvas has no edges.
-- **Node graph.** Raster, Move and Compositor nodes wired together. Every edit stays live, so you can tweak an offset or a mix long after you made it.
+- **Node graph.** Raster, Reference, Move and Compositor nodes wired together. Every edit stays live, so you can tweak an offset or a mix long after you made it.
+- **History tree.** Undo and redo never lose work: going back and making a new change starts a branch, and you can jump to any step of any branch.
 - **GPU everywhere.** Rendering runs on WebGPU via wgpu-native (Vulkan, Metal, DX12). Tiles are drawn from texture atlases, with levels of detail when you zoom out.
 - **Live previews.** Dragging a node's value previews the result on the GPU at full resolution, then commits when you let go.
-- **Painting.** A brush with size, hardness, opacity, flow and spacing, an eraser, and primary/secondary colors (<kbd>X</kbd> swaps them).
+- **Painting.** A brush with size, hardness, opacity, flow and spacing, pen pressure, an eraser, and primary/secondary colors (<kbd>X</kbd> swaps them).
+- **Image import.** Open images from File > Import, or drop them onto the canvas or the graph.
+- **Themes.** The colors come from theme files (`assets/themes/*.toml`). Main Dark is the default; start with `--theme main-light` to try the light draft.
 - **Gets out of the way.** A dockable UI, cursor-anchored zoom, <kbd>F</kbd> to frame everything, and an idle loop that sits at ~0% CPU when nothing is happening.
 
 ## Building
@@ -47,7 +50,30 @@ cmake --preset windows-msvc-x64
 cmake --build --preset windows-msvc-x64-release
 ```
 
+Run it with `--theme <name>` to pick a theme, and any image paths to import them at startup.
+
 There are `-debug` variants of each (warnings are errors there), `linux-asan` for AddressSanitizer and UBSan, plus `windows-release` for cross-compiling from Linux with mingw-w64. On Linux, `cmake --install` puts the binary, a `.desktop` file and the icon in the usual places.
+
+### Tests
+
+The core (everything below the GPU and the UI) has its own test suite, built and run with every build: a failing test fails the build. To run it by hand: `./build/linux-release/bin/komal-tests`.
+
+## Layout
+
+The source folders are layers, lowest first. A folder only includes the ones below it, and the build checks this before every compile (`cmake/check-layers.cmake`).
+
+| Folder | What's in it |
+|---|---|
+| `src/base` | Colors, math, clocks, logging, files: the standard library only |
+| `src/raster` | Pixels, tiles, tile grids, brush strokes |
+| `src/node` | The node graph: nodes, signals, masks, rendering |
+| `src/command` | Input and the actions it triggers |
+| `src/document` | The project: nodes, rasters, history, the document's actions |
+| `src/gfx` | The GPU: device, buffers, textures, render passes |
+| `src/ui` | The interface: its look (`style`), drawing (`render`), controls (`widgets`), panels and tools |
+| `src/app` | The window, the main loop, startup |
+| `assets` | Fonts, icons and themes, baked into the binary |
+| `tests` | The core's tests |
 
 ## Credits
 
@@ -61,6 +87,8 @@ Komal is built on top of some excellent open-source work:
 | [wgpu-native](https://github.com/gfx-rs/wgpu-native) | WebGPU rendering | MIT / Apache-2.0 |
 | [Abseil](https://github.com/abseil/abseil-cpp) | Hash containers for tiles | Apache-2.0 |
 | [stb](https://github.com/nothings/stb) | Image loading (`stb_image`) | MIT / Public domain |
+| [toml++](https://github.com/marzer/tomlplusplus) | Reading theme files | MIT |
+| [doctest](https://github.com/doctest/doctest) | The tests | MIT |
 
 Fonts:
 
