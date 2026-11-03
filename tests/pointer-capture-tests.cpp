@@ -1,6 +1,6 @@
 // A press followed to its release: by its device and button only, ended by a lost release too.
 
-#include "command/pointer-capture.hpp"
+#include "input/pointer-capture.hpp"
 
 #include <doctest/doctest.h>
 

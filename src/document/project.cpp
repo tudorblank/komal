@@ -6,48 +6,18 @@
 #include <string>
 #include <utility>
 
-namespace {
-
-// The start's own pixels: commits no step refers to, so undo never goes past them.
-void paintStarterContent(GraphKey key, RasterRootNode& background, RasterRootNode& paint)
-{
-    background.recordEdit(key, [](RasterEditor& ed) {
-        for (int y = 0; y < 192; ++y)   // gradient
-            for (int x = 0; x < 256; ++x)
-                ed.setPixel(x, y, { uint8_t(x), uint8_t(y * 255 / 191), 160, 255 });
-        for (int y = 0; y < 128; ++y)   // checkerboard, half-transparent squares
-            for (int x = 0; x < 128; ++x) {
-                const bool on = ((x / 8) + (y / 8)) % 2 == 0;
-                ed.setPixel(300 + x, y, on ? RGBA{ 230, 230, 230, 255 } : RGBA{ 20, 20, 20, 128 });
-            }
-    });
-    paint.recordEdit(key, [](RasterEditor& ed) {
-        for (int y = -96; y <= 0; ++y)   // disc across negative tile coordinates
-            for (int x = -96; x <= 0; ++x) {
-                const int dx = x + 48, dy = y + 48;
-                if (dx * dx + dy * dy <= 40 * 40) ed.setPixel(x, y, { 255, 160, 40, 255 });
-            }
-    });
-}
-
-}
-
-void Project::init()
+void Project::init(const std::function<void(Project&)>& seed)
 {
     const NodeId master = createNode(NodeType::Compositor, 320.0f, 120.0f);
     m_master = std::static_pointer_cast<CompositorNode>(findPtr(master));
     m_master->setLabel(key(), "Master");
     m_master->enableCache(key(), true);   // the viewport reads its output tile by tile
-
-    const NodeId bg    = createNode(NodeType::Raster, 40.0f, 0.0f);
-    const NodeId paint = createNode(NodeType::Raster, 40.0f, 370.0f);
-    paintStarterContent(key(), *rasterAt(bg), *rasterAt(paint));
-    connect(bg,    master, InputSlot::newLayer(0));
-    connect(paint, master, InputSlot::newLayer(1));
-    setActiveRaster(paint);
+    if (seed) {
+        m_seeding = true;
+        seed(*this);
+        m_seeding = false;
+    }
     m_steps.start();
-    m_canvasCamera.zoom = 2.0f;   // the starter content, in view
-    m_canvasCamera.pan  = { 300.0f, 160.0f };
 }
 
 // ---------------------------------------------------------------- read
@@ -382,7 +352,7 @@ void Project::cancelStroke()
 
 void Project::recordCommit(const RasterCommitRef& commit, const char* label)
 {
-    if (commit.commit == kNoRasterCommit) return;
+    if (commit.commit == kNoRasterCommit || m_seeding) return;   // a seed's pixels are the start's own
     const bool own = !m_steps.open();   // made outside any action: a step of its own
     if (own) beginStep(label);
     m_steps.commit(commit);

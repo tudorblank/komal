@@ -7,7 +7,7 @@
 
 class OriginItem : public CanvasItem {
 public:
-    explicit OriginItem(Color8 color = Style::canvas().origin);
+    OriginItem();   // in the canvas style's colour, read as it draws
     ~OriginItem() override { releaseGpu(); }
 
     void setArm(float points);   // from the centre to each end, on screen

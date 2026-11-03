@@ -1,4 +1,5 @@
 #include "ui/style/graph-style.hpp"
+#include "node/node.hpp"
 #include "ui/style/palette.hpp"
 
 namespace GraphStyle {
@@ -26,6 +27,10 @@ Colors make(const Palette& p)
     c.activeRaster = p.activeRaster.packed();
     c.shadow       = p.nodeShadow.packed();
     c.separator    = p.nodeSeparator.packed();
+    c.rasterHeader     = p.rasterHeader.packed();
+    c.referenceHeader  = p.referenceHeader.packed();
+    c.moveHeader       = p.moveHeader.packed();
+    c.compositorHeader = p.compositorHeader.packed();
     c.headerOutput = p.masterHeader.packed();
     c.title        = p.nodeTitle.packed();
     c.text         = p.nodeText.packed();
@@ -74,6 +79,18 @@ const Colors& colors()
         madeFor = Palette::revision();
     }
     return c;
+}
+
+ImU32 kindHeader(NodeType type)
+{
+    const Colors& c = colors();
+    switch (type) {
+    case NodeType::Raster:     return c.rasterHeader;
+    case NodeType::Reference:  return c.referenceHeader;
+    case NodeType::Move:       return c.moveHeader;
+    case NodeType::Compositor: return c.compositorHeader;
+    }
+    return c.compositorHeader;
 }
 
 }

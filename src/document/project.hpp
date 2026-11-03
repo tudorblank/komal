@@ -24,6 +24,7 @@
 #include "node/node-kinds.hpp"
 #include "raster/brush.hpp"
 
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
@@ -31,7 +32,9 @@
 
 class Project {
 public:
-    void init();   // master output plus a starter graph
+    // A blank project: the master alone. `seed`, if given, adds what the project opens with (a
+    // file's content, a test's starter graph) before the history starts: undo never goes past it.
+    void init(const std::function<void(Project&)>& seed = {});
 
     // ---- read
     const std::vector<NodePtr>& nodes() const { return m_nodes.nodes(); }   // creation order
@@ -147,6 +150,7 @@ private:
     NodeId m_active = kNoNodeId;
 
     StepRecorder m_steps{ m_nodes };
+    bool m_seeding = false;   // init()'s seed runs: its edits are the start, no step of their own
 
     NodeSelection m_selection;
     CanvasCamera  m_canvasCamera;

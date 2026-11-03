@@ -108,7 +108,11 @@ struct Palette {
     Color8 activeRaster;                // the raster the canvas paints into
     Color8 nodeShadow;
     Color8 nodeSeparator;
-    Color8 masterHeader;                // the master's title bar (each kind's own: NodeKind::header)
+    Color8 rasterHeader;                // each kind's title bar
+    Color8 referenceHeader;
+    Color8 moveHeader;
+    Color8 compositorHeader;
+    Color8 masterHeader;                // the master's, over its kind's
     Color8 nodeTitle;
     Color8 nodeText;
     Color8 nodeTextDim;

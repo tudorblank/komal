@@ -1,4 +1,4 @@
-#include "app/input-collector.hpp"
+#include "input/sdl-input.hpp"
 
 #include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_mouse.h>
@@ -24,8 +24,6 @@ namespace {
         default:                return false;   // X1 / X2: not pointer buttons for tools
         }
     }
-
-}
 
 Key keyFromSdl(SDL_Keycode k)
 {
@@ -72,7 +70,9 @@ Key keyFromSdl(SDL_Keycode k)
     }
 }
 
-void InputCollector::beginFrame()
+}
+
+void SdlInput::beginFrame()
 {
     if (!m_consumed) return;   // the last frame wasn't drawn: its input waits for the next one
     m_frame.pointer.clear();
@@ -80,7 +80,7 @@ void InputCollector::beginFrame()
     m_consumed = false;
 }
 
-void InputCollector::releaseAll()
+void SdlInput::releaseAll()
 {
     m_frame.held.clear();
     m_frame.mods = ModNone;
@@ -89,7 +89,7 @@ void InputCollector::releaseAll()
     m_frame.pen.touching = false;
 }
 
-void InputCollector::push(PointerEvent ev)
+void SdlInput::push(PointerEvent ev)
 {
     if (ev.type != PointerEvent::Type::Move) {
         uint8_t& held = ev.device == PointerDevice::Mouse ? m_frame.mouseButtons : m_frame.penButtons;
@@ -109,7 +109,7 @@ void InputCollector::push(PointerEvent ev)
     m_frame.pointer.push_back(ev);
 }
 
-PointerEvent InputCollector::penEvent(PointerEvent::Type type, float x, float y, uint64_t timeNs) const
+PointerEvent SdlInput::penEvent(PointerEvent::Type type, float x, float y, uint64_t timeNs) const
 {
     PointerEvent ev;
     ev.type     = type;
@@ -123,7 +123,7 @@ PointerEvent InputCollector::penEvent(PointerEvent::Type type, float x, float y,
     return ev;
 }
 
-void InputCollector::handle(const SDL_Event& e)
+void SdlInput::handle(const SDL_Event& e)
 {
     InputFrame::Pen& pen = m_frame.pen;
     switch (e.type) {

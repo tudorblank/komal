@@ -56,7 +56,7 @@ There are `-debug` variants of each (warnings are errors there), `linux-asan` fo
 
 ### Tests
 
-The core (everything below the GPU and the UI) has its own test suite, built and run with every build: a failing test fails the build. To run it by hand: `./build/linux-release/bin/komal-tests`.
+Two test suites are built and run with every build, and a failing test fails the build: `komal-tests` for the core (everything below the GPU and the UI), and `komal-ui-tests` for the UI's look (theme files, the palette, the styles). To run them by hand: `./build/linux-release/bin/komal-tests` and `./build/linux-release/bin/komal-ui-tests`.
 
 ## Layout
 
@@ -65,15 +65,16 @@ The source folders are layers, lowest first. A folder only includes the ones bel
 | Folder | What's in it |
 |---|---|
 | `src/base` | Colors, math, clocks, logging, files: the standard library only |
+| `src/input` | What input is (one frame of it, a press followed to its release), and SDL turned into it |
 | `src/raster` | Pixels, tiles, tile grids, brush strokes |
 | `src/node` | The node graph: nodes, signals, masks, rendering |
-| `src/command` | Input and the actions it triggers |
+| `src/command` | The actions that input and menus trigger |
 | `src/document` | The project: nodes, rasters, history, the document's actions |
 | `src/gfx` | The GPU: device, buffers, textures, render passes |
 | `src/ui` | The interface: its look (`style`), drawing (`render`), controls (`widgets`), panels and tools |
 | `src/app` | The window, the main loop, startup |
 | `assets` | Fonts, icons and themes, baked into the binary |
-| `tests` | The core's tests |
+| `tests` | The core's tests; `tests/ui` the UI's |
 
 ## Credits
 

@@ -1,10 +1,11 @@
 #pragma once
-#include "app/input.hpp"
+#include "app/imgui-bridge.hpp"
 #include "app/window-surface.hpp"
 #include "base/clock.hpp"
 #include "base/frames.hpp"
 #include "document/workspace.hpp"
 #include "gfx/device.hpp"
+#include "input/sdl-input.hpp"
 #include "ui/ui-main.hpp"
 
 #include <SDL3/SDL_events.h>
@@ -33,12 +34,12 @@ private:
     SDL_Window* m_window = nullptr;
     int m_normalW = 0, m_normalH = 0;   // non-maximized size
     std::string m_prefDir;  // settings
-    std::string m_iniPath;  // imgui layout
 
     Workspace m_workspace;  // project + actions
 
     // input / events (from SDL)
-    Input m_input;          // every event, to the UI's InputFrame and to ImGui (app/input.hpp)
+    SdlInput    m_input;   // every event, into the InputFrame the UI reads (input/sdl-input.hpp)
+    ImGuiBridge m_imgui;   // ... and into ImGui; ImGui's whole life (app/imgui-bridge.hpp)
     bool processEvents();
     void handleEvent(const SDL_Event& e);   // the app's own: quit, scale, size, drops
 
@@ -51,7 +52,6 @@ private:
 
     // ui
     UserInterface m_userInterface{ m_workspace.actions() };
-    bool m_imguiReady = false;
     HostInfo m_host{ .uiScale = 0.0f, .gpu = {}, .showImportDialog = {} };   // what the interface reads about the window; scale 0: not styled yet
     void showImportDialog();
     void applyContentScale();
@@ -59,8 +59,7 @@ private:
     // render
     void renderFrame();
     int  m_framesDrawn = 0;
-    void initImGuiRenderer();
-    bool m_imguiGpu = true;
+    void logGpu();   // the adapter, driver and display, for the Info panel and the log
 
     // frames - input changes can take a few frames to show
     static constexpr int kFramesAfterInput = 3;

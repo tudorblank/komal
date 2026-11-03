@@ -53,23 +53,40 @@ namespace {
 bool GpuDevice::init(const SurfaceMaker& makeSurface, int pixelW, int pixelH)
 {
     m_lost = false;
-    m_instance = wgpuCreateInstance(nullptr);
-    if (!m_instance) { Log::error("gpu", "wgpuCreateInstance failed"); return false; }
+    // The native APIs only (Vulkan, Metal, D3D12): an instance that may also use OpenGL loads every
+    // GL driver on the system (Mesa's LLVM among them, tens of MB) even when it renders with
+    // Vulkan. OpenGL only if none of them has an adapter for the window.
+    for (const WGPUInstanceBackend backends : { WGPUInstanceBackend_Primary, WGPUInstanceBackend_All }) {
+        WGPUInstanceExtras extras{};
+        extras.chain.sType = static_cast<WGPUSType>(WGPUSType_InstanceExtras);
+        extras.backends    = backends;
+        WGPUInstanceDescriptor desc{};
+        desc.nextInChain = &extras.chain;
+        m_instance = wgpuCreateInstance(&desc);
+        if (!m_instance) { Log::error("gpu", "wgpuCreateInstance failed"); return false; }
 
-    m_surface = makeSurface(m_instance);
-    if (!m_surface) { Log::error("gpu", "surface creation failed"); return false; }
+        m_surface = makeSurface(m_instance);
+        if (!m_surface) { Log::error("gpu", "surface creation failed"); return false; }
 
-    // ---- adapter (wgpu-native completes this synchronously with AllowSpontaneous)
-    AdapterRequest areq;
-    WGPURequestAdapterOptions aopts{};
-    aopts.compatibleSurface = m_surface;
-    aopts.powerPreference   = WGPUPowerPreference_HighPerformance;
-    WGPURequestAdapterCallbackInfo acb{};
-    acb.mode      = WGPUCallbackMode_AllowSpontaneous;
-    acb.callback  = onAdapter;
-    acb.userdata1 = &areq;
-    wgpuInstanceRequestAdapter(m_instance, &aopts, acb);
-    m_adapter = areq.adapter;
+        // ---- adapter (wgpu-native completes this synchronously with AllowSpontaneous)
+        AdapterRequest areq;
+        WGPURequestAdapterOptions aopts{};
+        aopts.compatibleSurface = m_surface;
+        aopts.powerPreference   = WGPUPowerPreference_HighPerformance;
+        WGPURequestAdapterCallbackInfo acb{};
+        acb.mode      = WGPUCallbackMode_AllowSpontaneous;
+        acb.callback  = onAdapter;
+        acb.userdata1 = &areq;
+        wgpuInstanceRequestAdapter(m_instance, &aopts, acb);
+        m_adapter = areq.adapter;
+        if (m_adapter) break;
+
+        if (backends == WGPUInstanceBackend_Primary) Log::error("gpu", "no adapter with the native APIs: trying all of them");
+        wgpuSurfaceRelease(m_surface);
+        wgpuInstanceRelease(m_instance);
+        m_surface  = nullptr;
+        m_instance = nullptr;
+    }
     if (!m_adapter) return false;
 
     // ---- report which adapter/backend we actually got

@@ -3,23 +3,27 @@
 # every build (CMakeLists.txt) and stops on any wrong include, listing every one.
 #
 #   base       Signal, Deadline, Log, Perf, math, palette, files: the standard library only
+#   input      what input is (InputFrame), a press followed to its release   the standard library
+#              (PointerCapture); sdl-input makes it from SDL: built into the app, not the core
 #   raster     pixels, tiles, grids, rasters, brush strokes                + abseil
 #   node       the node graph: signals, masks, the render path             + abseil
-#   command    input and the actions it triggers (the one way in)          + abseil
+#   command    the actions input and menus trigger (the one way in)        + abseil
 #   document   the Project: nodes, rasters, history, the document's actions + abseil, stb_image
 #   gfx        the GPU: device, objects, pages of slots                    + abseil, webgpu
 #   ui         the interface: its look, widgets, panels (the canvas and the graph among them), tools
 #                                                                          + webgpu, ImGui (and its internals), toml++
 #   app        the platform: the window, the loop, frames; main            anything (SDL lives here)
 #   tests      the core (base .. document) only                            + doctest
+#   tests/ui   the UI's blocks that need no window or GPU (its look)       + doctest, the UI's libraries
 #
 #   cmake -DSRC=<src dir> -DTESTS=<tests dir> -P check-layers.cmake
 
-set(LAYERS base raster node command document gfx ui app)
+set(LAYERS base input raster node command document gfx ui app)
 
 # What each layer may include with <...>, as regexes; a standard header is a bare name.
 set(STD "^[a-z_0-9]+$")
 set(LIBS_base     "${STD}")
+set(LIBS_input    "${STD}")
 set(LIBS_raster   "${STD}" "^absl/")
 set(LIBS_node     ${LIBS_raster})
 set(LIBS_command  ${LIBS_raster})
@@ -28,13 +32,20 @@ set(LIBS_gfx      ${LIBS_raster} "^webgpu/")
 set(LIBS_ui       ${LIBS_gfx} "^imgui\\.h$" "^imgui_internal\\.h$" "^toml\\+\\+/")
 set(LIBS_app      ".*")
 set(LIBS_tests    ${LIBS_raster} "^doctest/")
+set(LIBS_tests_ui ${LIBS_ui} "^doctest/")
+
+# Files that may use a library their layer may not: "path|regex".
+set(FILE_LIBS
+    "input/sdl-input.|^SDL3/")   # the one file of input/ that knows SDL
 
 # Headers private to a folder: only files inside it (and the header's own .cpp) may include them.
 # "header|folder/" (a folder, or any path prefix).
 #   the theme: only the palette reads it (it gives each colour a role)
 #   the palette: only the styles read colour tokens; everything else borrows a style
 #   the widgets' internals: panels use widgets.hpp
+#   SDL's input: only the app sees it (the core never includes SDL)
 set(PRIVATE
+    "input/sdl-input.hpp|app/"
     "ui/style/palette.hpp|ui/style/"
     "ui/style/theme.hpp|ui/style/palette."
     "ui/widgets/interaction.hpp|ui/widgets/")
@@ -58,6 +69,15 @@ function(check_file path rel layer rank)
                     break()
                 endif()
             endforeach()
+            foreach(entry IN LISTS FILE_LIBS)
+                string(REPLACE "|" ";" pair "${entry}")
+                list(GET pair 0 prefix)
+                list(GET pair 1 rule)
+                string(FIND "${rel}" "${prefix}" at)
+                if(at EQUAL 0 AND name MATCHES "${rule}")
+                    set(allowed TRUE)
+                endif()
+            endforeach()
             if(NOT allowed)
                 list(APPEND problems "${rel}: includes <${name}> (not a library ${layer} may use)")
             endif()
@@ -72,7 +92,8 @@ function(check_file path rel layer rank)
             list(GET pair 1 folder)
             string(FIND "${rel}" "${folder}" at)
             string(REGEX REPLACE "\\.hpp$" ".cpp" own "${header}")   # its own source may
-            if(name STREQUAL header AND NOT at EQUAL 0 AND NOT rel STREQUAL own)
+            string(FIND "${rel}" "tests/" test_at)   # tests may look inside: a parser's failures
+            if(name STREQUAL header AND NOT at EQUAL 0 AND NOT rel STREQUAL own AND NOT test_at EQUAL 0)
                 list(APPEND problems "${rel}: includes \"${name}\" (private to ${folder})")
             endif()
         endforeach()
@@ -104,9 +125,14 @@ if(TESTS)
     list(FIND LAYERS document core_top)
     file(GLOB_RECURSE tests LIST_DIRECTORIES false "${TESTS}/*.hpp" "${TESTS}/*.cpp")
     list(SORT tests)
+    list(FIND LAYERS ui ui_rank)
     foreach(path IN LISTS tests)
         file(RELATIVE_PATH rel "${TESTS}" "${path}")
-        check_file("${path}" "tests/${rel}" tests ${core_top})
+        if(rel MATCHES "^ui/")
+            check_file("${path}" "tests/${rel}" tests_ui ${ui_rank})
+        else()
+            check_file("${path}" "tests/${rel}" tests ${core_top})
+        endif()
     endforeach()
 endif()
 

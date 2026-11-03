@@ -1,5 +1,5 @@
 #pragma once
-#include "command/pointer-capture.hpp"
+#include "input/pointer-capture.hpp"
 #include "ui/tools/tool-base.hpp"
 
 // Pans the canvas with LMB or the pen's tip (also held Space from any tool), following every

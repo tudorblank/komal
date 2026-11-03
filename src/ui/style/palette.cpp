@@ -91,6 +91,10 @@ Palette make(const Theme& t)
     p.activeRaster       = t.orange;
     p.nodeShadow         = t.shadow.withAlpha(60);
     p.nodeSeparator      = t.shadow.withAlpha(110);
+    p.rasterHeader       = t.wine;
+    p.referenceHeader    = t.ocean;
+    p.moveHeader         = t.violet;
+    p.compositorHeader   = t.teal;
     p.masterHeader       = t.maroon;
     p.nodeTitle          = r[21];
     p.nodeText           = r[20];

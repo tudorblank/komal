@@ -8,7 +8,7 @@
 
 #include "base/math.hpp"
 #include "command/actions.hpp"
-#include "command/input.hpp"
+#include "input/input-frame.hpp"
 #include "ui/render/painter.hpp"
 
 #include <imgui.h>

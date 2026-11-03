@@ -198,7 +198,11 @@ TEST_CASE("a stroke is made from its arguments alone: what the log keeps")
 TEST_CASE("a workspace is driven by its actions alone, no interface")
 {
     Workspace workspace;
-    workspace.project().init();
+    workspace.project().init([](Project& seeded) {   // one raster to start from
+        TileGrid tiles;
+        fillPixel(tiles, 0, 0, { 255, 0, 0, 255 });
+        seeded.importTiles(tiles, "", {});
+    });
     const Project& p = workspace.project();
     const ActionResult made = workspace.actions().run(Actions::NodeAdd, { { DocArgs::kType, "move" }, { DocArgs::kX, 10.0f }, { DocArgs::kY, 20.0f },
                                                                         { DocArgs::kFrom, p.activeRasterId() } });

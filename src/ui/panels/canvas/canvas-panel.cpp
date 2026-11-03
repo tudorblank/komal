@@ -46,9 +46,9 @@ bool CanvasPanel::init()
     m_previewItem = m_scene.addItem<PreviewItem>(ui().canvas.preview(), *m_output);
     m_previewItem->setZ(kZOutput);
     m_scene.addItem<OriginItem>()->setZ(kZOrigin);
-    m_previewFrom = m_scene.addItem<OutlineItem>(Style::canvas().previewFrom);
+    m_previewFrom = m_scene.addItem<OutlineItem>(OutlineItem::Kind::PreviewFrom);
     m_previewFrom->setZ(kZBounds);
-    m_previewTo = m_scene.addItem<OutlineItem>(Style::canvas().previewTo, Style::canvas().previewToWidth);
+    m_previewTo = m_scene.addItem<OutlineItem>(OutlineItem::Kind::PreviewTo);
     m_previewTo->setZ(kZBounds);
 
     m_projectEvents = project.changed.connect([this](const ProjectEvent& e) { onProjectEvent(e); });

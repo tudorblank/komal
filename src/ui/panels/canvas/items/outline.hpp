@@ -5,11 +5,16 @@
 
 #include <cstdint>
 
-// Inclusive pixel bounds, like BoundsI.
+// Inclusive pixel bounds, like BoundsI. Its colour and width are the canvas style's for what it
+// marks, read as it draws.
 class OutlineItem : public CanvasItem {
 public:
-    explicit OutlineItem(Color8 color = Style::canvas().selection, float thickness = Style::canvas().selectionWidth)
-        : m_color(color.packed()), m_thickness(thickness) {}
+    enum class Kind : uint8_t {
+        Selection,     // what the selected nodes cover
+        PreviewFrom,   // where a dragged edit's area was
+        PreviewTo,     // ... and where it goes
+    };
+    explicit OutlineItem(Kind kind = Kind::Selection) : m_kind(kind) {}
 
     void setPixelBounds(const BoundsI& bounds);
 
@@ -17,7 +22,6 @@ public:
     bool drawsOnGpu() const override { return false; }
 
 private:
-    BoundsI  m_bounds;
-    uint32_t m_color;   // packed (ImU32)
-    float    m_thickness;
+    BoundsI m_bounds;
+    Kind    m_kind;
 };

@@ -1,5 +1,4 @@
 #include "application.hpp"
-#include "app/imgui-frames.hpp"
 #include "app/window-icon.hpp"
 #include "app/window-state.hpp"
 #include "base/dev-switches.hpp"
@@ -10,11 +9,8 @@
 #include "ui/style/ui-style.hpp"
 
 #include <SDL3/SDL.h>
-#include <imgui.h>
 #include <algorithm>
 #include <cmath>
-#include <imgui_impl_sdl3.h>
-#include <imgui_impl_wgpu.h>
 #include <cstdio>
 #include <string>
 
@@ -107,23 +103,10 @@ bool Application::init(const char* title, int width, int height, std::string_vie
     // ---- GPU init (wgpu)
     if (!initGpu()) return false;
 
-    // ---- imgui init
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    logGpu();
 
-    m_iniPath = m_prefDir + "imgui.ini";   // the layout
-    io.IniFilename = m_iniPath.c_str();
-    io.ConfigInputTrickleEventQueue = false;   // ImGuiInputBridge does it, without the backlog
-
-    Fonts::load();
-
-    // ---- imgui on the GPU
-    ImGui_ImplSDL3_InitForOther(m_window);
-    initImGuiRenderer();
-    m_imguiReady = true;
+    // ---- imgui
+    m_imgui.init(m_window, m_gpu, m_prefDir + "imgui.ini");
 
     // ---- user interface
     m_host.showImportDialog = [this] { showImportDialog(); };
@@ -143,15 +126,8 @@ bool Application::initGpu()
     return m_gpu.init([this](WGPUInstance instance) { return m_winSurface.create(instance, m_window); }, pw, ph);
 }
 
-void Application::initImGuiRenderer()
+void Application::logGpu()
 {
-    ImGui_ImplWGPU_InitInfo wgpuInfo;
-    wgpuInfo.Device             = m_gpu.device();
-    wgpuInfo.NumFramesInFlight  = 3;
-    wgpuInfo.RenderTargetFormat = m_gpu.surfaceFormat();
-    wgpuInfo.DepthStencilFormat = WGPUTextureFormat_Undefined;
-    ImGui_ImplWGPU_Init(&wgpuInfo);
-
     const SDL_DisplayMode* dm = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(m_window));
     char buf[512];
     std::snprintf(buf, sizeof buf,
@@ -166,11 +142,8 @@ void Application::initImGuiRenderer()
 bool Application::rebuildGpu()
 {
     Log::error("gpu", "the GPU device was lost: making everything on it again");
-    if (m_imguiGpu) {   // what's on the old device goes, ImGui's too (its textures come back by themselves)
-        m_userInterface.releaseGpu();
-        ImGui_ImplWGPU_Shutdown();
-        m_imguiGpu = false;
-    }
+    m_userInterface.releaseGpu();   // what's on the old device goes, ImGui's too
+    m_imgui.releaseGpu();
     m_gpu.shutdown();
     m_winSurface.release();
     if (!initGpu()) {   // no device yet (a driver still resetting): tried again in a while
@@ -178,8 +151,8 @@ bool Application::rebuildGpu()
         m_winSurface.release();
         return false;
     }
-    initImGuiRenderer();
-    m_imguiGpu = true;
+    logGpu();
+    m_imgui.restoreGpu(m_gpu);
     if (!m_userInterface.restoreGpu(m_gpu)) Log::error("ui", "the canvas couldn't be made on the new device");
     m_userInterface.notice("The GPU was reset: the picture is being drawn again");
     return true;
@@ -202,7 +175,7 @@ int Application::exec()
 Clock::Seconds Application::nextFrameIn() const
 {
     if (m_framesAfterInput > 0) return kFrameNow;
-    return std::min(m_userInterface.nextFrameIn(), imguiNextFrameIn(m_input, m_frameStart));
+    return std::min(m_userInterface.nextFrameIn(), m_imgui.nextFrameIn(m_input.frame(), m_frameStart));
 }
 
 void Application::waitForFrame()
@@ -224,14 +197,16 @@ void Application::waitForFrame()
 bool Application::processEvents()
 {
     m_input.beginFrame();
+    m_imgui.beginEvents();
     bool any = false;
     SDL_Event e;
-    while (SDL_PollEvent(&e)) {
+    while (SDL_PollEvent(&e)) {   // every event to both: the InputFrame and ImGui
         any = true;
         m_input.handle(e);
+        m_imgui.handle(e);
         handleEvent(e);
     }
-    m_input.endEvents();
+    m_imgui.endEvents();
     return any;
 }
 
@@ -304,17 +279,9 @@ void Application::renderFrame()
     }
 
     m_frameStart = Clock::now();
-    ImGui_ImplWGPU_NewFrame();
-    ImGui_ImplSDL3_NewFrame();
-    
-    ImGuiIO& io = ImGui::GetIO();
-    io.DisplaySize = ImVec2(float(frame.width)  / io.DisplayFramebufferScale.x,
-                            float(frame.height) / io.DisplayFramebufferScale.y);
-    ImGui::NewFrame();
-
+    m_imgui.newFrame(frame.width, frame.height);
     m_userInterface.draw();
-
-    ImGui::Render();
+    m_imgui.endFrame();
 
     // offscreen passes first, in the same encoder
     m_userInterface.renderGpu(frame.encoder);
@@ -322,7 +289,7 @@ void Application::renderFrame()
     {
         const auto clear = Style::windowBackground().floats();
         const GpuRenderPass pass(frame.encoder, frame.view, GpuRenderPass::Load::Clear, "Surface", clear.data());
-        ImGui_ImplWGPU_RenderDrawData(ImGui::GetDrawData(), pass);
+        m_imgui.draw(pass);
     }
     m_gpu.present(frame);
     m_input.consumed();   // this frame's input was read
@@ -338,13 +305,7 @@ void Application::renderFrame()
 void Application::shutdown()
 {
     m_userInterface.shutdown();
-    if (m_imguiReady) {
-        if (m_imguiGpu) ImGui_ImplWGPU_Shutdown();
-        m_imguiGpu = false;
-        ImGui_ImplSDL3_Shutdown();
-        ImGui::DestroyContext();
-        m_imguiReady = false;
-    }
+    m_imgui.shutdown();
     m_gpu.shutdown();
     m_winSurface.release();
     if (m_window) {

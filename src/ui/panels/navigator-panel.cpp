@@ -3,7 +3,7 @@
 #include "base/math.hpp"
 #include "ui/panels/canvas/canvas-engine.hpp"
 #include "ui/panels/canvas/imgui-texture.hpp"
-#include "command/input.hpp"
+#include "input/input-frame.hpp"
 #include "ui/navigation.hpp"
 #include "base/frames.hpp"
 #include "document/project.hpp"
@@ -72,8 +72,7 @@ bool Navigator::init()
     m_pipelines = &ui().canvas.pipelines();
     m_ready = ui().canvas.ready() && m_scene.init(ui().canvas.pipelines()) && m_view.init(m_scene);
     if (!m_ready) return false;
-    m_checker = m_scene.addItem<CheckerItem>();
-    m_checker->setColors(Style::canvas().pictureCheckerA, Style::canvas().pictureCheckerB);
+    m_checker = m_scene.addItem<CheckerItem>(CheckerItem::Kind::Picture);
     m_checker->setZ(-1.0f);
     m_scene.addItem<RasterItem>(ui().canvas.outputTiles());
     return true;
@@ -241,7 +240,7 @@ void Navigator::drawMap(ImVec2 size)
         CanvasCamera& pc = m_view.camera();
         pc.zoom = k;
         pc.pan  = { -float(b.minX) * k, -float(b.minY) * k };   // the bounds' corner at the view's
-        m_checker->setCellSize(Style::canvas().pictureCheckerCell / fb.x);
+        m_checker->setCellScale(1.0f / fb.x);   // the style's squares are pixels, not points
         m_pictureShown = true;
         if (preview) {
             const GpuTexture& t = m_previewPicture.texture();

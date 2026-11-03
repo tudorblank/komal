@@ -48,3 +48,7 @@ blue       = "#7698F0"   # the B channel
 maroon     = "#642424"   # the master node's title bar
 orange     = "#FFA028"   # the raster the canvas paints into
 yellow     = "#C7C729"   # image ports and links
+wine       = "#83314A"   # a Raster node's title bar
+ocean      = "#246283"   # a Reference node's title bar
+violet     = "#5C3A8C"   # a Move node's title bar
+teal       = "#1D725E"   # a Compositor node's title bar

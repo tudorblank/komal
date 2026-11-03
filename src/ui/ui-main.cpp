@@ -1,6 +1,6 @@
 #include "ui-main.hpp"
 #include "base/log.hpp"
-#include "command/input.hpp"
+#include "input/input-frame.hpp"
 #include "document/document-actions.hpp"
 #include "document/project.hpp"
 #include "ui/panels/canvas/canvas-panel.hpp"

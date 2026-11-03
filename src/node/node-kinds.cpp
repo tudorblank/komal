@@ -3,13 +3,13 @@
 namespace {
 
 constexpr NodeKind kKinds[] = {
-    { NodeType::Raster,     "raster",     "Raster",     "pixels you paint",          { 131,  49,  74 }, RasterRootNode::kPorts, true,
+    { NodeType::Raster,     "raster",     "Raster",     "pixels you paint",          RasterRootNode::kPorts, true,
       [](RasterData* pixels) -> NodePtr { return RasterRootNode::create(*pixels); } },
-    { NodeType::Reference,  "reference",  "Reference",  "another view of its input", {  36,  98, 131 }, ReferenceNode::kPorts,  false,
+    { NodeType::Reference,  "reference",  "Reference",  "another view of its input", ReferenceNode::kPorts,  false,
       [](RasterData*) -> NodePtr { return ReferenceNode::create(); } },
-    { NodeType::Move,       "move",       "Move",       "shifts its input",          {  92,  58, 140 }, MoveNode::kPorts,       false,
+    { NodeType::Move,       "move",       "Move",       "shifts its input",          MoveNode::kPorts,       false,
       [](RasterData*) -> NodePtr { return MoveNode::create(); } },
-    { NodeType::Compositor, "compositor", "Compositor", "stacks layers",             {  29, 114,  94 }, CompositorNode::kPorts, false,
+    { NodeType::Compositor, "compositor", "Compositor", "stacks layers",             CompositorNode::kPorts, false,
       [](RasterData*) -> NodePtr { return CompositorNode::create(); } },
 };
 

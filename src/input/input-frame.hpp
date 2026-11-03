@@ -1,16 +1,17 @@
 #pragma once
-
-// Input reaches the app two ways, from the same platform events (app/input.hpp, its one door):
+// What input is, with no platform in it: pointer and key events, shortcuts, and the InputFrame,
+// one frame's worth of them. The app fills one from SDL each frame (input/sdl-input.hpp);
+// the rest of the app only reads it: shortcuts (ActionRegistry), tools (every pointer sample with
+// its pen data), panels (held keys, Space for the hand).
 //
-//   ImGui's io               widgets, windows, docking, text; and who has the pointer: a panel
-//                            owns it while ImGui says its item is hovered or held
-//   InputFrame (here)        every pointer sample with its pen data, for the tools of the panel
-//                            that owns the pointer; buttons held; key presses for shortcuts
-//                            (ActionRegistry, dispatched once a frame); held keys (Space for the hand)
+// The input's whole path, one file per step:
 //
-// Widgets read ImGui only; tools read the InputFrame only, and only while their panel owns the
-// pointer. Who owns the pointer and the keyboard is decided in one place (ui/input-owner.hpp).
-// Nothing here knows the platform: the app turns its events into these.
+//   input/sdl-input            SDL -> InputFrame (this file's types)
+//   ui/input-owner             who in the UI gets the keyboard and the pointer this frame
+//   input/pointer-capture      one press followed to its release (tools)
+//
+// ImGui gets the same SDL events its own way (app/imgui-bridge.hpp): Application hands each
+// event to both.
 
 #include <cstdint>
 #include <vector>
@@ -93,9 +94,7 @@ struct InputFrame {
     uint8_t penButtons   = 0;
     bool anyButtonHeld() const { return mouseButtons != 0 || penButtons != 0; }
     bool buttonHeld(PointerDevice device, PointerButton b) const
-    {
-        return ((unsigned(device == PointerDevice::Mouse ? mouseButtons : penButtons) >> unsigned(b)) & 1u) != 0;
-    }
+    { return ((unsigned(device == PointerDevice::Mouse ? mouseButtons : penButtons) >> unsigned(b)) & 1u) != 0; }
 
     // the pen as it was last reported (not reset between frames).
     struct Pen {

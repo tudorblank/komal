@@ -121,7 +121,7 @@ std::string elide(const GraphPaint& g, const std::string& text, float size, floa
 
 ImU32 headerColor(const Project& project, const Node& n)
 {
-    return project.isMaster(n.id()) ? colors().headerOutput : nodeKind(n.type()).header.packed();
+    return project.isMaster(n.id()) ? colors().headerOutput : kindHeader(n.type());
 }
 
 void paintPort(const GraphPaint& g, ImVec2 graphPos, ImU32 color, bool connected, bool hovered, bool placeholder)

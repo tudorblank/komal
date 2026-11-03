@@ -163,15 +163,16 @@ function(komal_warnings target)
 endfunction()
 
 # ---------------------------------------------------------------- the core
-# The layers below the GPU and the UI (base, raster, node, command, document): the document and
+# The layers below the GPU and the UI (base, input, raster, node, command, document): the document and
 # everything it's made of. The app and the tests both link it; it runs without a window or a GPU
 # (no SDL, no ImGui, no wgpu: cmake/check-layers.cmake holds every layer to what it may include).
-set(CORE_LAYERS base raster node command document)
+set(CORE_LAYERS base input raster node command document)
 set(CORE_SOURCES)
 foreach(layer ${CORE_LAYERS})
     file(GLOB_RECURSE layer_sources CONFIGURE_DEPENDS src/${layer}/*.cpp src/${layer}/*.hpp)
     list(APPEND CORE_SOURCES ${layer_sources})
 endforeach()
+list(FILTER CORE_SOURCES EXCLUDE REGEX "/src/input/sdl-input\\.")   # SDL's: the app's, never the core's
 add_library(komal-core STATIC ${CORE_SOURCES})
 target_include_directories(komal-core PUBLIC src)
 target_include_directories(komal-core SYSTEM PRIVATE ${stb_SOURCE_DIR})
@@ -180,7 +181,8 @@ komal_warnings(komal-core)
 
 # ---------------------------------------------------------------- the app
 file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS src/*.cpp src/*.hpp)
-list(FILTER APP_SOURCES EXCLUDE REGEX "/src/(base|raster|node|command|document)/")
+list(FILTER APP_SOURCES EXCLUDE REGEX "/src/(base|input|raster|node|command|document)/")
+list(APPEND APP_SOURCES ${CMAKE_SOURCE_DIR}/src/input/sdl-input.cpp ${CMAKE_SOURCE_DIR}/src/input/sdl-input.hpp)
 add_executable(${PROJECT_NAME} ${APP_SOURCES} ${GENERATED_SOURCES})
 target_include_directories(${PROJECT_NAME} PRIVATE src)
 target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${stb_SOURCE_DIR}    # the window icon
@@ -201,6 +203,18 @@ if(KOMAL_TESTS)
     enable_testing()
     add_test(NAME komal-tests COMMAND komal-tests)
     add_custom_command(TARGET komal-tests POST_BUILD COMMAND komal-tests --minimal COMMENT "Running the tests" VERBATIM)
+
+    # The UI's blocks that need no window or GPU: its look (theme files, palette, styles).
+    file(GLOB UI_TEST_SOURCES CONFIGURE_DEPENDS tests/ui/*.cpp tests/ui/*.hpp)
+    add_executable(komal-ui-tests ${UI_TEST_SOURCES}
+        src/ui/style/theme.cpp src/ui/style/palette.cpp src/ui/style/ui-style.cpp src/ui/style/graph-style.cpp
+        ${GENERATED_DIR}/theme-main-dark.cpp ${GENERATED_DIR}/theme-main-light.cpp)
+    target_include_directories(komal-ui-tests PRIVATE src)
+    target_include_directories(komal-ui-tests SYSTEM PRIVATE ${doctest_SOURCE_DIR} ${tomlplusplus_SOURCE_DIR}/include)
+    target_link_libraries(komal-ui-tests PRIVATE komal-core imgui)
+    komal_warnings(komal-ui-tests)
+    add_test(NAME komal-ui-tests COMMAND komal-ui-tests)
+    add_custom_command(TARGET komal-ui-tests POST_BUILD COMMAND komal-ui-tests --minimal COMMENT "Running the UI tests" VERBATIM)
 endif()
 
 # The source folders are layers: includes only go down, and each layer includes only the libraries
@@ -214,6 +228,7 @@ add_dependencies(komal-core check-layers)
 add_dependencies(${PROJECT_NAME} check-layers)
 if(KOMAL_TESTS)
     add_dependencies(komal-tests check-layers)
+    add_dependencies(komal-ui-tests check-layers)
 endif()
 
 # ---------------------------------------------------------------- app icon
@@ -268,8 +283,10 @@ if(MSVC)
         target_compile_definitions(${target} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
     endforeach()
     if(KOMAL_TESTS)
-        target_compile_options(komal-tests PRIVATE /utf-8 /Zc:__cplusplus /bigobj)
-        target_compile_definitions(komal-tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+        foreach(target komal-tests komal-ui-tests)
+            target_compile_options(${target} PRIVATE /utf-8 /Zc:__cplusplus /bigobj)
+            target_compile_definitions(${target} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+        endforeach()
     endif()
     set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT ${PROJECT_NAME})
 endif()

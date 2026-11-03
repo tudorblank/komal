@@ -4,7 +4,7 @@
 
 #include "command/action-args.hpp"
 #include "command/action-ids.hpp"
-#include "command/input.hpp"
+#include "input/input-frame.hpp"
 
 #include <functional>
 #include <string>

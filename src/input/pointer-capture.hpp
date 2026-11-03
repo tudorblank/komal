@@ -12,7 +12,7 @@
 //   }
 //   if (m_capture.lost(frame)) ...           // ended without a release
 
-#include "command/input.hpp"
+#include "input/input-frame.hpp"
 
 #include <cstdint>
 

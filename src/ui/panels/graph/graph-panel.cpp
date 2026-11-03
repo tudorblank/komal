@@ -1,7 +1,7 @@
 #include "ui/panels/graph/graph-panel.hpp"
 #include "ui/input-owner.hpp"
 #include "command/actions.hpp"
-#include "command/input.hpp"
+#include "input/input-frame.hpp"
 #include "base/perf.hpp"
 #include "ui/panels/canvas/canvas-engine.hpp"
 #include "document/document-actions.hpp"

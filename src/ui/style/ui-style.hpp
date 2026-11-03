@@ -24,8 +24,9 @@ namespace Style {
 
 constexpr float kBaseFontSize = 15.0f;   // the UI font's size at scale 1, points
 
-// The theme the palette is made from (assets/themes/<name>.toml): before apply(). False, and why,
-// if it can't be read; the one in use stays.
+// The theme the palette is made from (assets/themes/<name>.toml), any time: everything made from
+// the palette follows (ImGui's colours, every style, the canvas). False, and why, if it can't be
+// read; the one in use stays.
 const std::vector<std::string_view>& themes();   // the built-in ones
 bool useTheme(std::string_view name, std::string& why);
 

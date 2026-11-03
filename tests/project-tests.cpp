@@ -444,3 +444,28 @@ TEST_CASE("history steps share the states of the nodes they didn't change")
     CHECK(p.redo());
     CHECK(p.nodes().size() == count);
 }
+
+TEST_CASE("a new project is blank: the master alone, nothing to undo")
+{
+    Project p;
+    p.init();
+    REQUIRE(p.nodes().size() == 1);
+    CHECK(p.isMaster(p.nodes().front()->id()));
+    CHECK(p.master().layers().empty());
+    CHECK(p.activeRasterId() == kNoNodeId);
+    CHECK(p.history().size() == 1);
+    CHECK_FALSE(p.canUndo());
+}
+
+TEST_CASE("a seed is the project's start: its pixels and nodes, no undo steps")
+{
+    StarterProject s;
+    const Project& p = s.project;
+    CHECK(p.nodes().size() == 3);
+    CHECK(p.master().layers().size() == 2);
+    CHECK(p.activeRasterId() == s.paint);
+    CHECK(pixelOf(p, s.background, 10, 20) == RGBA{ 10, uint8_t(20 * 255 / 191), 160, 255 });
+    CHECK(pixelOf(p, s.paint, -48, -48) == RGBA{ 255, 160, 40, 255 });
+    CHECK(p.history().size() == 1);
+    CHECK_FALSE(s.project.undo());   // nothing before the seed
+}

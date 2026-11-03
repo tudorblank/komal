@@ -8,6 +8,8 @@ namespace Style {
 
 namespace {
 
+float g_appliedScale = 0.0f;   // apply()'s last: a theme change styles ImGui again at it
+
 ImVec4 floats(Color8 c)
 {
     const auto [r, g, b, a] = c.floats();
@@ -146,7 +148,12 @@ Styles build(const Metrics& m)
 }
 
 const std::vector<std::string_view>& themes() { return Palette::themes(); }
-bool useTheme(std::string_view name, std::string& why) { return Palette::useTheme(name, why); }
+bool useTheme(std::string_view name, std::string& why)
+{
+    if (!Palette::useTheme(name, why)) return false;
+    if (g_appliedScale > 0.0f) apply(g_appliedScale);   // ImGui's colours too, once it's styled
+    return true;
+}
 
 Color8 windowBackground() { return Palette::current().windowBackground; }
 
@@ -197,6 +204,7 @@ const Styles& get()
 
 void apply(float scale)
 {
+    g_appliedScale = scale;
     ImGuiStyle& s = ImGui::GetStyle();
     s = ImGuiStyle();
 

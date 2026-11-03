@@ -90,7 +90,8 @@ std::optional<Theme> Theme::parse(std::string_view text, std::string& why)
     if (!hues) { why = "no [hues]"; return std::nullopt; }
     const std::pair<std::string_view, Color8*> slots[] = {
         { "accent", &t.accent }, { "accentDeep", &t.accentDeep }, { "red", &t.red }, { "rose", &t.rose },
-        { "green", &t.green }, { "blue", &t.blue }, { "maroon", &t.maroon }, { "orange", &t.orange }, { "yellow", &t.yellow } };
+        { "green", &t.green }, { "blue", &t.blue }, { "maroon", &t.maroon }, { "orange", &t.orange }, { "yellow", &t.yellow },
+        { "wine", &t.wine }, { "ocean", &t.ocean }, { "violet", &t.violet }, { "teal", &t.teal } };
     for (const auto& [key, out] : slots)
         if (!read(hues->get(key), key, *out)) return std::nullopt;
     return t;

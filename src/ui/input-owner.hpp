@@ -9,7 +9,7 @@
 //   owner.claim(ActionScope::Canvas, InputOwner::Claim::Pointer);   // a panel, while it draws
 //
 // The pointer itself is ImGui's to give: a panel has it while ImGui says its item is hovered or
-// held, and only then reads the InputFrame's samples (command/input.hpp).
+// held, and only then reads the InputFrame's samples (input/input-frame.hpp).
 
 #include "command/action.hpp"
 

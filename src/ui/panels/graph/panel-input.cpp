@@ -1,7 +1,7 @@
 #include "ui/panels/graph/graph-panel.hpp"
 #include "base/frames.hpp"
 #include "document/document-actions.hpp"
-#include "command/input.hpp"
+#include "input/input-frame.hpp"
 #include "document/project.hpp"
 #include "ui/panels/graph/internal/layout.hpp"
 #include "ui/style/graph-style.hpp"

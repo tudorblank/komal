@@ -1,4 +1,4 @@
-#include "command/pointer-capture.hpp"
+#include "input/pointer-capture.hpp"
 
 PointerCapture::Step PointerCapture::feed(const PointerEvent& ev, bool mayBegin)
 {

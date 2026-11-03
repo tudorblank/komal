@@ -22,6 +22,7 @@ struct Theme {
     Color8 shadow;                        // under and behind things
     Color8 accent, accentDeep;            // the hues: slots by family
     Color8 red, rose, green, blue, maroon, orange, yellow;
+    Color8 wine, ocean, violet, teal;
 
     // Colour maths, not a theme's: the colour picker's corners, a marker's inner ring.
     static constexpr Color8 kPureWhite = grey8(255);

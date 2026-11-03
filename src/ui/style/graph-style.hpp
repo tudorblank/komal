@@ -6,6 +6,8 @@
 
 #include <cstdint>
 
+enum class NodeType : uint8_t;   // node/node.hpp
+
 #include <imgui.h>
 
 namespace GraphStyle {
@@ -40,6 +42,10 @@ struct Colors {
     ImU32 activeRaster;
     ImU32 shadow;
     ImU32 separator;
+    ImU32 rasterHeader;
+    ImU32 referenceHeader;
+    ImU32 moveHeader;
+    ImU32 compositorHeader;
     ImU32 headerOutput;
     ImU32 title;
     ImU32 text;
@@ -73,6 +79,7 @@ struct Colors {
     ImU32 mapMaskEdge;
 };
 
-const Colors& colors();   // the palette's, as it is now
+const Colors& colors();             // the palette's, as it is now
+ImU32 kindHeader(NodeType type);   // a node's title bar, by its kind (the master has its own)
 
 }

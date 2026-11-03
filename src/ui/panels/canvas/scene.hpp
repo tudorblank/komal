@@ -5,7 +5,7 @@
 //   CanvasView    a camera + render target looking at a scene (view.hpp)
 // A view re-renders only when an item, the camera or the size changed.
 //
-//   OutlineItem* o = scene.addItem<OutlineItem>(Style::canvas().selection);   // owned by the scene
+//   OutlineItem* o = scene.addItem<OutlineItem>(OutlineItem::Kind::Selection);   // owned by the scene
 
 #include "ui/panels/canvas/item.hpp"
 #include "ui/style/ui-style.hpp"

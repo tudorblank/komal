@@ -1,5 +1,5 @@
 #pragma once
-#include "command/pointer-capture.hpp"
+#include "input/pointer-capture.hpp"
 #include "raster/brush.hpp"
 #include "ui/tools/tool-base.hpp"
 
