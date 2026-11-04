@@ -16,6 +16,7 @@ enum class ActionScope : uint8_t {
     Global,
     Canvas,
     Graph,
+    History,   // the History Tree
 };
 
 enum class ActionKind : uint8_t {

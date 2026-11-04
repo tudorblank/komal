@@ -128,6 +128,7 @@ embed_file(${GENERATED_DIR}/font-numbers.cpp ${ASSETS_DIR}/fonts/JetBrainsMono-L
 embed_file(${GENERATED_DIR}/theme-main-dark.cpp  ${ASSETS_DIR}/themes/main-dark.toml  kThemeMainDark)
 embed_file(${GENERATED_DIR}/theme-main-light.cpp ${ASSETS_DIR}/themes/main-light.toml kThemeMainLight)
 embed_file(${GENERATED_DIR}/app-icon.cpp     ${ASSETS_DIR}/icons/komal-icon-256.png      kAppIcon)
+embed_file(${GENERATED_DIR}/komal-face.cpp   ${ASSETS_DIR}/icons/komal-face.png          kKomalFace)   # the intro's
 # WGSL compiled into the binary: no shader files to ship or find relative to the working dir.
 embed_file(${GENERATED_DIR}/shader-texture.cpp ${CMAKE_SOURCE_DIR}/src/ui/panels/canvas/shaders/texture.wgsl kShaderTexture)
 embed_file(${GENERATED_DIR}/shader-color.cpp   ${CMAKE_SOURCE_DIR}/src/ui/panels/canvas/shaders/color.wgsl   kShaderColor)
@@ -140,6 +141,7 @@ set(GENERATED_SOURCES
     ${GENERATED_DIR}/font-ui.cpp
     ${GENERATED_DIR}/font-numbers.cpp
     ${GENERATED_DIR}/app-icon.cpp
+    ${GENERATED_DIR}/komal-face.cpp
     ${GENERATED_DIR}/theme-main-dark.cpp
     ${GENERATED_DIR}/theme-main-light.cpp
     ${GENERATED_DIR}/shader-texture.cpp

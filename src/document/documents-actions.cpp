@@ -6,7 +6,8 @@ using namespace DocArgs;
 void registerDocumentsActions(ActionRegistry& actions, Documents& d)
 {
     using K = ActionKind;
-    const auto settled = [&d] {   // nothing going on in the active one
+    const auto settled = [&d] {   // nothing going on in the active one (or none open)
+        if (d.empty()) return true;
         const Workspace& w = d.active().workspace();
         return !w.strokeActive() && !w.preview();
     };
@@ -15,14 +16,14 @@ void registerDocumentsActions(ActionRegistry& actions, Documents& d)
                   .run = [&d](const ActionArgs&) -> ActionResult { return { true, int64_t(d.create().id()) }; } });
     actions.add({ .id = Actions::DocClose, .title = "Close", .kind = K::AppState,
                   .args = { Arg::id(kDocument).optional(), Arg::flag(kDiscard).optional() }, .enabled = settled, .run = [&d](const ActionArgs& a) {
-        const Document* doc = d.find(a.get(kDocument, d.active().id()));
+        const Document* doc = d.find(a.get(kDocument, d.activeId()));
         if (!doc || (doc->unsaved() && !a.get(kDiscard, false))) return false;
         return d.close(doc->id());
     } });
     actions.add({ .id = Actions::DocSave, .title = "Save", .kind = K::AppState,
                   .args = { Arg::id(kDocument).optional(), Arg::text(kPath).optional() }, .enabled = settled,
                   .run = [&d](const ActionArgs& a) -> ActionResult {
-        Document* doc = d.find(a.get(kDocument, d.active().id()));
+        Document* doc = d.find(a.get(kDocument, d.activeId()));
         if (!doc) return ActionResult::refused("no such document");
         std::string why;
         if (!doc->save(a.get(kPath, doc->path()), why)) return ActionResult::refused(why);

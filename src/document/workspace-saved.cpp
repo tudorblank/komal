@@ -68,7 +68,7 @@ bool Workspace::open(const WorkspaceFile& f, std::string& error)
         // Pixels: the start's own (no commit of a step).
         for (const WorkspaceFile::Raster& r : f.rasters)
             if (RasterRootNode* raster = rasterAt(r.node))
-                raster->recordEdit(key(), [&](RasterEditor& ed) { ed.applyTileGrid(r.tiles, { 255, CompositeMode::Replace }); });
+                raster->edit(key(), [&](RasterEditor& ed) { ed.applyTileGrid(r.tiles, { 255, CompositeMode::Replace }); });
 
         // Links, each one checked as if made by hand (no cycle, a port that takes it).
         for (const WorkspaceFile::Node& n : f.nodes) {

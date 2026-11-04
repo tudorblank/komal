@@ -21,10 +21,9 @@ public:
     void setSettings(GraphKey, const NodeSettings& s) override { if (const auto* r = std::get_if<RasterSettings>(&s)) m_settings = *r; }
 
     // The only ways to change its pixels; each tells the graph what changed, in the graph or not
-    // (a deleted raster flipped by a history jump comes back with its caches right).
-    // An edit, recorded as one commit in the raster's history (kNoRasterCommit: nothing changed):
-    RasterCommitId recordEdit(GraphKey, const std::function<void(RasterEditor&)>& body);
-    void flip(GraphKey, RasterCommitId commit);   // undo / redo of one of its commits
+    // (a deleted raster restored by a history jump comes back with its caches right).
+    bool edit(GraphKey, const std::function<void(RasterEditor&)>& body);   // false: it changed nothing
+    void restore(GraphKey, const RasterSnapshot& pixels);                 // as history kept it
 
     BoundsI wetBounds() const override { return m_raster->getBounds(); }
     const Tile* fetchWet(int tx, int ty, RenderCtx&) override { return m_raster->getReadTile(tx, ty); }   // zero-copy

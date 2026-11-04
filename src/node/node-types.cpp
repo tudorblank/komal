@@ -10,17 +10,16 @@ std::shared_ptr<RasterRootNode> RasterRootNode::create(RasterData& r)
     return std::make_shared<RasterRootNode>(Private{}, r);
 }
 
-RasterCommitId RasterRootNode::recordEdit(GraphKey, const std::function<void(RasterEditor&)>& body)
+bool RasterRootNode::edit(GraphKey, const std::function<void(RasterEditor&)>& body)
 {
-    EditSummary s;
-    const RasterCommitId commit = m_raster->recordEdit(body, s);
+    const EditSummary s = m_raster->edit(body);
     publish(s);
-    return commit;
+    return !s.touched.empty();
 }
 
-void RasterRootNode::flip(GraphKey, RasterCommitId commit)
+void RasterRootNode::restore(GraphKey, const RasterSnapshot& pixels)
 {
-    publish(m_raster->flip(commit));
+    publish(m_raster->restore(pixels));
 }
 
 void RasterRootNode::wetFootprint(TileSet& out)

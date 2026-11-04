@@ -2,11 +2,6 @@
 
 #include <algorithm>
 
-Documents::Documents()
-{
-    create();
-}
-
 Document* Documents::find(DocumentId id)
 {
     for (const auto& d : m_open)
@@ -21,7 +16,6 @@ const Document* Documents::find(DocumentId id) const
 
 Document& Documents::create()
 {
-    if (!m_open.empty() && active().blank()) return active();
     auto doc = std::make_unique<Document>("Untitled " + std::to_string(++m_untitled));
     doc->workspace().init();
     return place(std::move(doc));
@@ -36,13 +30,8 @@ Document& Documents::place(std::unique_ptr<Document> doc)
 {
     doc->m_id = DocumentId(++m_lastId);
     const DocumentId id = doc->id();
-    if (!m_open.empty() && active().blank()) {
-        changed.emit({ DocumentsEvent::Type::Closing, active().id() });
-        m_open[m_active] = std::move(doc);
-    } else {
-        m_active = m_open.empty() ? 0 : m_active + 1;
-        m_open.insert(m_open.begin() + std::ptrdiff_t(m_active), std::move(doc));
-    }
+    m_active = m_open.empty() ? 0 : m_active + 1;
+    m_open.insert(m_open.begin() + std::ptrdiff_t(m_active), std::move(doc));
     changed.emit({ DocumentsEvent::Type::Opened, id });
     changed.emit({ DocumentsEvent::Type::Activated, id });
     return active();
@@ -67,9 +56,8 @@ bool Documents::close(DocumentId id)
     const bool wasActive = at == m_active;
     changed.emit({ DocumentsEvent::Type::Closing, id });   // still there: let go of it
     m_open.erase(m_open.begin() + std::ptrdiff_t(at));
-    if (m_open.empty()) {
+    if (m_open.empty()) {   // none left
         m_active = 0;
-        create();
         return true;
     }
     if (at < m_active || m_active == m_open.size()) --m_active;   // the one before it moved down; or it was last

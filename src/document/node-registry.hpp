@@ -23,6 +23,7 @@ public:
     // The node of a raster's data, deleted or not: its pixels change only through it, so a
     // history jump that flips a deleted raster leaves its caches right for when it comes back.
     RasterRootNode& rasterNode(RasterId id) const;
+    template<class F> void forEachRaster(F&& f) const { for (const auto& n : m_rasterNodes) f(*n); }   // by RasterId, deleted ones too
 
     // A new node of that kind (node-kinds.hpp) at (x, y) in the graph, named after its kind; a
     // kind that owns pixels gets its own data and a number ("Raster 3", never reused).

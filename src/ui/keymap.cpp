@@ -34,6 +34,9 @@ const std::initializer_list<Binding> kDefaultKeys = {
     { Actions::CanvasFrameAll,     { Key::F } },
     // the graph (while it has the pointer or the focus)
     { Actions::GraphDelete,        { Key::Delete } },
+    // the History Tree (while it has the pointer or the focus)
+    { Actions::HistoryTreeDelete,  { Key::Delete } },
+    { Actions::HistoryTreeDelete,  { Key::Backspace } },
     { Actions::GraphDelete,        { Key::Backspace } },
     { Actions::GraphFrameSelected, { Key::F } },
     { Actions::GraphFrameAll,      { Key::Home } },

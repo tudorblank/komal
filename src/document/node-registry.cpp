@@ -81,7 +81,7 @@ NodeRegistry::PixelBytes NodeRegistry::pixelBytes() const
     PixelBytes b;
     for (const RasterData& r : m_rasters) {
         b.pixels  += r.bytes();
-        b.history += r.history().bytes();
+        b.history += r.historyBytes();
     }
     return b;
 }

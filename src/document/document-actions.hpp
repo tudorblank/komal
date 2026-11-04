@@ -3,7 +3,7 @@
 // only these call the Workspace's editing API. Each document edit is one undo step, but moving
 // through history (undo, redo, history.goTo) and picking the raster to paint into (raster.activate).
 //
-//   document edits   edit.undo  edit.redo  history.goTo
+//   document edits   edit.undo  edit.redo  history.goTo  history.delete
 //                    node.add  node.reference  node.delete  node.rename
 //                    raster.activate  raster.lock  raster.lockAlpha
 //                    link.connect  link.disconnect  layers.move  layer.add  layers.remove  layer.mute
@@ -54,6 +54,7 @@ inline constexpr ArgKey<float> kY{ "y" };
 
 // History, layers, values.
 inline constexpr ArgKey<StepId>      kStep{ "step" };
+inline constexpr ArgKey<std::vector<StepId>> kSteps{ "steps" };   // history.delete
 inline constexpr ArgKey<size_t>      kLayerTo{ "to" };       // ... where it goes; layers.move: a place among the rows left
 inline constexpr ArgKey<NodeId>      kLayer{ "layer" };      // layer.mute: one of the compositor's layers
 inline constexpr ArgKey<std::vector<NodeId>>     kLayers{ "layers" };        // layers.move: the layers moved ...

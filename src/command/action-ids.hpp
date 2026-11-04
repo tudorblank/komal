@@ -22,6 +22,7 @@ namespace Actions {
 inline constexpr ActionId EditUndo{ "edit.undo" };
 inline constexpr ActionId EditRedo{ "edit.redo" };
 inline constexpr ActionId HistoryGoTo{ "history.goTo" };
+inline constexpr ActionId HistoryDelete{ "history.delete" };
 inline constexpr ActionId NodeAdd{ "node.add" };
 inline constexpr ActionId NodeReference{ "node.reference" };
 inline constexpr ActionId NodeDelete{ "node.delete" };
@@ -75,6 +76,7 @@ inline constexpr ActionId ViewResetLayout{ "view.resetLayout" };
 inline constexpr ActionId ViewCanvas{ "view.canvas" };   // each panel's toggle (PanelInfo::toggle)
 inline constexpr ActionId ViewGraph{ "view.graph" };
 inline constexpr ActionId ViewTools{ "view.tools" };
+inline constexpr ActionId ViewDocuments{ "view.documents" };
 inline constexpr ActionId ViewNavigator{ "view.navigator" };
 inline constexpr ActionId ViewColor{ "view.color" };
 inline constexpr ActionId ViewToolProperties{ "view.toolProperties" };
@@ -108,5 +110,8 @@ inline constexpr ActionId GraphSelectAll{ "graph.selectAll" };
 inline constexpr ActionId GraphAddNode{ "graph.addNode" };
 inline constexpr ActionId GraphShowInCanvas{ "graph.showInCanvas" };
 inline constexpr ActionId GraphRename{ "graph.rename" };
+
+// ---- the History Tree's (ui/panels/history-panel)
+inline constexpr ActionId HistoryTreeDelete{ "historyTree.delete" };   // the steps picked: history.delete
 
 }

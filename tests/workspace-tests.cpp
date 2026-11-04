@@ -2,6 +2,8 @@
 #include "node/node-kinds.hpp"
 #include "helpers.hpp"
 
+#include <cstdio>
+
 #include <set>
 #include <vector>
 
@@ -468,4 +470,80 @@ TEST_CASE("a seed is the project's start: its pixels and nodes, no undo steps")
     CHECK(pixelOf(p, s.paint, -48, -48) == RGBA{ 255, 160, 40, 255 });
     CHECK(p.history().size() == 1);
     CHECK_FALSE(s.workspace.undo());   // nothing before the seed
+}
+
+TEST_CASE("history's pixels: steps share what they didn't change; far ones go cold, and come back exact")
+{
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
+    BrushParams brush;
+    brush.diameter = 24.0f;
+    for (int i = 0; i < 30; ++i) {   // thirty strokes, each across a few tiles of its own
+        p.beginStroke(brush, { float(i * 40), 600.0f, 1.0f });
+        const StrokePoint to[] = { { float(i * 40 + 30), 700.0f, 1.0f } };
+        p.strokeTo(to);
+        p.endStroke();
+    }
+    REQUIRE(p.history().size() == 31);
+    const RGBA first = pixelOf(p, s.paint, 5, 610);
+    const size_t warm = p.pixelBytes().history;
+    while (!p.settleHistory(Deadline::in(Clock::Seconds(1.0)))) {}
+    const size_t settled = p.pixelBytes().history;
+    std::printf("history after 30 strokes: %zu KB raw, %zu KB settled\n", warm / 1024, settled / 1024);
+    CHECK(settled < warm / 3);
+    CHECK(p.historySettled());
+
+    // All the way back, past every cold step: exact.
+    REQUIRE(p.goToHistory(kStartStep));
+    CHECK(pixelOf(p, s.paint, 5, 610).a == 0);
+    CHECK(pixelOf(p, s.paint, -48, -48) == RGBA{ 255, 160, 40, 255 });   // the starter's disc, untouched
+    REQUIRE(p.goToHistory(StepId(1)));
+    CHECK(pixelOf(p, s.paint, 5, 610) == first);
+    CHECK_FALSE(p.historySettled());   // moved: what's near the start warmed next
+}
+
+TEST_CASE("history steps deleted: the rest restore exactly; the current one moves up; their memory goes")
+{
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
+    BrushParams brush;
+    brush.diameter = 24.0f;
+    const auto stroke = [&](float x) {
+        p.beginStroke(brush, { x, 600.0f, 1.0f });
+        const StrokePoint to[] = { { x + 30.0f, 700.0f, 1.0f } };
+        p.strokeTo(to);
+        p.endStroke();
+    };
+    for (int i = 0; i < 6; ++i) stroke(float(i * 200));   // steps 1..6, each its own tiles
+    const RGBA last = pixelOf(p, s.paint, 1010, 610);
+
+    REQUIRE(p.deleteHistory({ StepId(2), StepId(3), StepId(4) }));   // the middle: 6 is now 3
+    CHECK(p.history().size() == 4);
+    CHECK(p.history().current() == StepId(3));
+    CHECK(pixelOf(p, s.paint, 1010, 610) == last);   // nothing moved (each stroke's tiles: still the last step's too)
+    REQUIRE(p.goToHistory(StepId(1)));                 // the first stroke alone
+    CHECK(pixelOf(p, s.paint, 10, 610).a > 0);
+    CHECK(pixelOf(p, s.paint, 410, 610).a == 0);
+    REQUIRE(p.goToHistory(StepId(3)));                 // all six strokes: the last step holds them all
+    CHECK(pixelOf(p, s.paint, 410, 610).a > 0);
+    CHECK(pixelOf(p, s.paint, 1010, 610) == last);
+
+    REQUIRE(p.deleteHistory({ StepId(3) }));           // the current one: back up to the one before
+    CHECK(p.history().current() == StepId(2));
+    CHECK(pixelOf(p, s.paint, 1010, 610).a == 0);      // as that step holds it
+    CHECK_FALSE(p.deleteHistory({ kStartStep }));      // never Start
+
+    // Strokes over the same tiles: the versions before are only the old steps'; deleted, they go.
+    const size_t base = p.pixelBytes().history;
+    for (int i = 0; i < 5; ++i) {
+        brush.color = { uint8_t(40 * i), 90, 200, 255 };
+        stroke(100.0f);
+    }
+    const size_t overpainted = p.pixelBytes().history;
+    CHECK(overpainted > base);
+    std::vector<StepId> old;
+    for (uint32_t i = 1; i + 1 < uint32_t(p.history().size()); ++i) old.push_back(StepId(i));
+    REQUIRE(p.deleteHistory(old));                      // all but Start and the last
+    CHECK(p.history().size() == 2);
+    CHECK(p.pixelBytes().history < overpainted);
 }

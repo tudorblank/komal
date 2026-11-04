@@ -3,8 +3,10 @@
 // the child last undone or made, and goTo() jumps to any node, across branches. A new step after
 // undoing starts a new branch: the undone steps stay, and stay reachable.
 //
-// A step holds what it changed: the raster commits it made (tiles flip both ways), and the graph
-// as it was after it (GraphState, see Workspace), which undo and redo restore.
+// A step holds the whole workspace as it was after it: the graph (GraphState) and every raster's
+// pixels (a RasterSnapshot each). Steps share what they didn't change (a node's state, a raster's
+// snapshot, its tiles), so a step costs what it changed; and since each one holds everything,
+// none depends on another: going to a step is restoring it, whatever was before.
 
 #include "raster/raster-data.hpp"
 
@@ -20,22 +22,22 @@ enum class StepId : uint32_t {};
 constexpr StepId kStartStep{ 0 };
 constexpr StepId kNoStep{ 0xFFFFFFFFu };
 
-struct RasterCommitRef {
-    RasterId       raster = kNoRasterId;
-    RasterCommitId commit = kNoRasterCommit;
+// A raster's pixels as a step leaves them: shared with the steps around it while they're the same.
+struct RasterState {
+    RasterId raster = kNoRasterId;
+    std::shared_ptr<const RasterSnapshot> pixels;
+    bool operator==(const RasterState&) const = default;   // the same snapshot
 };
+using RasterStates = std::vector<RasterState>;   // every raster there was then, by id
 
 struct HistoryStep {
     std::string label;                           // what the user did ("Connect", "Brush Stroke")
-    std::vector<RasterCommitRef> rasterCommits;
     std::shared_ptr<const GraphState> graph;     // the graph after it
+    RasterStates rasters;                        // ... and the pixels
 };
 
 class History {
 public:
-    // Undoes the commit if it is applied, redoes it if not: a commit flips both ways.
-    using FlipRaster = std::function<void(const RasterCommitRef& commit)>;
-
     History() { m_nodes.emplace_back().step.label = "Start"; }   // kStartStep: the initial state
 
     StepId current() const { return m_current; }
@@ -44,7 +46,13 @@ public:
 
     // Adds a step after the current one (a new branch if it has children already) and goes there.
     void push(HistoryStep step);
-    void goTo(StepId target, const FlipRaster& flip);
+    // The current step from now on (what it holds is the workspace's to restore). Redo comes back
+    // the way it left: each step it went up from is its parent's redo child.
+    void goTo(StepId target);
+    // Steps taken out of the tree for good (never Start, never the current one: move off it
+    // first). Each one's children take its place among its parent's; every step left is numbered
+    // again in the order they were made. Nothing else changes: each step holds all it was.
+    void remove(const std::vector<StepId>& steps);
 
     // ---- the tree (ids grow in the order steps were made: StepId(0) .. StepId(size() - 1))
     size_t size() const { return m_nodes.size(); }
@@ -54,6 +62,7 @@ public:
     StepId redoChild(StepId id) const { return at(id).redoChild; }  // the branch most recently undone or made
     const std::vector<StepId>& children(StepId id) const { return at(id).children; }
     void setGraph(StepId id, std::shared_ptr<const GraphState> graph) { at(id).step.graph = std::move(graph); }
+    void setRasters(StepId id, RasterStates rasters) { at(id).step.rasters = std::move(rasters); }
 
 private:
     struct Node {
@@ -66,7 +75,6 @@ private:
 
     Node&       at(StepId id)       { return m_nodes[size_t(id)]; }
     const Node& at(StepId id) const { return m_nodes[size_t(id)]; }
-    void apply(StepId id, bool forward, const FlipRaster& flip);   // forward: redo order; else undo order
 
     std::vector<Node> m_nodes;
     StepId m_current = kStartStep;

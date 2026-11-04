@@ -38,6 +38,11 @@ Palette make(const Theme& t)
     p.navHighlight       = r[23].withAlpha(179);
     p.navDim             = t.shadow.withAlpha(102);
     p.modalDim           = t.shadow.withAlpha(128);
+    p.tabShown           = r[5];
+    p.tabHot             = r[3];
+    p.tabShownText       = r[22];
+    p.introBack          = r[3];
+    p.introFace          = r[8];
     p.none               = t.shadow.withAlpha(0);
     // the accent: selections, focus, checked things, the parts a value covers
     p.accent             = t.accent;

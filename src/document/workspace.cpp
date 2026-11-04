@@ -82,8 +82,7 @@ NodeId Workspace::importTiles(const TileGrid& tiles, const std::string& name, co
     const NodeId id = createNode(NodeType::Raster, x, y);
     RasterRootNode& r = *rasterAt(id);
     if (!name.empty()) r.setLabel(key(), name);
-    recordCommit({ r.raster().id(), r.recordEdit(key(), [&](RasterEditor& ed) { ed.applyTileGrid(tiles, { 255, CompositeMode::Replace }); }) },
-                 "Import Image");
+    if (r.edit(key(), [&](RasterEditor& ed) { ed.applyTileGrid(tiles, { 255, CompositeMode::Replace }); })) pixelsChanged("Import Image");
     if (options.addToMaster) connect(id, m_master->id(), InputSlot::newLayer(uint32_t(m_master->layers().size())));
     if (options.makeActive) setActiveRaster(id);
     else if (m_active == id && prevActive != kNoNodeId) setActiveRaster(prevActive);   // createNode takes it when there was none
@@ -324,12 +323,12 @@ void Workspace::endStroke()
 {
     if (!m_stroke.active()) return;
     const NodeId raster = m_stroke.node();
-    const RasterCommitRef commit = m_stroke.end(key());   // the raster changes now, once
+    const bool painted = m_stroke.end(key());   // the raster changes now, once
     m_preview.reset();
     emit(WorkspaceEventType::PreviewChanged, raster);
-    if (commit.commit == kNoRasterCommit) return;
+    if (!painted) return;
     emit(WorkspaceEventType::RasterEdited, raster);
-    recordCommit(commit, "Brush Stroke");
+    pixelsChanged("Brush Stroke");
 }
 
 void Workspace::cancelStroke()
@@ -341,13 +340,11 @@ void Workspace::cancelStroke()
     emit(WorkspaceEventType::PreviewChanged, raster);
 }
 
-void Workspace::recordCommit(const RasterCommitRef& commit, const char* label)
+void Workspace::pixelsChanged(const char* label)
 {
-    if (commit.commit == kNoRasterCommit || m_seeding) return;   // a seed's pixels are the start's own
-    const bool own = !m_steps.open();   // made outside any action: a step of its own
-    if (own) beginStep(label);
-    m_steps.commit(commit);
-    if (own) endStep();
+    if (m_seeding || m_steps.open()) return;   // a seed's pixels are the start's own; an open step takes them when it ends
+    m_steps.begin(label, true);   // made outside any action: a step of their own
+    endStep();
 }
 
 // ---------------------------------------------------------------- history
@@ -359,7 +356,9 @@ void Workspace::beginStep(std::string label)
 
 void Workspace::endStep()
 {
-    if (m_steps.end()) emit(WorkspaceEventType::HistoryChanged);
+    if (!m_steps.end()) return;
+    m_historySettled = false;
+    emit(WorkspaceEventType::HistoryChanged);
 }
 
 bool Workspace::undo()
@@ -376,9 +375,11 @@ bool Workspace::goToHistory(StepId step)
 {
     if (m_stroke.active() || m_steps.open() || !history().contains(step) || step == history().current()) return false;
     cancelPreview();
-    const auto graph = m_steps.goTo(step, [&](const RasterCommitRef& c) { flipRasterCommit(c); });   // the pixels, step by step
-    if (graph) restoreGraph(*graph);   // the graph, as it was there
-    m_steps.synced();                  // the live graph is that step's
+    const HistoryStep& target = m_steps.goTo(step);
+    if (target.graph) restoreGraph(*target.graph);   // the graph, as it was there
+    restoreRasters(target.rasters);                  // ... and the pixels
+    m_steps.synced();                                // the live workspace is that step's
+    m_historySettled = false;                        // what's near it is warmed from the next frame on
     emit(WorkspaceEventType::HistoryChanged);
     return true;
 }
@@ -397,11 +398,63 @@ void Workspace::restoreGraph(const GraphState& target)
     if (m_active != kNoNodeId ? !find(m_active) : anyRaster) fallBackActiveRaster();
 }
 
-void Workspace::flipRasterCommit(const RasterCommitRef& c)
+bool Workspace::deleteHistory(const std::vector<StepId>& steps)
 {
-    RasterRootNode& n = m_nodes.rasterNode(c.raster);   // in the graph or not: its caches follow its pixels
-    n.flip(key(), c.commit);
-    if (m_nodes.contains(n.id())) emit(WorkspaceEventType::RasterEdited, n.id());
+    if (m_stroke.active() || m_steps.open()) return false;
+    absl::flat_hash_set<StepId> gone;
+    for (StepId s : steps)
+        if (history().contains(s) && s != kStartStep) gone.insert(s);
+    if (gone.empty()) return false;
+    StepId stay = history().current();   // off a step that goes, up to one that stays
+    while (gone.contains(stay)) stay = history().parent(stay);
+    if (stay != history().current() && !goToHistory(stay)) return false;
+    m_steps.remove(std::vector<StepId>(gone.begin(), gone.end()));
+    m_historySettled = false;
+    emit(WorkspaceEventType::HistoryChanged);
+    return true;
+}
+
+bool Workspace::settleHistory(const Deadline& until)
+{
+    if (m_historySettled) return true;
+    // The steps near the current one, along the tree.
+    const History& h = history();
+    std::vector<StepId> near{ h.current() };
+    absl::flat_hash_set<StepId> seen{ h.current() };
+    for (size_t at = 0, ring = 0; ring < size_t(kHotSteps); ++ring) {
+        const size_t end = near.size();
+        for (; at < end; ++at) {
+            const StepId s = near[at];
+            const auto visit = [&](StepId n) { if (n != kNoStep && seen.insert(n).second) near.push_back(n); };
+            visit(h.parent(s));
+            for (StepId c : h.children(s)) visit(c);
+        }
+    }
+    // Per raster, its snapshots there.
+    absl::flat_hash_map<RasterId, std::vector<const RasterSnapshot*>> pixels;
+    for (StepId s : near)
+        for (const RasterState& r : h.step(s).rasters) {
+            std::vector<const RasterSnapshot*>& list = pixels[r.raster];
+            if (std::find(list.begin(), list.end(), r.pixels.get()) == list.end()) list.push_back(r.pixels.get());
+        }
+    bool done = true;
+    m_nodes.forEachRaster([&](const RasterRootNode& n) {
+        if (!done) return;
+        const auto it = pixels.find(n.raster().id());
+        done = n.raster().keepWarm(it != pixels.end() ? std::span<const RasterSnapshot* const>(it->second) : std::span<const RasterSnapshot* const>{}, until);
+    });
+    m_historySettled = done;
+    return done;
+}
+
+void Workspace::restoreRasters(const RasterStates& rasters)
+{
+    for (const RasterState& s : rasters) {
+        RasterRootNode& n = m_nodes.rasterNode(s.raster);   // in the graph or not: its caches follow its pixels
+        const uint64_t was = n.raster().revision();
+        n.restore(key(), *s.pixels);
+        if (n.raster().revision() != was && m_nodes.contains(n.id())) emit(WorkspaceEventType::RasterEdited, n.id());
+    }
 }
 
 // ---------------------------------------------------------------- shared by the views

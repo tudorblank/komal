@@ -1,5 +1,5 @@
 // The documents open at once: each a workspace with its own actions and history, and its file.
-// A blank slate is replaced by the next one made or opened; an edited one stays. Unsaved: its
+// None open at first, none after the last one closes; a new one is always new. Unsaved: its
 // history isn't at the step its file holds.
 
 #include "helpers.hpp"
@@ -37,7 +37,7 @@ TEST_CASE("a blank slate: never edited, no file; an edit makes it a project, uns
     CHECK(d.unsaved());
     REQUIRE(d.actions().run(Actions::EditUndo));   // back to how it began: nothing to lose ...
     CHECK_FALSE(d.unsaved());
-    CHECK_FALSE(d.blank());                        // ... but it was edited: it stays when another comes
+    CHECK_FALSE(d.blank());                        // ... but it was edited
 }
 
 TEST_CASE("unsaved: away from the step its file holds, whichever way")
@@ -62,7 +62,7 @@ TEST_CASE("unsaved: away from the step its file holds, whichever way")
 TEST_CASE("each document has its own workspace, history and actions")
 {
     Documents docs;
-    Document& one = docs.active();
+    Document& one = docs.create();
     edit(one);
     Document& two = docs.create();
     REQUIRE(&two != &one);
@@ -78,37 +78,30 @@ TEST_CASE("each document has its own workspace, history and actions")
     CHECK_FALSE(logged(two, Actions::NodeAdd));
 }
 
-TEST_CASE("the blank slate gives way; an edited one stays")
+TEST_CASE("none open at first; new ones are always new, opened ones go beside them")
 {
     Documents docs;
-    REQUIRE(docs.size() == 1);
-    const DocumentId first = docs.active().id();
-    CHECK(docs.active().name() == "Untitled 1");
-    CHECK(docs.active().blank());
+    CHECK(docs.empty());
+    CHECK(docs.activeId() == kNoDocument);
 
-    CHECK(&docs.create() == &docs.active());   // still the blank one: nothing new
-    CHECK(docs.size() == 1);
-    CHECK(docs.active().id() == first);
-
-    docs.open(fromFile("/a/cover.komal"));     // opened over the blank slate: it's gone
+    docs.open(fromFile("/a/cover.komal"));
     CHECK(docs.size() == 1);
     CHECK(docs.active().name() == "cover");
-    CHECK_FALSE(docs.find(first));
-
-    edit(docs.active());
-    docs.create();                             // the edited one stays
-    CHECK(docs.size() == 2);
+    docs.create();                             // as many blank ones as asked for
+    docs.create();
+    CHECK(docs.size() == 3);
     CHECK(docs.active().name() == "Untitled 2");
-    CHECK(docs.all()[0]->name() == "cover");
-    docs.open(fromFile("/a/back.komal"));      // over "Untitled 2": it was still blank
-    CHECK(docs.size() == 2);
+    CHECK(docs.active().blank());
+    docs.open(fromFile("/a/back.komal"));      // beside them, none replaced
+    CHECK(docs.size() == 4);
     CHECK(docs.active().name() == "back");
+    CHECK(docs.all()[0]->name() == "cover");
 }
 
 TEST_CASE("activating and closing: the one after, else before; never none open")
 {
     Documents docs;
-    edit(docs.active());
+    edit(docs.create());
     const DocumentId a = docs.active().id();
     edit(docs.create());
     const DocumentId b = docs.active().id();
@@ -123,18 +116,18 @@ TEST_CASE("activating and closing: the one after, else before; never none open")
     REQUIRE(docs.close(c));                    // the last in the row: the one before it
     CHECK(docs.active().id() == a);
     REQUIRE(docs.activate(a));
-    REQUIRE(docs.close(a));                    // the only one: a new blank slate
-    REQUIRE(docs.size() == 1);
-    CHECK(docs.active().blank());
-    CHECK(docs.active().name() == "Untitled 4");   // names never come back
+    REQUIRE(docs.close(a));                    // the only one: none left
+    CHECK(docs.empty());
+    CHECK(docs.activeId() == kNoDocument);
     CHECK_FALSE(docs.anyUnsaved());
     CHECK_FALSE(docs.close(a));
+    CHECK(docs.create().name() == "Untitled 4");   // names never come back
 }
 
 TEST_CASE("closing one before the active one keeps the active one active")
 {
     Documents docs;
-    edit(docs.active());
+    edit(docs.create());
     const DocumentId a = docs.active().id();
     edit(docs.create());
     const DocumentId b = docs.active().id();
@@ -152,14 +145,11 @@ TEST_CASE("the documents tell what changed: opened, closing (still there), activ
         if (e.type == DocumentsEvent::Type::Closing) closingStillThere &= docs.find(e.id) != nullptr;
     });
     using T = DocumentsEvent::Type;
-    const DocumentId first = docs.active().id();
-    docs.create();                                  // blank: nothing happens
-    CHECK(heard.empty());
-    docs.open(fromFile("/a/cover.komal"));          // over the blank slate
+    docs.open(fromFile("/a/cover.komal"));
     const DocumentId cover = docs.active().id();
-    CHECK(heard == std::vector<std::pair<T, DocumentId>>{ { T::Closing, first }, { T::Opened, cover }, { T::Activated, cover } });
+    CHECK(heard == std::vector<std::pair<T, DocumentId>>{ { T::Opened, cover }, { T::Activated, cover } });
     heard.clear();
-    const DocumentId second = docs.create().id();   // cover isn't blank (it has a file): a new one beside it
+    const DocumentId second = docs.create().id();   // a new one beside it
     CHECK(heard == std::vector<std::pair<T, DocumentId>>{ { T::Opened, second }, { T::Activated, second } });
     heard.clear();
     docs.activate(second);                          // already: nothing
@@ -169,11 +159,8 @@ TEST_CASE("the documents tell what changed: opened, closing (still there), activ
     docs.close(cover);                              // the active one: the next one takes over
     CHECK(heard == std::vector<std::pair<T, DocumentId>>{ { T::Closing, cover }, { T::Activated, second } });
     heard.clear();
-    docs.close(second);                             // the last one: a new blank slate
-    REQUIRE(heard.size() == 3);
-    CHECK(heard[0] == std::pair{ T::Closing, second });
-    CHECK(heard[1].first == T::Opened);
-    CHECK(heard[2].first == T::Activated);
+    docs.close(second);                             // the last one: none left, none active
+    CHECK(heard == std::vector<std::pair<T, DocumentId>>{ { T::Closing, second } });
     CHECK(closingStillThere);
 }
 
@@ -182,7 +169,12 @@ TEST_CASE("the documents' actions: unsaved work is never closed unasked")
     Documents docs;
     ActionRegistry actions;
     registerDocumentsActions(actions, docs);
-    CHECK(actions.run(Actions::DocNew).made == int64_t(docs.active().id()));   // blank already: the same one
+    CHECK_FALSE(actions.run(Actions::DocClose));                                   // none open: nothing to close
+    const DocumentId blank = DocumentId(actions.run(Actions::DocNew).made);
+    const ActionResult second = actions.run(Actions::DocNew);                  // a new one, though one is blank
+    CHECK(second.made == int64_t(docs.active().id()));
+    CHECK(docs.size() == 2);
+    REQUIRE(actions.run(Actions::DocClose, { { DocArgs::kDocument, blank } }));
     CHECK(docs.size() == 1);
     edit(docs.active());
     const DocumentId edited = docs.active().id();
@@ -196,6 +188,6 @@ TEST_CASE("the documents' actions: unsaved work is never closed unasked")
     CHECK(docs.size() == 1);
     CHECK(docs.active().id() == DocumentId(made.made));
     CHECK(actions.run(Actions::DocClose, { { DocArgs::kDocument, DocumentId(made.made) } }));   // blank: nothing to lose
-    CHECK(docs.size() == 1);
+    CHECK(docs.empty());
     CHECK_FALSE(actions.run(Actions::DocActivate, { { DocArgs::kDocument, DocumentId{ 99 } } }));
 }

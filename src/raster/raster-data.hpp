@@ -1,6 +1,17 @@
 #pragma once
+// A raster's pixels: its tiles (TileGrid), their bounds, and the one way they change (an edit,
+// through a RasterEditor). History keeps snapshots of it (RasterSnapshot): each the raster as it
+// was, sharing every tile it didn't change with the raster and with every other snapshot of it.
+// Going back to one is restore(): only the tiles that differ are told.
+//
+//   EditSummary s = raster.edit([&](RasterEditor& ed) { ... });   // what changed
+//   auto before = raster.snapshot();                              // costs what changes after it
+//   raster.restore(*before);                                      // as it was: s.touched again
+//
+// Tiles no snapshot near where history is (and not the raster's own) can go cold: kept as their
+// encoded bytes, not their pixels (keepWarm, a little at a time).
 
-#include "raster/raster-history.hpp"
+#include "base/clock.hpp"
 #include "raster/tile-grid.hpp"
 
 #include <exception>
@@ -9,7 +20,7 @@
 #include <span>
 #include <vector>
 
-// What a committed edit touched: tiles to re-read, and whether the bounds moved.
+// What a committed edit (or a restore) touched: tiles to re-read, and whether the bounds moved.
 struct EditSummary {
     TileSet  touched;
     bool     boundsChanged = false;
@@ -20,6 +31,12 @@ struct EditSummary {
 enum class RasterId : uint32_t {};   // its own type: never mixed up with another number
 constexpr RasterId kNoRasterId{ 0xFFFFFFFFu };
 class RasterEditor;
+
+// A raster as it was: its tiles (a snapshot of its grid, never written) and their bounds.
+struct RasterSnapshot {
+    TileGrid tiles;
+    BoundsI  bounds;
+};
 
 class RasterData {
 public:
@@ -40,23 +57,27 @@ public:
     template<class F> void forEachTile(F&& f) const { m_grid.forEachRead(std::forward<F>(f)); }
     size_t tileCount() const { assert(!m_pendingEdits); return m_grid.size(); }
     size_t bytes() const { return m_grid.bytes(); }   // the memory its pixels take (history apart)
-    uint64_t revision() const { return m_revision; }   // bumps on every commit that changed something
+    // What its snapshots keep beyond its own pixels: tiles only they hold (raw or cold), and the
+    // encoded bytes of cold tiles.
+    size_t historyBytes() const;
+    uint64_t revision() const { return m_revision; }   // bumps on every change
 
-    // ---- history: the only two ways pixels change
-    // An edit through a RasterEditor, recorded: one commit, which flip() undoes and redoes
-    // (kNoRasterCommit if nothing changed).
-    RasterCommitId recordEdit(const std::function<void(RasterEditor&)>& body, EditSummary& summary);
-    const RasterHistory& history() const { return m_history; }
-    EditSummary flip(RasterCommitId id);   // undoes the commit, or redoes it if it is undone
+    // ---- the only two ways pixels change
+    EditSummary edit(const std::function<void(RasterEditor&)>& body);   // nothing touched: it changed nothing
+    EditSummary restore(const RasterSnapshot& s);   // as `s` holds it (one of its own snapshots): what differed
+
+    // ---- history
+    std::shared_ptr<const RasterSnapshot> snapshot() const;   // as it is now (between edits)
+    // Its own tiles and those of `near` (snapshots where history is now and around it) raw; every
+    // other one a snapshot holds cold. A little at a time: false while there's more to do.
+    bool keepWarm(std::span<const RasterSnapshot* const> near, const Deadline& until) const;
 
 private:
     friend class RasterEditor;
-    EditSummary applyStep(TileDelta& step);   // swaps every entry with the current tile
 
     RasterId m_id;
     TileGrid m_grid;
     BoundsI  m_bounds;    // of the pixels
-    RasterHistory m_history;
     RasterEditor* m_editor = nullptr;
     bool     m_pendingEdits = false;
     uint64_t m_revision = 0;
@@ -153,20 +174,10 @@ public:
         m_r.m_editor = nullptr;
     }
 
-    // Snapshot every tile before its first change into `step` (for undo).
-    void record(TileDelta* step)
-    {
-        assert(m_touched.empty() && "attach the recorder before the first edit");
-        m_rec = step;
-    }
-
     // --- wipe
     void clearAll()
     {
-        m_r.m_grid.forEachRead([&](int tx, int ty, const Tile& tile) {
-            const TileKey key = TileUtils::packKey(tx, ty);
-            if (m_touched.insert(key).second && m_rec) m_rec->remember(key, &tile);
-        });
+        m_r.m_grid.forEachRead([&](int tx, int ty, const Tile&) { m_touched.insert(TileUtils::packKey(tx, ty)); });
         m_r.m_grid.clear();
         m_lastTouched = kNoKey;
         m_r.m_pendingEdits = !m_touched.empty();
@@ -300,7 +311,6 @@ public:
         m_touched.clear();
         m_lastTouched = kNoKey;
         m_r.m_pendingEdits = false;
-        m_rec = nullptr;
         return out;
     }
 
@@ -308,34 +318,28 @@ private:
     RasterData& m_r;
     TileSet     m_touched;
     TileKey     m_lastTouched = kNoKey;   // skips the set lookup for runs of edits in one tile
-    TileDelta*  m_rec = nullptr;
 
-    template<class F> bool runEdit(int tx, int ty, Tile& t, bool existed, F&& f)
+    template<class F> bool runEdit(int tx, int ty, Tile& t, F&& f)
     {
         const TileKey k = TileUtils::packKey(tx, ty);
         const bool firstTouch = k != m_lastTouched && m_touched.insert(k).second;
-        if (firstTouch && m_rec) m_rec->remember(k, existed ? &t : nullptr);
-
         const bool changed = f(t);
         if (changed) m_lastTouched = k;
-        else if (firstTouch) {   // no-op edit: leave no trace
-            m_touched.erase(k);
-            if (m_rec) m_rec->forgetLast();
-        }
+        else if (firstTouch) m_touched.erase(k);   // no-op edit: leave no trace
         m_r.m_pendingEdits = !m_touched.empty();
         return changed;
     }
     template<class F> bool editExisting(int tx, int ty, F&& f)
     {
         Tile* t = m_r.m_grid.getWriteTile(tx, ty);
-        return t && runEdit(tx, ty, *t, true, f);
+        return t && runEdit(tx, ty, *t, f);
     }
     template<class F> bool editOrCreate(int tx, int ty, F&& f)
     {
         Tile* t = m_r.m_grid.getWriteTile(tx, ty);
         const bool created = !t;
         if (created) t = &m_r.m_grid.writeOrCreateTile(tx, ty);
-        const bool changed = runEdit(tx, ty, *t, !created, f);   // on throw: the empty tile stays, commit() frees it
+        const bool changed = runEdit(tx, ty, *t, f);   // on throw: the empty tile stays, commit() frees it
         if (!changed && created) m_r.m_grid.freeTile(tx, ty);
         return changed;
     }
@@ -354,41 +358,58 @@ inline void lift(TileReader& src, const BoundsI& rect, TileGrid& out)
     });
 }
 
-// Swaps every entry of `step` with the raster's current tile (undo and redo alike).
-inline EditSummary RasterData::applyStep(TileDelta& step)
+// ---- RasterData: edits and history
+
+inline EditSummary RasterData::edit(const std::function<void(RasterEditor&)>& body)
 {
-    RasterEditor ed(*this);   // no recorder: undo itself isn't recorded
-    for (TileDelta::Entry& e : step.entries) {
-        const auto [tx, ty] = TileUtils::unpackKey(e.key);
-
-        std::unique_ptr<Tile> now;   // what's there right now
-        if (const Tile* cur = getReadTile(tx, ty)) {
-            now = std::make_unique<Tile>();
-            now->copyFrom(*cur);
-        }
-        if (e.state) ed.applyTile(tx, ty, *e.state, { 255, CompositeMode::Replace });
-        else         ed.eraseTile(tx, ty);
-
-        e.state = std::move(now);   // the entry now holds the opposite state
-    }
+    RasterEditor ed(*this);
+    body(ed);
     return ed.commit();
 }
 
-// ---- RasterData: history
-
-inline RasterCommitId RasterData::recordEdit(const std::function<void(RasterEditor&)>& body, EditSummary& summary)
+inline std::shared_ptr<const RasterSnapshot> RasterData::snapshot() const
 {
-    TileDelta delta;
-    {
-        RasterEditor ed(*this);
-        ed.record(&delta);
-        body(ed);
-        summary = ed.commit();
-    }
-    return m_history.add(std::move(delta));
+    assert(!m_pendingEdits);
+    return std::make_shared<const RasterSnapshot>(RasterSnapshot{ m_grid, m_bounds });
 }
 
-inline EditSummary RasterData::flip(RasterCommitId id)
+inline EditSummary RasterData::restore(const RasterSnapshot& s)
 {
-    return applyStep(m_history.at(id));
+    assert(!m_editor && m_grid.sharesPoolWith(s.tiles) && "one of its own snapshots, between edits");
+    EditSummary out;
+    m_grid.forEachDifferent(s.tiles, [&](int tx, int ty) { out.touched.insert(TileUtils::packKey(tx, ty)); });
+    if (out.touched.empty()) return out;
+    m_grid = s.tiles;
+    for (TileKey k : out.touched) {   // its own tiles are raw: the ones it takes from the snapshot decoded now
+        const auto [tx, ty] = TileUtils::unpackKey(k);
+        (void)m_grid.getReadTile(tx, ty);
+    }
+    out.boundsChanged = m_bounds != s.bounds;
+    m_bounds = s.bounds;
+    out.revision = ++m_revision;
+    return out;
+}
+
+inline size_t RasterData::historyBytes() const
+{
+    const TilePool& pool = m_grid.pool();
+    return pool.rawBytes() - std::min(pool.rawBytes(), m_grid.bytes()) + pool.coldBytes();
+}
+
+inline bool RasterData::keepWarm(std::span<const RasterSnapshot* const> near, const Deadline& until) const
+{
+    TilePool& pool = m_grid.pool();
+    absl::flat_hash_set<TileId> warm;
+    m_grid.forEachTileId([&](TileId id) { warm.insert(id); });
+    for (const RasterSnapshot* s : near) s->tiles.forEachTileId([&](TileId id) { warm.insert(id); });
+    bool done = true;
+    pool.forEachHeld([&](TileId id) {
+        if (!done) return;
+        const bool want = warm.contains(id);
+        if (want == pool.isRaw(id)) return;
+        if (until.expired()) { done = false; return; }
+        if (want) pool.warm(id);
+        else      pool.cool(id);
+    });
+    return done;
 }

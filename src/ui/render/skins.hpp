@@ -50,4 +50,11 @@ void colorMarker(const Painter& p, const Style::ColorPickerStyle& s, ImVec2 at, 
 // ---- the Toolbox's tool buttons: the button; the tool draws its own icon on it
 void toolButton(const Painter& p, const Style::ToolButtonStyle& s, ImVec2 a, ImVec2 b, bool selected, bool hot);
 
+// ---- the documents' strip: a tab, its name from the left, its mark at the right end (padding
+// before it): the close cross, a dot in its place while it's unsaved, the cross in a box while
+// the mouse is on it
+enum class TabMark : unsigned char { Close, Unsaved, CloseHot };
+void documentTab(const Painter& p, const Style::DocumentTabStyle& s, ImVec2 a, ImVec2 b, bool shown, bool hot, const char* name,
+                 TabMark mark);
+
 }

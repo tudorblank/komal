@@ -61,16 +61,15 @@ void StrokeSession::discard()
     m_log.clear();
 }
 
-RasterCommitRef StrokeSession::end(GraphKey key)
+bool StrokeSession::end(GraphKey key)
 {
-    if (!active()) return {};
+    if (!active()) return false;
     PerfScope perf(Perf::Stroke);
     const std::shared_ptr<RasterRootNode> raster = std::exchange(m_raster, nullptr);
-    RasterCommitId commit = kNoRasterCommit;
+    bool changed = false;
     if (!m_touched.empty())   // the whole stroke over the raster's pixels, once
-        commit = raster->recordEdit(key, [&](RasterEditor& ed) { applyStroke(ed, raster->raster(), m_stroke, m_touched); });
+        changed = raster->edit(key, [&](RasterEditor& ed) { applyStroke(ed, raster->raster(), m_stroke, m_touched); });
     m_stroke.end();
     m_log.clear();
-    if (commit == kNoRasterCommit) return {};
-    return { raster->raster().id(), commit };
+    return changed;
 }

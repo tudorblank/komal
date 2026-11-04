@@ -131,6 +131,30 @@ struct ToolButtonStyle {
     float iconSize;               // of the button
 };
 
+// The strip of open documents under the toolbar: a tab each, the one shown lighter.
+struct DocumentTabStyle {
+    float height;                 // the strip's
+    float tabHeight;
+    float margin;                 // before the first tab (the toolbar's, so they line up)
+    float padding, gap;           // a tab's name's room on each side; between tabs
+    float mark;                   // the close cross's (or unsaved dot's) box, after the name
+    float minWidth, maxWidth;     // a tab's (its name cut short to fit)
+    float rounding;
+    ImU32 bar;                    // the toolbar's: one band with it
+    ImU32 shown, hot;
+    ImU32 text, textShown;
+    ImU32 markHot;                // under the close cross while the mouse is on it
+};
+
+// What the window shows while no document is open: the face, the buttons under it.
+struct IntroStyle {
+    float face;          // its width
+    float gap;           // between it and the buttons, and between them
+    float buttonWidth;
+    float lift;          // of the whole, from the middle (a share of the space left)
+    ImU32 back, tint;    // the face is a mask, drawn in `tint`
+};
+
 // A message in the window's corner.
 struct NoticeStyle {
     float padding, gap, maxWidth, rounding, markWidth;
@@ -150,7 +174,7 @@ struct HistoryStyle {
     float rowHeight, laneWidth, dot, line, ring;
     float labelGap, labelRoom, numberPadding, rounding;
     ImU32 here, ahead, other;     // the way back to the start, redo's way on, the rest
-    ImU32 text, textDim, rowHot, hollow;
+    ImU32 text, textDim, rowHot, rowPicked, hollow;
 };
 
 // A map of the picture with the view on it (the navigator).
@@ -221,6 +245,8 @@ struct Styles {
     FigureSliderStyle   figureSlider;
     GradientSliderStyle gradientSlider;
     ToolButtonStyle     toolButton;
+    DocumentTabStyle    documentTab;
+    IntroStyle          intro;
     NoticeStyle         notice;
     HudStyle            hud;
     HistoryStyle        history;

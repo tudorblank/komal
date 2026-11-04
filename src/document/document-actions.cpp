@@ -60,6 +60,10 @@ void registerDocumentActions(ActionRegistry& actions, Workspace& workspace)
     actions.add({ .id = Actions::HistoryGoTo, .title = "Go to History Step", .kind = K::DocumentEdit, .args = { Arg::integer(kStep, 0) },
                   .undoStep = false, .enabled = [&p] { return !p.strokeActive() && p.history().size() > 1; },
                   .run = [&p](const ActionArgs& a) { return p.goToHistory(a.get(kStep)); } });
+    // Steps gone for good, never a step itself: nothing undoes it.
+    actions.add({ .id = Actions::HistoryDelete, .title = "Delete History Steps", .kind = K::DocumentEdit, .args = { Arg::ids(kSteps) },
+                  .undoStep = false, .enabled = [&p] { return !p.strokeActive() && p.history().size() > 1; },
+                  .run = [&p](const ActionArgs& a) { return p.deleteHistory(a.get(kSteps)); } });
 
     // ---------------------------------------------------------------- nodes
     // Optionally fed from `from` (into its natural input), or feeding `into` at `slot`.

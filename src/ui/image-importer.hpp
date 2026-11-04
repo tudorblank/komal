@@ -37,6 +37,7 @@ public:
     void open(std::string path);   // ToMaster
     void open(std::string path, Placement placement);
     Polled poll(ActionRegistry& actions);   // once per frame, main thread
+    bool ready() const;   // the next poll makes a node: a document has to be open for it
 
 private:
     struct Request { std::string path; Placement placement; };

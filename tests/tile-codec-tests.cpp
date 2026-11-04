@@ -64,7 +64,7 @@ TEST_CASE("a tile in its smallest form: empty, solid, packed, raw; read back to 
     Tile stroke;     // a brush disc's edge: mostly empty, a soft rim
     paint(stroke, [](int x, int y) {
         const float d = std::sqrt(float((x - 10) * (x - 10) + (y - 50) * (y - 50)));
-        const uint8_t a = d < 30.0f ? 255 : d < 38.0f ? uint8_t(255.0f * (38.0f - d) / 8.0f) : 0;
+        const uint8_t a = d < 30.0f ? uint8_t(255) : d < 38.0f ? uint8_t(255.0f * (38.0f - d) / 8.0f) : uint8_t(0);
         return RGBA{ a, uint8_t(a / 2), 0, a };
     });
     const size_t s = encoded(stroke).size();

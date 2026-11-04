@@ -236,7 +236,7 @@ TEST_CASE("documents save to their file and open from one: named after it, saved
     ActionRegistry actions;
     registerDocumentsActions(actions, docs);
 
-    Document& doc = docs.active();
+    Document& doc = docs.create();
     REQUIRE(doc.actions().run(Actions::NodeAdd, { { DocArgs::kType, "raster" }, { DocArgs::kX, 0.0f }, { DocArgs::kY, 0.0f } }));
     CHECK(doc.unsaved());
     const ActionResult noFile = actions.run(Actions::DocSave);
@@ -255,7 +255,7 @@ TEST_CASE("documents save to their file and open from one: named after it, saved
     registerDocumentsActions(otherActions, other);
     const ActionResult opened = otherActions.run(Actions::DocOpen, { { DocArgs::kPath, path } });
     REQUIRE_MESSAGE(opened, opened.why);
-    CHECK(other.size() == 1);   // over the blank slate
+    CHECK(other.size() == 1);
     CHECK(other.active().name() == "round trip ü");
     CHECK_FALSE(other.active().unsaved());
     CHECK(other.active().workspace().history().size() == 1);

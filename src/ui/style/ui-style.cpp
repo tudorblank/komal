@@ -87,6 +87,25 @@ Styles build(const Metrics& m)
     s.toolButton.rounding     = m.frameRounding;
     s.toolButton.iconSize     = 0.62f;
 
+    DocumentTabStyle& d = s.documentTab;
+    d.tabHeight = std::round(font * 1.65f);
+    d.height    = d.tabHeight + 2.0f * std::round(font * 0.25f);
+    d.margin    = s.toolButton.padding * 2.0f;
+    d.padding   = std::round(font * 0.7f);
+    d.gap       = std::round(font * 0.15f);
+    d.mark      = std::round(font * 1.1f);
+    d.minWidth  = font * 4.0f;
+    d.maxWidth  = font * 16.0f;
+    d.rounding  = m.frameRounding;
+    d.bar       = packed(pal.bar);
+    d.shown     = packed(pal.tabShown);
+    d.hot       = packed(pal.tabHot);
+    d.text      = packed(pal.text);
+    d.textShown = packed(pal.tabShownText);
+    d.markHot   = packed(pal.buttonHot);
+
+    s.intro = { std::round(font * 13.0f), std::round(font * 1.6f), std::round(font * 6.0f), 0.15f, packed(pal.introBack), packed(pal.introFace) };
+
     s.notice = { font * 0.6f, font * 0.4f, font * 28.0f, font * 0.3f, font * 0.2f, packed(pal.noticeBack), packed(pal.noticeMark), packed(pal.hudText) };
     s.hud    = { ImVec2(8.0f, 6.0f), ImVec2(4.0f, 2.0f), 3.0f, packed(pal.hudBack), packed(pal.hudText) };
 
@@ -105,6 +124,7 @@ Styles build(const Metrics& m)
     s.history.text          = packed(pal.text);
     s.history.textDim       = packed(pal.textDim);
     s.history.rowHot        = packed(pal.rowHot);
+    s.history.rowPicked     = packed(pal.row);
     s.history.hollow        = packed(pal.panel);
 
     s.map = { 6.0f * u, 60.0f, m.frameRounding, packed(pal.bar), packed(pal.emptyArea), packed(pal.viewOutline), packed(pal.textDim), 1.5f, 2.5f * u, 2.0f };

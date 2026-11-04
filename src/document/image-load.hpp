@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 
 constexpr uint64_t kMaxImagePixels = uint64_t(1) << 28;   // 16384 x 16384: a gigabyte decoded
@@ -20,10 +21,11 @@ public:
     void release();
 
 private:
-    friend bool loadImageFile(const std::string& path, DecodedImage& out, std::string& error);
+    friend bool loadImageBytes(std::span<const uint8_t> file, DecodedImage& out, std::string& error);
     struct Free { void operator()(uint8_t* pixels) const; };
     std::unique_ptr<uint8_t, Free> m_pixels;
     int m_width = 0, m_height = 0;
 };
 
 bool loadImageFile(const std::string& path, DecodedImage& out, std::string& error);
+bool loadImageBytes(std::span<const uint8_t> file, DecodedImage& out, std::string& error);   // a file's bytes, in memory

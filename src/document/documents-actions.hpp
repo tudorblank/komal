@@ -1,8 +1,8 @@
 #pragma once
 // The open documents, as actions (Documents changes only through these): logged, never undone.
 //
-//   doc.new        a new blank one, active (the active one is blank already: it stays). made: its id
-//   doc.close      one (the active one if none is given). An unsaved one is refused unless
+//   doc.new        a new blank one, active. made: its id
+//   doc.close      one (the active one if none is given; the last one: none left). An unsaved one is refused unless
 //                  discard is on: whoever drives it asks first (the interface: file.close)
 //   doc.activate   another one active
 //   doc.save       one (the active one if none is given) to its file, or to `path` (then that's

@@ -5,7 +5,7 @@
 //
 //   stroke.begin(params, point);                                // first dab
 //   stroke.moveTo(point);                                       // dabs along the segment, spaced by params.spacing
-//   raster.recordEdit([&](RasterEditor& ed) { applyStroke(ed, raster, stroke, tiles); }, summary);   // one commit
+//   raster.edit([&](RasterEditor& ed) { applyStroke(ed, raster, stroke, tiles); });   // one edit
 //   stroke.end();
 //
 // Pressure (1 for a mouse) can scale dab size and flow, interpolated along each segment.

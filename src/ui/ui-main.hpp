@@ -7,8 +7,10 @@
 // It's a shell over the open documents (Documents): it holds the app's own actions (the app's,
 // the panels', the tools', the colours': none of them a document's) and hands the rest to the
 // active document's registry. Switching documents switches everything to that one: the canvas
-// (one per document, tabs), the graph, the navigator, the history. The colours and the tools
-// stay: they're the app's. Closing an unsaved document, or quitting with one, asks first.
+// (one per document), the graph, the navigator, the history. The colours and the tools stay:
+// they're the app's. Closing an unsaved document, or quitting with one, asks first. With none
+// open (at the start, after the last one closed) the bars stay and the intro takes the dock
+// area: no panel of it draws.
 //
 // The open documents change between frames, never while one is drawn: what a frame drew with (a
 // canvas's picture, a thumbnail) must last until it's shown. The doc.* actions the interface runs
@@ -33,6 +35,7 @@
 #include "command/actions.hpp"
 #include "document/documents.hpp"
 #include "ui/dockspace.hpp"
+#include "ui/panels/intro-panel.hpp"
 #include "ui/input-owner.hpp"
 #include "ui/image-importer.hpp"
 #include "ui/notices.hpp"
@@ -91,6 +94,8 @@ private:
     };
 
     template<class T> T* addPanel();
+    // The bars always; the dock area's panels only with a document open (the intro's in their place).
+    bool drawn(const PanelEntry& e) const;
     void drawMenuBar();
     void registerAppActions();   // ui/app-actions.cpp: every app-state action
     void dispatchDrops();
@@ -98,7 +103,13 @@ private:
     void registerDocumentRequests();   // doc.* here: each asks for its change, made between frames
     void applyDocumentRequests();      // ... the changes asked for, before anything is drawn
     void takeInbox();                  // the files that came from other threads, as document requests
-    void drawConfirm();          // closing or quitting with unsaved changes: asked first
+    void settleHistories();            // once a frame, last: history's pixels warmed and cooled (Workspace::settleHistory)
+    // ---- unsaved changes: asked first, one document at a time (closing it, or quitting with it)
+    void ask(DocumentId document, bool quitting);
+    void askNextBeforeQuit();       // the next unsaved one not answered yet; none left: quit
+    void answered(bool saved);      // its "Yes" saved it (or didn't): on to what was waiting
+    void stopAsking();              // Cancel: nothing closes, no quitting
+    void drawConfirm();
 
     ActionRegistry m_actions;   // the app's own; the active document's through it (delegateTo)
     Documents*     m_documents = nullptr;
@@ -109,7 +120,6 @@ private:
     std::mutex m_inboxLock;
     std::vector<std::string> m_toOpen;
     std::vector<std::pair<DocumentId, std::string>> m_toSave;
-    DocumentId m_closeAfterSave = kNoDocument;   // the unsaved-changes question answered "Save": closed once it is
     ToolManager    m_tools;     // before the panels that use it
     InputOwner     m_owner;     // who has the keyboard this frame
     CanvasEngine   m_canvas;    // ... and what canvas views draw with
@@ -120,6 +130,7 @@ private:
     CanvasPanel* m_canvasPanel = nullptr;   // in m_panels: the ones a drop can land on
     GraphPanel*  m_graphPanel  = nullptr;
     Dockspace    m_dockspace;
+    IntroPanel   m_intro;   // with no document open, in its place
 
     ImageImporter       m_importer;
     Notices             m_notices;
@@ -129,9 +140,15 @@ private:
     const InputFrame*   m_input = nullptr;
     const HostInfo*     m_host  = nullptr;
 
-    // What waits for the user's yes: a document closed, or the app quit, with unsaved changes.
-    struct Confirm { bool quit = false; DocumentId document = kNoDocument; };
-    std::optional<Confirm> m_confirm;
+    // "Save changes to <name> before closing / quitting?" Yes: saved (asked where, if it has no
+    // file yet), then closed or on to the next; No: closed unsaved, or left as it is; Cancel: stop.
+    struct Confirm { bool quitting = false; DocumentId document = kNoDocument; };
+    std::optional<Confirm> m_confirm;   // asked now
+    std::optional<Confirm> m_saving;    // answered Yes: waits for its save
+    bool m_quitting = false;            // asking about each unsaved one in turn, then quitting
+    std::vector<DocumentId> m_keptUnsaved;   // ... answered No so far
+
+    static constexpr Clock::Milliseconds kHistoryShare{ 2.0 };   // a frame's time for that, at most
 
     bool m_initialized = false;
     bool m_quit = false;

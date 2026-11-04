@@ -8,7 +8,7 @@
 //   doc.actions().run(Actions::NodeAdd, { { DocArgs::kType, "move" }, { DocArgs::kX, 0.0f }, { DocArgs::kY, 0.0f } });
 //
 // Its file: where it was opened from or last saved to, and the history step it held then.
-//   blank    never edited and no file: a blank slate, replaced without asking
+//   blank    never edited and no file: a blank slate, nothing to lose
 //   unsaved  its history isn't at the step its file holds (undone back to it: saved again);
 //            closing it asks first. A blank slate never is.
 //

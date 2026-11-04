@@ -17,9 +17,7 @@ RGBA pixel(const RasterData& r, int x, int y)
 
 EditSummary edit(RasterData& r, const std::function<void(RasterEditor&)>& body)
 {
-    EditSummary s;
-    (void)r.recordEdit(body, s);
-    return s;
+    return r.edit(body);
 }
 
 }
@@ -100,7 +98,7 @@ TEST_CASE("tile grid: tiles anywhere, pages that go when empty, readers across p
     CHECK(g.getReadTile(16, 0) == nullptr);
 }
 
-TEST_CASE("raster edits: bounds grow, shrink to what's left, and undo flips both")
+TEST_CASE("raster edits: bounds grow, shrink to what's left, and a snapshot restored brings both back")
 {
     RasterData r(RasterId(0));
     CHECK(r.getBounds().empty());
@@ -110,38 +108,69 @@ TEST_CASE("raster edits: bounds grow, shrink to what's left, and undo flips both
         ed.setPixel(30, 30, RGBA{ 255, 255, 255, 255 });
     });
     CHECK(r.getBounds() == BoundsI{ -5, -70, 200, 30 });
+    const auto all = r.snapshot();
 
     // Erasing an extreme pixel shrinks the bounds to the pixels left (the recompute path).
-    EditSummary s;
-    const RasterCommitId erase = r.recordEdit([](RasterEditor& ed) { ed.erasePixel(200, -70); }, s);
+    const EditSummary s = edit(r, [](RasterEditor& ed) { ed.erasePixel(200, -70); });
     CHECK(s.boundsChanged);
     CHECK(r.getBounds() == BoundsI{ -5, 10, 30, 30 });
+    const auto erased = r.snapshot();
     // Erasing inside changes nothing at the edges.
     const uint64_t rev = r.revision();
     edit(r, [](RasterEditor& ed) { ed.setPixel(10, 20, RGBA{ 9, 9, 9, 255 }); });
     CHECK(r.getBounds() == BoundsI{ -5, 10, 30, 30 });
     CHECK(r.revision() == rev + 1);
 
-    // An edit that changes nothing leaves no commit and no revision.
-    EditSummary none;
-    CHECK(r.recordEdit([](RasterEditor& ed) { ed.erasePixel(1000, 1000); }, none) == kNoRasterCommit);
+    // An edit that changes nothing touches nothing and leaves the revision.
+    CHECK(edit(r, [](RasterEditor& ed) { ed.erasePixel(1000, 1000); }).touched.empty());
     CHECK(r.revision() == rev + 1);
 
-    // Undo the erase: the corner comes back, bounds too; redo takes it again.
-    r.flip(erase);
+    // Back to before the erase: the corner comes back, bounds too; only the tiles that differ are told.
+    const EditSummary back = r.restore(*all);
     CHECK(pixel(r, 200, -70).a == 255);
+    CHECK(pixel(r, 10, 20).a == 0);
     CHECK(r.getBounds() == BoundsI{ -5, -70, 200, 30 });
-    r.flip(erase);
+    CHECK(back.boundsChanged);
+    CHECK(back.touched.size() == 2);   // the corner's tile, and the tile painted after
+    CHECK(r.restore(*all).touched.empty());   // already there: nothing
+    r.restore(*erased);
     CHECK(pixel(r, 200, -70).a == 0);
     CHECK(r.getBounds() == BoundsI{ -5, 10, 30, 30 });
 
-    // Clearing everything empties it; its undo brings every tile back.
-    const RasterCommitId cleared = r.recordEdit([](RasterEditor& ed) { ed.clearAll(); }, s);
+    // Clearing everything empties it; its snapshot from before brings every tile back.
+    const auto beforeClear = r.snapshot();
+    edit(r, [](RasterEditor& ed) { ed.clearAll(); });
     CHECK(r.getBounds().empty());
     CHECK(r.tileCount() == 0);
-    r.flip(cleared);
+    r.restore(*beforeClear);
     CHECK(r.getBounds() == BoundsI{ -5, 10, 30, 30 });
-    CHECK(pixel(r, 10, 20).r == 9);
+    CHECK(pixel(r, 30, 30).a == 255);
+}
+
+TEST_CASE("history keeps cold what's far from it: snapshots' own tiles encoded, a little at a time")
+{
+    RasterData r(RasterId(0));
+    std::vector<std::shared_ptr<const RasterSnapshot>> steps;
+    for (int i = 0; i < 8; ++i) {   // eight snapshots, each with a few tiles of its own
+        edit(r, [&](RasterEditor& ed) {
+            for (int t = 0; t < 4; ++t)
+                for (int y = 0; y < 64; y += 3) ed.setPixel(t * 64 + i, y, RGBA{ uint8_t(i * 30), 0, 0, 255 });
+        });
+        steps.push_back(r.snapshot());
+    }
+    const size_t hot = r.historyBytes();
+    const RasterSnapshot* near[] = { steps[7].get() };   // history is at the last one
+    while (!r.keepWarm(near, Deadline::in(Clock::Seconds(1.0)))) {}
+    CHECK(r.historyBytes() < hot / 10);   // the others' tiles: their bytes only
+
+    // Going back to a cold one: decoded, the same pixels.
+    r.restore(*steps[2]);
+    CHECK(pixel(r, 2, 0) == RGBA{ 60, 0, 0, 255 });
+    CHECK(pixel(r, 7, 0).a == 0);
+    const RasterSnapshot* nowNear[] = { steps[2].get(), steps[3].get() };
+    while (!r.keepWarm(nowNear, Deadline::in(Clock::Seconds(1.0)))) {}
+    r.restore(*steps[3]);   // warm already
+    CHECK(pixel(r, 3, 3) == RGBA{ 90, 0, 0, 255 });
 }
 
 TEST_CASE("pasting with a shift: whole tiles, parts of tiles, negative ways")
@@ -220,16 +249,70 @@ TEST_CASE("alpha lock: a stroke recolours, never changes alpha")
     CHECK(out.getReadPx(6, 6) == transparent());   // nothing there before: nothing now
 }
 
-TEST_CASE("a tile pool gives a block back once all its tiles are free, and makes it again")
+TEST_CASE("a grid's copy is a snapshot: shared until either writes, then only what's touched is copied")
 {
-    TileGrid g;
-    for (int i = 0; i < 40; ++i) TileEdit::fill(g.writeOrCreateTile(i, 0), RGBA{ 1, 2, 3, 255 });
-    CHECK(g.bytes() == 48 * sizeof(Tile));   // three blocks of 16
-    for (int i = 0; i < 16; ++i) CHECK(g.freeTile(i, 0));
-    CHECK(g.bytes() == 32 * sizeof(Tile));   // the first block's tiles all went: so did it
-    for (int i = 16; i < 40; ++i) CHECK(g.getReadTile(i, 0)->getReadPx(0, 0) == RGBA{ 1, 2, 3, 255 });   // the rest untouched
-    TileEdit::fill(g.writeOrCreateTile(100, 0), RGBA{ 9, 9, 9, 255 });   // reuses a freed id: its block again
-    CHECK(g.bytes() == 48 * sizeof(Tile));
-    CHECK(g.getReadTile(100, 0)->getReadPx(5, 5) == RGBA{ 9, 9, 9, 255 });
-    CHECK(g.size() == 25);
+    TileGrid live;
+    for (int i = 0; i < 40; ++i) TileEdit::fill(live.writeOrCreateTile(i, 0), RGBA{ 1, 2, 3, 255 });
+    TilePool& pool = live.pool();
+    CHECK(pool.liveCount() == 40);
+
+    const TileGrid before = live;                 // shares every page and tile
+    CHECK(pool.liveCount() == 40);
+    CHECK(before.size() == 40);
+    TileEdit::fill(live.writeOrCreateTile(5, 0), RGBA{ 9, 9, 9, 255 });   // that one tile copied
+    CHECK(pool.liveCount() == 41);
+    CHECK(before.getReadTile(5, 0)->getReadPx(0, 0) == RGBA{ 1, 2, 3, 255 });   // the snapshot as it was
+    CHECK(live.getReadTile(5, 0)->getReadPx(0, 0) == RGBA{ 9, 9, 9, 255 });
+    CHECK(before.getReadTile(6, 0) == live.getReadTile(6, 0));               // the rest: the very same tile
+
+    std::vector<std::pair<int, int>> different;
+    live.forEachDifferent(before, [&](int tx, int ty) { different.push_back({ tx, ty }); });
+    CHECK(different == std::vector<std::pair<int, int>>{ { 5, 0 } });
+
+    CHECK(live.freeTile(7, 0));                   // gone from the live grid only
+    CHECK(before.getReadTile(7, 0));
+    CHECK(pool.liveCount() == 41);                // the snapshot still holds it
+    live.writeOrCreateTile(100, 0);
+    TileGrid empty;
+    {
+        TileGrid gone = before;                   // another snapshot, let go of
+        TileEdit::fill(gone.writeOrCreateTile(1, 0), RGBA{ 4, 4, 4, 255 });
+    }
+    CHECK(before.getReadTile(1, 0)->getReadPx(0, 0) == RGBA{ 1, 2, 3, 255 });
+
+    // A grid moved from is an empty one, ready to use.
+    TileGrid moved = std::move(empty);
+    TileEdit::fill(empty.writeOrCreateTile(0, 0), RGBA{ 7, 7, 7, 255 });
+    CHECK(empty.size() == 1);
+    CHECK(moved.size() == 0);
+}
+
+TEST_CASE("tiles go cold (their bytes) and warm again (decoded), encoded once; the last holder frees them")
+{
+    TilePool pool;
+    const TileId id = pool.allocate();
+    Tile& t = pool.getWrite(id);
+    for (int i = 0; i < 64; ++i) t.setPx(i, i, RGBA{ uint8_t(i), 0, uint8_t(i), 255 });
+    t.settle();
+    CHECK(pool.rawBytes() == sizeof(Tile));
+
+    pool.cool(id);
+    CHECK_FALSE(pool.isRaw(id));
+    CHECK(pool.rawBytes() == 0);
+    CHECK(pool.coldBytes() > 0);
+    CHECK(pool.coldBytes() < sizeof(Tile) / 10);
+    const size_t bytes = pool.coldBytes();
+    CHECK(pool.getRead(id).getReadPx(40, 40) == RGBA{ 40, 0, 40, 255 });   // raw again, the same pixels
+    CHECK(pool.isRaw(id));
+    pool.cool(id);                                                         // its bytes kept: not encoded again
+    CHECK(pool.coldBytes() == bytes);
+    pool.getWrite(id).setPx(0, 1, RGBA{ 5, 5, 5, 255 });                  // written: its bytes are stale, gone
+    CHECK(pool.coldBytes() == 0);
+
+    pool.hold(id);                                                         // two holders
+    pool.release(id);
+    CHECK(pool.liveCount() == 1);
+    pool.release(id);                                                      // the last one: freed
+    CHECK(pool.liveCount() == 0);
+    CHECK(pool.rawBytes() == 0);
 }

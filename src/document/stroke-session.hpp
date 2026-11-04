@@ -6,7 +6,7 @@
 //
 //   if (stroke.begin(raster, params, at)) ...   // started (the first dab stamped, if any)
 //   if (stroke.moveTo(path)) ...                // through every point: true if it stamped
-//   const RasterCommitRef c = stroke.end(key);  // the commit, if the pixels changed
+//   if (stroke.end(key)) ...                   // the pixels changed
 //   stroke.discard();                           // or nothing: the raster never changed
 
 #include "document/history.hpp"
@@ -26,7 +26,7 @@ public:
     // On `raster`, keeping its transparency if it's alpha-locked. False if one is going (end it first).
     bool begin(std::shared_ptr<RasterRootNode> raster, const BrushParams& params, StrokePoint at);
     bool moveTo(std::span<const StrokePoint> path);   // false: nothing new stamped
-    RasterCommitRef end(GraphKey key);   // {} if no stroke, or the pixels didn't change
+    bool end(GraphKey key);   // false if no stroke, or the pixels didn't change
     void discard();                      // ends it without touching the raster
 
     // ---- while active, for the preview

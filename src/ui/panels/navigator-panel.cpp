@@ -68,6 +68,7 @@ PanelInfo Navigator::info() const { return { Actions::ViewNavigator, "Navigator"
 
 bool Navigator::init()
 {
+    if (ui().documents.empty()) return true;   // made as one is shown (Activated)
     m_preview   = &ui().canvas.preview();
     m_pipelines = &ui().canvas.pipelines();
     m_ready = ui().canvas.ready() && m_scene.init(ui().canvas.pipelines()) && m_view.init(m_scene);

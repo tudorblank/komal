@@ -5,6 +5,7 @@
 
 #include "helpers.hpp"
 
+#include <algorithm>
 #include <map>
 #include <random>
 #include <string>
@@ -214,6 +215,9 @@ TEST_CASE("history under random use: every step comes back exactly as it was")
         std::map<StepId, std::string> seen;   // each step, as it was when made
         seen[p.history().current()] = fingerprint(p);
         for (int i = 0; i < 160; ++i) {
+            // History's pixels cooled and warmed as the app does between frames: a sliver at a
+            // time, so steps come back from cold, half-cold and warm tiles alike.
+            p.settleHistory(Deadline::in(Clock::Seconds(f.unit() * 0.002)));
             if (i < 40 || f.unit() < 0.5f) {   // an edit: a new step, maybe a new branch
                 const StepId before = p.history().current();
                 f.edit();
@@ -222,10 +226,28 @@ TEST_CASE("history under random use: every step comes back exactly as it was")
                 else REQUIRE(fingerprint(p) == seen[before]);   // no step: nothing changed
                 continue;
             }
-            const int how = f.pick(3);
+            const int how = f.pick(4);
             if (how == 0) p.undo();
             else if (how == 1) p.redo();
-            else p.goToHistory(StepId(f.pick(int(p.history().size()))));
+            else if (how == 2) p.goToHistory(StepId(f.pick(int(p.history().size()))));
+            else if (p.history().size() > 2) {   // a few steps deleted for good: the rest numbered again, in order
+                std::vector<StepId> gone;
+                for (int k = 1 + f.pick(3); k > 0; --k) gone.push_back(StepId(1 + f.pick(int(p.history().size()) - 1)));
+                std::map<StepId, std::string> kept;
+                const StepId current = p.history().current();
+                StepId stay = current;   // where it'll be: up off a step that goes
+                while (std::find(gone.begin(), gone.end(), stay) != gone.end()) stay = p.history().parent(stay);
+                REQUIRE(p.deleteHistory(gone));
+                uint32_t next = 0;
+                for (const auto& [step, print] : seen)
+                    if (std::find(gone.begin(), gone.end(), step) == gone.end()) kept[StepId(next++)] = print;
+                seen = std::move(kept);
+                const StepId at = p.history().current();
+                REQUIRE(seen.contains(at));
+                CHECK(fingerprint(p) == seen[at]);   // where it went (or stayed): exactly as it was
+                (void)stay;
+                continue;
+            }
             const StepId at = p.history().current();
             REQUIRE(p.artboardsMatchStack());
             REQUIRE(seen.contains(at));

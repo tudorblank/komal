@@ -1,7 +1,6 @@
 #include "canvas-panel.hpp"
 #include "ui/input-owner.hpp"
 #include "document/document-actions.hpp"
-#include "document/documents-actions.hpp"
 #include "ui/render/painter.hpp"
 #include "ui/style/ui-style.hpp"
 #include "ui/panels/canvas/canvas-engine.hpp"
@@ -33,6 +32,7 @@ PanelInfo CanvasPanel::info() const { return { Actions::ViewCanvas, "Canvas", Do
 
 bool CanvasPanel::init()
 {
+    if (ui().documents.empty()) return ui().canvas.ready();   // a canvas is made as one is shown
     show(ui().documents.active().id());
     return m_canvas && m_canvas->ready;
 }
@@ -128,7 +128,7 @@ void CanvasPanel::restoreGpu()
     m_canvas = nullptr;
     std::erase_if(m_canvases, [](const auto& c) { return !c->output; });   // never made (no GPU then): made as they're shown
     for (const auto& c : m_canvases) makeGpu(*c);
-    show(ui().documents.active().id());
+    if (!ui().documents.empty()) show(ui().documents.active().id());
 }
 
 void CanvasPanel::shutdown()
@@ -149,7 +149,6 @@ void CanvasPanel::draw()
 
     const Widgets::PanelWindow window(*this, ui().actions, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse,
                                       Widgets::PanelWindow::Padding::None);
-    if (window) drawTabs();
     if (window && m_canvas && m_canvas->ready) {
         CanvasView& view = m_canvas->view;
         const ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -173,38 +172,6 @@ void CanvasPanel::draw()
         }
     }
     if (!m_visible) tellSize({});   // collapsed, tabbed away
-}
-
-void CanvasPanel::drawTabs()
-{
-    // ImGui shows a tab picked in code from the next frame on: until it does, what it shows isn't a pick.
-    const Documents& docs = ui().documents;
-    const DocumentId active = docs.active().id();
-    if (active != m_tabActive) m_tabAsked = active;   // switched elsewhere (a key, the menu): its tab follows
-    m_tabActive = active;
-    DocumentId shown = kNoDocument, closed = kNoDocument;
-    if (ImGui::BeginTabBar("##documents", ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_NoTooltip)) {
-        for (const auto& d : docs.all()) {
-            char label[160];
-            std::snprintf(label, sizeof label, "%s###document%u", d->name().c_str(), unsigned(d->id()));
-            ImGuiTabItemFlags flags = d->unsaved() ? ImGuiTabItemFlags_UnsavedDocument : ImGuiTabItemFlags_None;
-            if (d->id() == m_tabAsked) flags |= ImGuiTabItemFlags_SetSelected;
-            bool open = true;
-            if (ImGui::BeginTabItem(label, &open, flags)) {
-                shown = d->id();
-                ImGui::EndTabItem();
-            }
-            if (!open) closed = d->id();
-        }
-        ImGui::EndTabBar();
-    }
-    // After the bar, never in it: the documents (and the tabs) may change.
-    if (m_tabAsked != kNoDocument) {
-        if (shown == m_tabAsked) m_tabAsked = kNoDocument;
-    } else if (shown != kNoDocument && shown != active) {
-        ui().actions.run(Actions::DocActivate, { { DocArgs::kDocument, shown } });
-    }
-    if (closed != kNoDocument) ui().actions.run(Actions::FileClose, { { DocArgs::kDocument, closed } });
 }
 
 void CanvasPanel::tellSize(Vec2 size)

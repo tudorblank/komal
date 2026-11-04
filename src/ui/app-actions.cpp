@@ -10,10 +10,12 @@ void UserInterface::registerAppActions()
     using K = ActionKind;
 
     // ---------------------------------------------------------------- app
-    // Anything unsaved: asked first (drawConfirm).
+    // Each unsaved document asked about first, in turn (drawConfirm).
     m_actions.add({ .id = Actions::AppQuit, .title = "Quit", .kind = K::AppState, .run = [this] {
-        if (m_documents && m_documents->anyUnsaved()) m_confirm = Confirm{ .quit = true };
-        else m_quit = true;
+        if (m_quitting || m_saving) return;   // asking already
+        m_quitting = true;
+        m_keptUnsaved.clear();
+        askNextBeforeQuit();
     } });
     // Open / Save / Save As: the OS's dialogs pick the file, doc.open and doc.save use it.
     const auto settled = [this] { return m_documentActions.find(Actions::DocSave)->isEnabled(); };
@@ -21,7 +23,7 @@ void UserInterface::registerAppActions()
                     .run = [this] { if (m_host->showOpenDialog) m_host->showOpenDialog(); } });
     m_actions.add({ .id = Actions::FileSaveAs, .title = "Save As...", .kind = K::Interface, .args = { Arg::id(DocArgs::kDocument).optional() },
                     .enabled = settled, .run = [this](const ActionArgs& a) {
-        const Document* d = m_documents ? m_documents->find(a.get(DocArgs::kDocument, m_documents->active().id())) : nullptr;
+        const Document* d = m_documents ? m_documents->find(a.get(DocArgs::kDocument, m_documents->activeId())) : nullptr;
         if (!d || !m_host->showSaveDialog) return false;
         m_host->showSaveDialog(d->id(), d->path().empty() ? d->name() + Document::kExtension : d->path());
         return true;
@@ -29,7 +31,7 @@ void UserInterface::registerAppActions()
     // Its own file if it has one, else asked where (Save As).
     m_actions.add({ .id = Actions::FileSave, .title = "Save", .kind = K::Interface, .args = { Arg::id(DocArgs::kDocument).optional() },
                     .enabled = settled, .run = [this](const ActionArgs& a) {
-        const Document* d = m_documents ? m_documents->find(a.get(DocArgs::kDocument, m_documents->active().id())) : nullptr;
+        const Document* d = m_documents ? m_documents->find(a.get(DocArgs::kDocument, m_documents->activeId())) : nullptr;
         if (!d) return false;
         if (d->path().empty()) return bool(m_actions.run(Actions::FileSaveAs, { { DocArgs::kDocument, d->id() } }));
         return bool(m_actions.run(Actions::DocSave, { { DocArgs::kDocument, d->id() } }));
@@ -37,10 +39,10 @@ void UserInterface::registerAppActions()
     // Closes a document (the active one if none is given), asking first if it's unsaved; doc.close does it.
     m_actions.add({ .id = Actions::FileClose, .title = "Close", .kind = K::Interface, .args = { Arg::id(DocArgs::kDocument).optional() },
                     .run = [this](const ActionArgs& a) {
-        const Document* d = m_documents ? m_documents->find(a.get(DocArgs::kDocument, m_documents->active().id())) : nullptr;
+        const Document* d = m_documents ? m_documents->find(a.get(DocArgs::kDocument, m_documents->activeId())) : nullptr;
         if (!d) return false;
         if (d->unsaved()) {
-            m_confirm = Confirm{ .quit = false, .document = d->id() };
+            if (!m_confirm && !m_saving) ask(d->id(), false);
             return true;
         }
         return bool(m_actions.run(Actions::DocClose, { { DocArgs::kDocument, d->id() } }));

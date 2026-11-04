@@ -3,6 +3,8 @@
 #include "command/actions.hpp"
 #include "document/workspace.hpp"
 #include "ui/render/painter.hpp"
+#include "input/input-frame.hpp"
+#include "ui/input-owner.hpp"
 #include "ui/style/ui-style.hpp"
 #include "ui/widgets/widgets.hpp"
 
@@ -10,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <utility>
 
 namespace {
 
@@ -61,6 +64,13 @@ PanelInfo HistoryPanel::info() const { return { Actions::ViewHistoryTree, "Histo
 
 bool HistoryPanel::init()
 {
+    // Del while it has the pointer or the focus: the picked steps, for good (history.delete, logged).
+    ui().actions.add({ .id = Actions::HistoryTreeDelete, .title = "Delete Picked Steps", .kind = ActionKind::Interface,
+                       .scope = ActionScope::History, .enabled = [this] { return !m_picked.empty(); }, .run = [this] {
+        const std::vector<StepId> steps = std::exchange(m_picked, {});
+        m_anchor = kNoStep;
+        return bool(ui().actions.run(Actions::HistoryDelete, { { DocArgs::kSteps, steps } }));
+    } });
     return true;
 }
 
@@ -69,6 +79,31 @@ void HistoryPanel::documentsChanged(const DocumentsEvent& e)
     if (e.type != DocumentsEvent::Type::Activated) return;
     m_laidOut = 0;
     m_shownCurrent = kNoStep;
+    m_picked.clear();
+    m_anchor = kNoStep;
+}
+
+bool HistoryPanel::picked(StepId step) const
+{
+    return std::binary_search(m_picked.begin(), m_picked.end(), step);
+}
+
+void HistoryPanel::pick(StepId step, bool add, bool range)
+{
+    if (range && m_anchor != kNoStep) {
+        const uint32_t a = uint32_t(m_anchor), b = uint32_t(step);
+        const uint32_t lo = std::min(a, b), hi = std::max(a, b);
+        m_picked.clear();
+        for (uint32_t s = lo; s <= hi; ++s) m_picked.push_back(StepId(s));
+        return;   // the anchor stays: the range can change its other end
+    }
+    if (add) {
+        if (const auto it = std::lower_bound(m_picked.begin(), m_picked.end(), step); it != m_picked.end() && *it == step) m_picked.erase(it);
+        else m_picked.insert(it, step);
+    } else {
+        m_picked = { step };
+    }
+    m_anchor = step;
 }
 
 void HistoryPanel::draw()
@@ -79,6 +114,7 @@ void HistoryPanel::draw()
     const Widgets::PanelWindow window(*this, actions);
     if (!window) return;
     if (history.size() != m_laidOut) layout(history);
+    std::erase_if(m_picked, [&](StepId s) { return !history.contains(s); });
 
     const Style::HistoryStyle& style = Style::get().history;
     const uint32_t count   = uint32_t(history.size());
@@ -99,16 +135,26 @@ void HistoryPanel::draw()
 
     ImGui::BeginChild("##tree", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
     const ImVec2 origin = ImGui::GetCursorScreenPos();
-    const float graphX = origin.x + inset;
+    // The numbers' column first, as wide as the biggest one; then the tree, then the labels.
+    char widest[16];
+    std::snprintf(widest, sizeof widest, "%u", count - 1);
+    const float numbersW = ImGui::CalcTextSize(widest).x + style.numberPadding * 2.0f;
+    const float graphX = origin.x + numbersW + inset;
     const float labelX = graphX + float(m_lanes) * laneW + style.labelGap;
     const float width  = std::max(ImGui::GetContentRegionAvail().x, labelX - origin.x + style.labelRoom);
 
     // One item over every row: the row under the mouse is the step to go to.
     ImGui::InvisibleButton("##steps", ImVec2(width, rowH * float(count)));
     const bool hovered = ImGui::IsItemHovered();
+    // Its shortcuts next frame (Del): the pointer over it, or the focus.
+    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows)) ui().owner.claim(ActionScope::History, InputOwner::Claim::Pointer);
+    else if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) ui().owner.claim(ActionScope::History, InputOwner::Claim::Focus);
     const int hoveredRow = hovered ? int((ImGui::GetIO().MousePos.y - origin.y) / rowH) : -1;
-    if (ImGui::IsItemClicked() && hoveredRow >= 0 && hoveredRow < int(count) && uint32_t(hoveredRow) != current)
-        actions.run(Actions::HistoryGoTo, { { DocArgs::kStep, StepId(hoveredRow) } });
+    if (ImGui::IsItemClicked() && hoveredRow >= 0 && hoveredRow < int(count)) {
+        const bool add = ui().input.mods & ModPrimary, range = ui().input.mods & ModShift;
+        pick(StepId(hoveredRow), add, range);
+        if (!add && !range && uint32_t(hoveredRow) != current) actions.run(Actions::HistoryGoTo, { { DocArgs::kStep, StepId(hoveredRow) } });
+    }
 
     // The current step stays in view when it changes (an undo, a jump, a new step).
     if (history.current() != m_shownCurrent) {
@@ -134,6 +180,9 @@ void HistoryPanel::draw()
     };
     const auto tone = [&](uint32_t id) { return onPath[id] ? accent : onRedo[id] ? ahead : other; };
 
+    for (uint32_t id = first; id <= last; ++id)
+        if (picked(StepId(id)))
+            draw.fillRect(ImVec2(origin.x, origin.y + float(id) * rowH), ImVec2(origin.x + width, origin.y + float(id + 1) * rowH), style.rowPicked, style.rounding);
     if (hoveredRow >= int(first) && hoveredRow <= int(last))
         draw.fillRect(ImVec2(origin.x, origin.y + float(hoveredRow) * rowH), ImVec2(origin.x + width, origin.y + float(hoveredRow + 1) * rowH), style.rowHot, style.rounding);
 
@@ -172,7 +221,7 @@ void HistoryPanel::draw()
         char num[16];
         std::snprintf(num, sizeof num, "%u", id);
         const float nw = ImGui::CalcTextSize(num).x;
-        draw.text(ImVec2(origin.x + width - nw - style.numberPadding, ty), dimText, num);
+        draw.text(ImVec2(origin.x + numbersW - nw - style.numberPadding, ty), dimText, num);   // right-aligned in its column
     }
     ImGui::EndChild();
 }

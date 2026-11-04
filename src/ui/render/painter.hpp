@@ -46,7 +46,8 @@ public:
     void scaledText(ImFont* font, float baked, float shown, ImVec2 at, ImU32 color, const char* text, const char* end = nullptr) const;
 
     // ---- pictures
-    void image(ImTextureID texture, ImVec2 a, ImVec2 b, ImVec2 uv0 = ImVec2(0.0f, 0.0f), ImVec2 uv1 = ImVec2(1.0f, 1.0f)) const;
+    void image(ImTextureID texture, ImVec2 a, ImVec2 b, ImVec2 uv0 = ImVec2(0.0f, 0.0f), ImVec2 uv1 = ImVec2(1.0f, 1.0f),
+               ImU32 tint = IM_COL32_WHITE) const;   // tint: each texel's colour multiplied by it
 
     // Drawing only inside a..b while it lives (and inside any clip already there).
     class Clip {

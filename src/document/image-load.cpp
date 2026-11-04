@@ -2,6 +2,7 @@
 #include "base/file.hpp"
 
 #include <climits>
+#include <span>
 #include <vector>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -26,6 +27,11 @@ bool loadImageFile(const std::string& path, DecodedImage& out, std::string& erro
 {
     std::vector<uint8_t> file;
     if (!File::read(path, file, error)) return false;
+    return loadImageBytes(file, out, error);
+}
+
+bool loadImageBytes(std::span<const uint8_t> file, DecodedImage& out, std::string& error)
+{
     if (file.size() > size_t(INT_MAX)) {
         error = "file too large";
         return false;
@@ -44,7 +50,6 @@ bool loadImageFile(const std::string& path, DecodedImage& out, std::string& erro
         error = stbi_failure_reason() ? stbi_failure_reason() : "unknown error";
         return false;
     }
-    file = {};   // decoded: the file's bytes go before the tiles come
     // Straight -> premultiplied, in place.
     const size_t count = size_t(w) * size_t(h);
     for (stbi_uc* p = data; p != data + count * 4; p += 4) {

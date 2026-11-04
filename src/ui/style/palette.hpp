@@ -44,6 +44,11 @@ struct Palette {
     Color8 navHighlight;                // the window picked with Ctrl+Tab
     Color8 navDim;                      // ... and behind it
     Color8 modalDim;                    // behind a modal window
+    Color8 tabShown;                    // the document shown: its tab in the strip under the toolbar
+    Color8 tabHot;                      // ... a tab there under the mouse
+    Color8 tabShownText;
+    Color8 introBack;                   // the window while no document is open ...
+    Color8 introFace;                   // ... and the face on it
     Color8 none;
 
     // ---- the accent: selections, focus, checked things, the parts a value covers

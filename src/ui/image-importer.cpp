@@ -92,3 +92,8 @@ ImageImporter::Polled ImageImporter::poll(ActionRegistry& actions)
     }
     return out;
 }
+
+bool ImageImporter::ready() const
+{
+    return !m_jobs.empty() && m_jobs.front()->finished.load(std::memory_order_acquire);
+}

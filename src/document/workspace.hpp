@@ -147,8 +147,18 @@ public:
     bool undo();
     bool redo();
     bool goToHistory(StepId step);   // any step of the tree, across branches
+    // Steps gone for good (Start never): each one's children take its place. Deleting the current
+    // step moves to the nearest step above it that stays first. Not a step itself: no undo.
+    bool deleteHistory(const std::vector<StepId>& steps);
     const History& history() const { return m_steps.history(); }
     NodeRegistry::PixelBytes pixelBytes() const { return m_nodes.pixelBytes(); }   // the Info panel's memory line
+    // History's pixels kept raw near where it is (every step within kHotSteps of the current one,
+    // up or down the tree) and cold (their encoded bytes) everywhere else: once history moved or
+    // grew, a little at a time, never in the move itself. Upkeep, not an edit: nothing is told.
+    // False while there's more to do.
+    static constexpr int kHotSteps = 8;
+    bool settleHistory(const Deadline& until);
+    bool historySettled() const { return m_historySettled; }
 
     // ---- what the views share, so none of them changes another: the canvas and the graph follow
     // these through events. Changed only by actions (selection.set, canvas.*); never undone.
@@ -171,8 +181,8 @@ private:
     EmitEvent emitter() { return [this](const WorkspaceEvent& e) { emit(e); }; }   // for the blocks that change the graph
     void emitInputChanges(NodeId to, const NodeLinks& before);   // ... against its links now
     bool previewTouches(const absl::flat_hash_set<NodeId>& nodes) const;   // the edit in progress names one of them
-    void flipRasterCommit(const RasterCommitRef& c);
-    void recordCommit(const RasterCommitRef& commit, const char* label);   // into the open step (or one of its own)
+    void restoreRasters(const RasterStates& rasters);   // every raster as `rasters` holds it (those there then)
+    void pixelsChanged(const char* label);   // into the open step's, or a step of their own
     void restoreGraph(const GraphState& target);
     void fallBackActiveRaster();   // the active raster went: the most recently made one, if any
     void showArtboards();          // the master draws them as they are (CompositorNode::setLooks)
@@ -190,6 +200,8 @@ private:
     NodeSelection m_selection;
     CanvasCamera  m_canvasCamera;
     Vec2          m_canvasViewport{};
+
+    bool m_historySettled = true;   // history's pixels are hot and cold as settleHistory leaves them
 
     StrokeSession m_stroke;
     std::optional<EditPreview> m_preview;

@@ -27,7 +27,7 @@ PanelInfo GraphPanel::info() const { return { Actions::ViewGraph, "Graph", DockS
 
 bool GraphPanel::init()
 {
-    show(ui().documents.active().id());
+    if (!ui().documents.empty()) show(ui().documents.active().id());   // else made as one is shown
     registerActions(ui().actions);
     return true;
 }

@@ -127,9 +127,9 @@ void Painter::scaledText(ImFont* font, float baked, float shown, ImVec2 at, ImU3
     }
 }
 
-void Painter::image(ImTextureID texture, ImVec2 a, ImVec2 b, ImVec2 uv0, ImVec2 uv1) const
+void Painter::image(ImTextureID texture, ImVec2 a, ImVec2 b, ImVec2 uv0, ImVec2 uv1, ImU32 tint) const
 {
-    m_list->AddImage(texture, a, b, uv0, uv1, ink(IM_COL32_WHITE));
+    m_list->AddImage(texture, a, b, uv0, uv1, ink(tint));
 }
 
 Painter::Clip Painter::clip(ImVec2 a, ImVec2 b) const

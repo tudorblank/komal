@@ -227,4 +227,31 @@ void toolButton(const Painter& p, const Style::ToolButtonStyle& s, ImVec2 a, ImV
     if (selected) p.strokeRect(a, b, s.outline, s.rounding);
 }
 
+void documentTab(const Painter& p, const Style::DocumentTabStyle& s, ImVec2 a, ImVec2 b, bool shown, bool hot, const char* name,
+                 TabMark mark)
+{
+    if (shown || hot) p.fillRect(a, b, shown ? s.shown : s.hot, s.rounding);
+    const ImU32 ink = shown ? s.textShown : s.text;
+    const float markX = b.x - s.padding * 0.5f - s.mark, cy = (a.y + b.y) * 0.5f;
+    {
+        const Painter::Clip clip = p.clip(a, ImVec2(markX, b.y));
+        p.text(ImVec2(a.x + s.padding, std::round(cy - ImGui::GetFontSize() * 0.5f)), ink, name);
+    }
+    const ImVec2 c(markX + s.mark * 0.5f, cy);
+    switch (mark) {
+    case TabMark::Unsaved:
+        p.fillCircle(c, std::max(2.0f, s.mark * 0.18f), ink);
+        break;
+    case TabMark::CloseHot:
+        p.fillRect(ImVec2(markX, cy - s.mark * 0.5f), ImVec2(markX + s.mark, cy + s.mark * 0.5f), s.markHot, s.rounding);
+        [[fallthrough]];
+    case TabMark::Close: {
+        const float r = s.mark * 0.22f, w = std::max(1.0f, s.mark * 0.09f);
+        p.line(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), ink, w);
+        p.line(ImVec2(c.x - r, c.y + r), ImVec2(c.x + r, c.y - r), ink, w);
+        break;
+    }
+    }
+}
+
 }
