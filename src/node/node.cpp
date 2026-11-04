@@ -227,7 +227,10 @@ void Node::link(GraphKey key, const NodePtr& source, const InputSlot& slot)
         TileSet dirty;
         at->addFootprint(dirty);
         source->addFootprint(dirty);
-        changeKnown(std::move(dirty), Bounds::Recompute, Evict::All, [&] { at = source; });
+        changeKnown(std::move(dirty), Bounds::Recompute, Evict::All, [&] {
+            at = source;
+            layersEdited(LayerReplaced{ layer->index });
+        });
     } else if (const auto* pos = slot.as<InputSlot::NewLayer>()) {
         auto& layers = m_links.layers;
         if (const auto it = std::find(layers.begin(), layers.end(), source); it != layers.end()) {   // in it already: it moves
@@ -238,8 +241,11 @@ void Node::link(GraphKey key, const NodePtr& source, const InputSlot& slot)
         }
         TileSet dirty;
         source->addFootprint(dirty);
-        changeKnown(std::move(dirty), Bounds::Recompute, Evict::All,
-                    [&] { layers.insert(layers.begin() + std::ptrdiff_t(std::min<size_t>(pos->at, layers.size())), source); });
+        const size_t at = std::min<size_t>(pos->at, layers.size());
+        changeKnown(std::move(dirty), Bounds::Recompute, Evict::All, [&] {
+            layers.insert(layers.begin() + std::ptrdiff_t(at), source);
+            layersEdited(LayerInserted{ at });
+        });
     } else if (const auto* m = slot.as<InputSlot::Mask>()) {
         NodePtr& held = m_links.masks[int(m->signal)][int(m->channel)];
         if (held != source) changeKnown(footprint(), Bounds::Keep, Evict::Output, [&] { held = source; });
@@ -255,7 +261,10 @@ void Node::unlink(GraphKey, const InputSlot& slot)
         if (layer->index >= layers.size()) return;
         TileSet dirty;
         layers[layer->index]->addFootprint(dirty);
-        changeKnown(std::move(dirty), Bounds::Recompute, Evict::All, [&] { layers.erase(layers.begin() + std::ptrdiff_t(layer->index)); });
+        changeKnown(std::move(dirty), Bounds::Recompute, Evict::All, [&] {
+            layers.erase(layers.begin() + std::ptrdiff_t(layer->index));
+            layersEdited(LayerRemoved{ layer->index });
+        });
     } else if (const auto* m = slot.as<InputSlot::Mask>()) {
         NodePtr& held = m_links.masks[int(m->signal)][int(m->channel)];
         if (held) changeKnown(footprint(), Bounds::Keep, Evict::Output, [&] { held = nullptr; });
@@ -273,10 +282,12 @@ void Node::moveLayer(GraphKey, size_t from, size_t to)
         if (i != from) layers[i]->addFootprint(others);
     TileSet dirty;
     for (TileKey k : moved) if (others.contains(k)) dirty.insert(k);
-    changeKnown(std::move(dirty), Bounds::Keep, Evict::All, [&] {
+    movedLayerTiles(from, to, moved, dirty);
+    changeKnown(std::move(dirty), Bounds::Recompute, Evict::All, [&] {
         NodePtr n = std::move(layers[from]);
         layers.erase(layers.begin() + std::ptrdiff_t(from));
         layers.insert(layers.begin() + std::ptrdiff_t(to), std::move(n));
+        layersEdited(LayerMoved{ from, to });
     });
 }
 
@@ -298,7 +309,11 @@ void Node::unlinkSource(GraphKey key, const Node& source)
 void Node::setLinks(GraphKey key, const NodeLinks& want)
 {
     if (m_links == want) return;
-    if (!m_links.empty()) change([&] { m_links = NodeLinks{}; });   // all it held goes first
+    if (!m_links.empty()) change([&] {   // all it held goes first
+        const bool hadLayers = !m_links.layers.empty();
+        m_links = NodeLinks{};
+        if (hadLayers) layersEdited(LayersCleared{});
+    });
     if (want.input && canLink(want.input, InputSlot::input())) link(key, want.input, InputSlot::input());
     for (const NodePtr& l : want.layers) {
         const InputSlot top = InputSlot::newLayer(uint32_t(m_links.layers.size()));

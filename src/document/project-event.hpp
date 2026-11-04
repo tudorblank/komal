@@ -14,7 +14,8 @@ enum class ProjectEventType : uint8_t {
     NodeChanged,           // node: a value (signal scale, move offset, label, raster locks)
     LinkAdded,             // source feeds node at slot: a single input (Input, Mask)
     LinkRemoved,           // source no longer feeds node at slot
-    LayersChanged,         // node: a stack's layers were added, removed, replaced or reordered
+    LayersChanged,         // node: a stack's layers were added, removed, replaced or reordered (or regrouped)
+    ArtboardsChanged,      // the master's artboards: one added, deleted or changed
     PreviewChanged,        // an interactive edit started, moved, was applied or cancelled
     ActiveRasterChanged,
     RasterEdited,          // pixels of `node` changed (edit, undo, redo)
@@ -44,6 +45,7 @@ constexpr bool changesGraph(ProjectEventType t)
     case ProjectEventType::LinkAdded:
     case ProjectEventType::LinkRemoved:
     case ProjectEventType::LayersChanged:
+    case ProjectEventType::ArtboardsChanged:
         return true;
     default:
         return false;

@@ -20,6 +20,12 @@ Colors make(const Palette& p)
     c.body         = p.nodeBody.packed();
     c.inset        = p.nodeInset.packed();
     c.row          = p.nodeRow.packed();
+    c.rowSelected    = p.nodeRowSelected.packed();
+    c.selectedText   = p.nodeRowSelectedText.packed();
+    c.selectedEdge   = p.accent.withAlpha(160).packed();
+    c.originEdge     = p.nodeRowOrigin.packed();
+    c.swatchCheckerA = p.pictureCheckerA.packed();
+    c.swatchCheckerB = p.pictureCheckerB.packed();
     c.rowHovered   = p.nodeRowHot.packed();
     c.border       = p.nodeBorder.packed();
     c.borderHover  = p.nodeBorderHot.packed();

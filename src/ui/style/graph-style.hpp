@@ -36,6 +36,12 @@ struct Colors {
     ImU32 inset;
     ImU32 row;
     ImU32 rowHovered;
+    ImU32 rowSelected;      // a stack row picked: over its row ...
+    ImU32 selectedText;     // ... its name ...
+    ImU32 selectedEdge;     // ... its blend chip
+    ImU32 originEdge;       // a row a drag carries: its spot's dashed outline
+    ImU32 swatchCheckerA;   // a transparent colour's square: a checkerboard, as behind a thumbnail
+    ImU32 swatchCheckerB;
     ImU32 border;
     ImU32 borderHover;
     ImU32 selection;

@@ -73,7 +73,8 @@ Styles build(const Metrics& m)
     s.figureSlider.padding   = std::round(2.0f * u);
     s.figureSlider.sliver    = std::max(1.0f, std::round(u));
 
-    s.gradientSlider = { s.slider, std::round(8.0f * u), packed(pal.panel), 2.0f };
+    s.gradientSlider = { s.slider, std::round(8.0f * u), packed(pal.panel), 2.0f, packed(pal.pictureCheckerA), packed(pal.pictureCheckerB),
+                         std::round(4.0f * u) };
 
     s.toolButton.size         = std::round(font * 1.75f);
     s.toolButton.padding      = std::round(font * 0.25f);
@@ -140,6 +141,10 @@ Styles build(const Metrics& m)
     c.squareMarkerMin = 4.0f;
     c.maxSize        = 320.0f * u;
     c.minSize        = 80.0f;
+    c.checkerA       = packed(pal.pictureCheckerA);
+    c.checkerB       = packed(pal.pictureCheckerB);
+    c.checkerCell    = std::round(5.0f * u);
+    c.floatWidth     = std::round(font * 13.0f);
 
     s.menu = { font * 10.0f, font * 12.0f, font * 7.0f };
     return s;
@@ -165,7 +170,8 @@ const CanvasStyle& canvas()
     madeFor = Palette::revision();
     const Palette& pal = Palette::current();
     style = { pal.canvasBackground, pal.canvasCheckerA, pal.canvasCheckerB, pal.canvasChecker, pal.pictureCheckerA, pal.pictureCheckerB,
-              pal.pictureChecker, pal.originMark, pal.accent, 1.0f, pal.faintOutline, pal.accent, 1.5f };
+              pal.pictureChecker, pal.originMark, pal.accent, 1.0f, pal.faintOutline, pal.accent, 1.5f,
+              pal.artboardFrame, pal.artboardLabel };
     return style;
 }
 

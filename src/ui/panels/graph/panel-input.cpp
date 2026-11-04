@@ -56,7 +56,11 @@ void GraphPanel::handleMouse(const GraphHit& hit, bool hovered)
         m_rightDown = false;
         const bool click = !m_rightZooming;
         m_rightZooming = false;
-        if (click && !dragging()) {
+        const NodeItemWidget* rowWidget = hit.as<WidgetHit>() ? widgetOf(m_scene, *hit.as<WidgetHit>()) : nullptr;
+        const ArtboardControl* board = rowWidget ? rowWidget->as<ArtboardControl>() : nullptr;
+        if (click && !dragging() && board) {
+            m_menus.openArtboard(board->artboard);
+        } else if (click && !dragging()) {
             if (const NodeId id = hit.node(); id != kNoNodeId) {
                 if (!selection().contains(id)) select(selection().only(id));
                 m_menus.openContext(id);
@@ -100,7 +104,10 @@ void GraphPanel::endDrag(const GraphHit& hit)
     if (const auto* press = std::get_if<PressNode>(&drag)) {   // a click (no drag) on a node of a bigger selection switches to it
         if (press->wasSelected) select(selection().only(m_press.hit.node()));
     } else if (std::holds_alternative<PressEmpty>(drag)) {   // a click on nothing
-        if (!m_press.ctrl && !m_press.shift) select({});
+        if (!m_press.ctrl && !m_press.shift) {
+            select({});
+            m_scene.pickRows(kNoNodeId, {}, {});
+        }
     } else if (const auto* move = std::get_if<MoveNodes>(&drag)) {
         ui().actions.endGesture(Actions::NodeDrag, { { kDx, move->delta.x }, { kDy, move->delta.y } });
     } else if (const auto* link = std::get_if<LinkDrag>(&drag)) {
@@ -109,9 +116,22 @@ void GraphPanel::endDrag(const GraphHit& hit)
         ui().actions.endGesture(Actions::SignalScrub, scale->args);
     } else if (const auto* offset = std::get_if<OffsetDrag>(&drag)) {
         ui().actions.endGesture(Actions::MoveScrub, offset->args);
-    } else if (const auto* layer = std::get_if<LayerDrag>(&drag)) {   // the stack changes once, where the gap is
-        if (layer->lifted && layer->at >= 0 && layer->at != int(layer->layer))
-            ui().actions.run(Actions::LayerMove, { { kNode, layer->node }, { kLayerFrom, layer->layer }, { kLayerTo, size_t(layer->at) } });
+    } else if (const auto* rows = std::get_if<LayerDrag>(&drag)) {
+        if (!rows->lifted) {   // a click: on a row of a bigger pick, just that row
+            if (rows->wasPicked) m_scene.pickRows(rows->node, { rows->pressed }, rows->pressed);
+        } else if (const NodeItem* s = m_scene.item(rows->node); s && rows->at.kind() == StackGap::Kind::Rows && rows->at.target() != StackGap::Target::Home) {   // once, where it lands
+            const StackPlace place = landing(*s, rows->at);
+            std::vector<NodeId> layers;
+            std::vector<ArtboardId> artboards;
+            for (const StackRowRef& r : rows->rows) {
+                if (r.layer != kNoNodeId) layers.push_back(r.layer);
+                else                      artboards.push_back(r.artboard);
+            }
+            ActionArgs args{ { kNode, rows->node }, { kLayers, layers }, { kLayerTo, place.at } };
+            if (!artboards.empty()) args.add({ kArtboards, artboards });
+            if (place.into != kNoArtboard) args.add({ kIntoArtboard, place.into });
+            if (ui().actions.run(Actions::LayersMove, args)) dropped(rows->node, place);
+        }
     }
 }
 
@@ -177,7 +197,22 @@ void GraphPanel::pressWidget(const WidgetHit& hit, bool doubleClick)
         if (ui().actions.beginGesture(Actions::MoveScrub, { { kNode, hit.node } }))
             m_drag = OffsetDrag{ *offset, offset->axis == 0 ? move->x : move->y, {} };
     } else if (const auto* layer = w.as<LayerControl>()) {
-        m_drag = LayerDrag{ hit.node, layer->layer, m_press.graph.y - w.rect.Min.y };
+        if (const NodePtr l = ui().project.inputAt(hit.node, InputSlot::stackLayer(layer->layer)))
+            pressRow(hit.node, { l->id(), kNoArtboard }, m_press.graph.y - w.rect.Min.y);
+    } else if (const auto* mute = w.as<LayerMuteControl>()) {
+        const auto* stack = dynamic_cast<const CompositorNode*>(n);
+        if (const NodePtr l = ui().project.inputAt(hit.node, InputSlot::stackLayer(mute->layer)); stack && l)
+            ui().actions.run(Actions::LayerMute, { { kNode, hit.node }, { kLayer, l->id() }, { kOn, !stack->muted(*l) } });
+    } else if (const auto* board = w.as<ArtboardControl>()) {
+        if (doubleClick) m_menus.openValue(GraphMenus::RenameArtboard{ board->artboard });
+        else             pressRow(hit.node, { kNoNodeId, board->artboard }, m_press.graph.y - w.rect.Min.y);
+    } else if (const auto* fold = w.as<ArtboardFoldControl>()) {
+        m_scene.toggleArtboard(hit.node, fold->artboard);
+    } else if (const auto* eye = w.as<ArtboardMuteControl>()) {
+        if (const Artboard* a = ui().project.artboard(eye->artboard))
+            ui().actions.run(Actions::ArtboardSet, { { kArtboard, a->id }, { kVisible, !a->visible } });
+    } else if (const auto* color = w.as<ArtboardColorControl>()) {
+        m_menus.openColor(color->artboard);
     }
 }
 
@@ -242,20 +277,27 @@ void GraphPanel::updateDrag()
         const NodeItem* s = m_scene.item(row->node);
         if (!s) return;
         if (!row->lifted) {
-            if (!moved) return;
-            row->lifted = true;
-        }
-        // Pulled out sideways: the layer comes off the stack, carried as a link.
-        constexpr float kPullOut = 40.0f;
-        if (gm.x < s->bounds.Min.x - kPullOut || gm.x > s->bounds.Max.x + kPullOut) {
-            const NodePtr layer = ui().project.inputAt(row->node, InputSlot::stackLayer(row->layer));
-            const ActionArgs lifted{ { kSource, layer ? layer->id() : kNoNodeId }, { kFrom, row->node }, { kSlot, InputSlot::stackLayer(row->layer) } };
-            m_drag = std::monostate{};
-            if (layer && ui().actions.beginGesture(Actions::LinkMove, lifted)) m_drag = LinkDrag{ .node = layer->id(), .pickedUp = true };
+            // Carried from now on. Nothing is dropped anywhere yet: the stack is laid out with its
+            // spot kept first (next frame), so the first drop is worked out on that, back home.
+            if (moved) row->lifted = true;
             return;
         }
-        // Where the floating row's middle is: the gap opens there.
-        row->at = int(stackPosition(row->node, gm.y - row->grab + kLayerRowH * 0.5f));
+        // One layer pulled out sideways: it comes off the stack, carried as a link.
+        constexpr float kPullOut = 40.0f;
+        const bool one = row->rows.size() == 1 && row->rows[0].layer != kNoNodeId;
+        if (one && (gm.x < s->bounds.Min.x - kPullOut || gm.x > s->bounds.Max.x + kPullOut)) {
+            const auto& layers = ui().project.find(row->node)->links().layers;
+            const auto it = std::find_if(layers.begin(), layers.end(), [&](const NodePtr& l) { return l->id() == row->rows[0].layer; });
+            m_drag = std::monostate{};
+            if (it == layers.end()) return;
+            const InputSlot slot = InputSlot::stackLayer(uint32_t(it - layers.begin()));
+            if (ui().actions.beginGesture(Actions::LinkMove, { { kSource, (*it)->id() }, { kFrom, row->node }, { kSlot, slot } }))
+                m_drag = LinkDrag{ .node = (*it)->id(), .pickedUp = true };
+            return;
+        }
+        // Where the floating rows' middle is: the gap opens there.
+        const bool artboard = std::any_of(row->rows.begin(), row->rows.end(), [](const StackRowRef& r) { return r.artboard != kNoArtboard; });
+        row->at = stackPlace(row->node, ImVec2(gm.x, gm.y - row->grab + kLayerRowH * 0.5f), StackGap::Kind::Rows, artboard, row->rows);
     } else if (std::holds_alternative<MinimapDrag>(m_drag)) {   // held on the navigator: the view follows the mouse
         if (ImGui::GetIO().MouseDelta.x != 0.0f || ImGui::GetIO().MouseDelta.y != 0.0f) m_minimap.drag(mouse, m_camera, m_surface.size());
     }
@@ -277,15 +319,75 @@ void GraphPanel::startLink(const PortHit& hit)
     }
 }
 
-uint32_t GraphPanel::stackPosition(NodeId id, float y) const
+StackRowRef GraphPanel::rowRef(NodeId id, const NodeItemLayerRow& row) const
 {
-    // Above every layer row whose middle is below y (so an open gap stays until y passes a middle).
-    const NodeItem* s = m_scene.item(id);
-    uint32_t at = 0;
-    if (s)
+    if (const auto* layer = row.as<NodeItemLayerRow::Layer>())
+        if (const NodePtr l = ui().project.inputAt(id, InputSlot::stackLayer(layer->index))) return { l->id(), kNoArtboard };
+    if (const auto* board = row.as<NodeItemLayerRow::Artboard>()) return { kNoNodeId, board->key };
+    return {};
+}
+
+std::vector<StackRowRef> GraphPanel::shownRows(NodeId id) const
+{
+    std::vector<StackRowRef> out;
+    if (const NodeItem* s = m_scene.item(id))
         for (const NodeItemLayerRow& row : s->layers)
-            if (row.as<NodeItemLayerRow::Layer>() && row.rect.GetCenter().y > y) ++at;
-    return at;
+            if (const StackRowRef r = rowRef(id, row); !r.empty()) out.push_back(r);
+    return out;
+}
+
+void GraphPanel::pressRow(NodeId id, StackRowRef row, float grab)
+{
+    // Like a file browser: a click picks the row, Ctrl adds it or takes it out, Shift picks every
+    // row from the anchor to it (Ctrl+Shift adds them).
+    const NodeItemState* view = m_scene.viewState(id);
+    std::vector<StackRowRef> picked = view ? view->selected : std::vector<StackRowRef>{};
+    StackRowRef anchor = view ? view->anchor : StackRowRef{};
+    const auto has = [&](const std::vector<StackRowRef>& v, StackRowRef r) { return std::find(v.begin(), v.end(), r) != v.end(); };
+    const std::vector<StackRowRef> shown = shownRows(id);
+    bool wasPicked = false;
+    if (m_press.shift) {
+        const auto at = [&](StackRowRef r) { return std::find(shown.begin(), shown.end(), r) - shown.begin(); };
+        if (anchor.empty() || !has(shown, anchor)) anchor = row;
+        const std::ptrdiff_t from = at(anchor), to = at(row);
+        const std::ptrdiff_t lo = std::min(from, to), hi = std::max(from, to);
+        if (!m_press.ctrl) picked.clear();
+        for (auto i = lo; i <= hi && i < std::ptrdiff_t(shown.size()); ++i)
+            if (!has(picked, shown[size_t(i)])) picked.push_back(shown[size_t(i)]);
+    } else if (m_press.ctrl) {
+        if (has(picked, row)) std::erase(picked, row);
+        else picked.push_back(row);
+        anchor = row;
+    } else {
+        wasPicked = has(picked, row) && picked.size() > 1;
+        if (!has(picked, row)) picked = { row };
+        anchor = row;
+    }
+    m_scene.pickRows(id, picked, anchor);
+    select({});   // one kind of thing picked at a time: rows, so no nodes
+    if (!has(picked, row)) return;   // Ctrl+click took it out: nothing to drag
+
+    // What it carries: the rows picked, top first (an artboard's layers go with it).
+    std::vector<StackRowRef> carried;
+    for (const StackRowRef& r : shown)
+        if (has(picked, r)) carried.push_back(r);
+    m_drag = LayerDrag{ .node = id, .rows = std::move(carried), .pressed = row, .grab = grab, .wasPicked = wasPicked, .lifted = false, .at = {} };
+}
+
+StackGap GraphPanel::stackPlace(NodeId id, ImVec2 p, StackGap::Kind kind, bool carriesArtboard, const std::vector<StackRowRef>& carried) const
+{
+    const NodeItem* s = m_scene.item(id);
+    if (!s) return {};
+    // On the stack as it shows now, then settled on the stack as it would show it.
+    const StackGap drop = stackDrop(*s, p.y, kind, carriesArtboard, carried);
+    return settleDrop(drop, [&](const StackGap& g) { return m_scene.layoutWith(id, { g, carried }); }, p.y, kind, carriesArtboard, carried);
+}
+
+void GraphPanel::dropped(NodeId id, const StackPlace& place)
+{
+    if (place.into == kNoArtboard) return;
+    const NodeItemState* view = m_scene.viewState(id);
+    if (view && std::find(view->folded.begin(), view->folded.end(), place.into) != view->folded.end()) m_scene.toggleArtboard(id, place.into);
 }
 
 GraphPanel::LinkTarget GraphPanel::linkTarget(const LinkDrag& link, const GraphHit& hit) const
@@ -303,39 +405,74 @@ GraphPanel::LinkTarget GraphPanel::linkTarget(const LinkDrag& link, const GraphH
     const auto fits = [&](NodeId to, const InputSlot& slot) {
         return lifted ? project.canMoveLink(lifted->source, lifted->from, lifted->slot, to, slot) : project.canConnect(link.node, to, slot);
     };
-    // Anywhere over a compositor (but its mask inputs): inserted into its stack, at the mouse.
-    if (link.fromOutput && project.find(id)->ports().inputs == InputShape::Stack && !(port && port->mask)) {
-        const InputSlot slot = InputSlot::newLayer(stackPosition(id, camera.toGraph(ImGui::GetIO().MousePos).y));
-        if (!fits(id, slot)) return t;
-        const NodeItemPort* p = item->input(slot);   // the gap's port, once it is open
-        return { true, id, slot, p ? camera.toScreen(p->pos) : ImGui::GetIO().MousePos };
+    const ImVec2 at = camera.toGraph(ImGui::GetIO().MousePos);
+    const Node* n = project.find(id);
+    if (!link.fromOutput) {   // looking for an output: its port
+        if (port && port->output && project.canConnect(id, link.node, link.slot)) t = { true, id, {}, {}, camera.toScreen(port->pos) };
+        return t;
     }
-    if (port) {
-        if (link.fromOutput && !port->output && fits(id, port->slot))
-            t = { true, id, port->slot, camera.toScreen(port->pos) };
-        else if (!link.fromOutput && port->output && ui().project.canConnect(id, link.node, link.slot))
-            t = { true, id, {}, camera.toScreen(port->pos) };
-    } else if (link.fromOutput) {
-        // Dropped on a node's body: its natural input (a unary input, a new top layer).
-        InputSlot slot;
-        const Node* n = ui().project.find(id);
-        if (n && project.preferredInput(id, slot) && fits(id, slot))
-            if (const NodeItemPort* p = item->input(slot)) t = { true, id, slot, camera.toScreen(p->pos) };
+    // Over a stack's rows (a little past them): into the stack, at a place, as rows are dropped (it
+    // lands on top, then moves there; a lifted one comes off its own row first).
+    if (n->ports().inputs == InputShape::Stack && item->stackArea && !(port && port->mask)) {
+        ImRect area = *item->stackArea;
+        area.Expand(ImVec2(0.0f, kStackBleed));
+        if (area.Contains(at)) {
+            const bool own = lifted && lifted->from == id;
+            const InputSlot slot = InputSlot::newLayer(own ? 0u : uint32_t(n->links().layers.size()));
+            if (!fits(id, slot)) return t;
+            // A link lifted off this stack's own row: that row is carried (its spot kept).
+            const std::vector<StackRowRef> carried = own ? std::vector<StackRowRef>{ { lifted->source, kNoArtboard } } : std::vector<StackRowRef>{};
+            t = { true, id, slot, stackPlace(id, at, StackGap::Kind::Link, false, carried), ImGui::GetIO().MousePos };
+            if (!t.place.dropping()) return LinkTarget{};   // the stack isn't laid out for it yet
+            for (const NodeItemPort& p : item->ports)   // the port at the gap, once it is open
+                if (p.placeholder && p.slot.is<InputSlot::NewLayer>()) t.pos = camera.toScreen(p.pos);
+            return t;
+        }
     }
+    if (port && !port->output) {   // on an input's port: that input
+        if (fits(id, port->slot)) t = { true, id, port->slot, {}, camera.toScreen(port->pos) };
+        return t;
+    }
+    // On a channel's row (its slider, its value): that channel's mask.
+    for (const NodeItemChannelRow& row : item->channels)
+        if (row.rect.Contains(at)) {
+            const InputSlot slot = InputSlot::mask(row.signal, row.channel);
+            if (const NodeItemPort* p = item->input(slot); p && fits(id, slot)) t = { true, id, slot, {}, camera.toScreen(p->pos) };
+            return t;
+        }
+    // On a one-input node's body (its title, its picture): its input. Anywhere else on a node: nothing.
+    if (n->ports().inputs == InputShape::One && !item->boxes.empty() && item->boxes.front().rect.Contains(at))
+        if (const NodeItemPort* p = item->input(InputSlot::input()); p && fits(id, InputSlot::input()))
+            t = { true, id, InputSlot::input(), {}, camera.toScreen(p->pos) };
     return t;
 }
 
 void GraphPanel::finishLink(const LinkDrag& link, const GraphHit& hit)
 {
     const LinkTarget t = linkTarget(link, hit);
+    const bool placed = t.valid && t.place.dropping();
+    const NodeItem* stack = placed ? m_scene.item(t.node) : nullptr;
+    const StackPlace place = stack ? landing(*stack, t.place) : StackPlace{};
+    const auto placeArgs = [&](ActionArgs args) {   // where in the stack it goes
+        args.add({ kPlaceAt, place.at });
+        if (place.into != kNoArtboard) args.add({ kIntoArtboard, place.into });
+        return args;
+    };
     if (link.pickedUp) {   // carried from its source: connects where it lands, else stays off
-        if (t.valid) ui().actions.endGesture(Actions::LinkMove, { { kTo, t.node }, { kToSlot, t.slot } });
-        else         ui().actions.endGesture(Actions::LinkMove, { { kDropped, true } });
+        const auto* lift = ui().project.preview() ? ui().project.preview()->as<LinkMoveEdit>() : nullptr;
+        if (placed && t.place.target() == StackGap::Target::Home && lift)   // back on its own spot: it stays as it was
+            ui().actions.endGesture(Actions::LinkMove, { { kTo, lift->from }, { kToSlot, lift->slot } });
+        else if (placed)  ui().actions.endGesture(Actions::LinkMove, placeArgs({ { kTo, t.node }, { kToSlot, t.slot } }));
+        else if (t.valid) ui().actions.endGesture(Actions::LinkMove, { { kTo, t.node }, { kToSlot, t.slot } });
+        else              ui().actions.endGesture(Actions::LinkMove, { { kDropped, true } });
+        if (placed) dropped(t.node, place);
         return;
     }
     if (t.valid) {
-        if (link.fromOutput) ui().actions.run(Actions::LinkConnect, { { kFrom, link.node }, { kTo, t.node }, { kSlot, t.slot } });
-        else                 ui().actions.run(Actions::LinkConnect, { { kFrom, t.node }, { kTo, link.node }, { kSlot, link.slot } });
+        if (placed)               ui().actions.run(Actions::LayerAdd, placeArgs({ { kFrom, link.node }, { kNode, t.node } }));
+        else if (link.fromOutput) ui().actions.run(Actions::LinkConnect, { { kFrom, link.node }, { kTo, t.node }, { kSlot, t.slot } });
+        else                      ui().actions.run(Actions::LinkConnect, { { kFrom, t.node }, { kTo, link.node }, { kSlot, link.slot } });
+        if (placed) dropped(t.node, place);
         return;
     }
     if (!hit.empty() && hit.link() < 0) return;   // on a node, a port or the minimap: no menu

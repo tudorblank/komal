@@ -23,6 +23,7 @@
 
 #include "node/input-slot.hpp"
 #include "node/signals.hpp"
+#include "node/stack-groups.hpp"
 #include "raster/raster-data.hpp"
 
 #include <array>
@@ -56,7 +57,12 @@ struct MoveSettings {
     int x = 0, y = 0;           // the offset, whole pixels (TileUtils::inWorld)
     bool operator==(const MoveSettings&) const = default;
 };
-using NodeSettings = std::variant<NoSettings, RasterSettings, MoveSettings>;
+struct CompositorSettings {
+    std::vector<NodeId>     muted;    // its layers left out of the composite, sorted
+    std::vector<StackGroup> groups;   // in stack order, none overlapping (StackGroups::normalized); kept right as rows come, go and move
+    bool operator==(const CompositorSettings&) const = default;
+};
+using NodeSettings = std::variant<NoSettings, RasterSettings, MoveSettings, CompositorSettings>;
 
 // What a kind's links can land on (its class declares them: kPorts). Every signal it has takes a
 // mask per channel besides.
@@ -252,6 +258,18 @@ public:
     static uint8_t gainByte(float v) { return unitToByte(v); }
 
 protected:
+    // A stack's rows as they change (inside the edit, before what changed is told): what keeps
+    // something per row, a compositor's mutes and groups, follows them.
+    struct LayerInserted { size_t at; };
+    struct LayerRemoved  { size_t at; };
+    struct LayerReplaced { size_t at; };   // another node on the same row
+    struct LayerMoved    { size_t from, to; };
+    struct LayersCleared {};
+    using LayerEdit = std::variant<LayerInserted, LayerRemoved, LayerReplaced, LayerMoved, LayersCleared>;
+    virtual void layersEdited(const LayerEdit&) {}
+    // Tiles a layer moving from row `from` to `to` changes besides where it crosses the others.
+    virtual void movedLayerTiles(size_t /*from*/, size_t /*to*/, const TileSet& /*moved*/, TileSet& /*dirty*/) const {}
+
     // Unknown change: dirty = footprint before + after.
     TileSet change(const std::function<void()>& mutate, Evict e = Evict::All);
     // Known change: exactly `dirty`.

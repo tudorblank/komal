@@ -73,6 +73,9 @@ Palette make(const Theme& t)
     p.originMark         = r[23].withAlpha(115);
     p.hudBack            = r[1].withAlpha(140);
     p.hudText            = r[20];
+    // artboards on the canvas
+    p.artboardFrame      = r[16];
+    p.artboardLabel      = r[18];
     // notices: something went wrong
     p.noticeBack         = r[5].withAlpha(235);
     p.noticeMark         = t.red;
@@ -85,6 +88,9 @@ Palette make(const Theme& t)
     p.nodeBody           = r[7];
     p.nodeInset          = r[5];
     p.nodeRow            = r[9];
+    p.nodeRowSelected    = t.accentDeep.withAlpha(80);
+    p.nodeRowSelectedText = t.accent;
+    p.nodeRowOrigin      = r[2];
     p.nodeRowHot         = r[10];
     p.nodeBorder         = r[0];
     p.nodeBorderHot      = r[15];

@@ -162,6 +162,8 @@ bool Project::setNodeSettings(NodeId id, const NodeSettings& settings)
     const NodeSettings now = n->settings();
     if (now.index() != settings.index() || now == settings) return false;   // its own kind's, and a change
     if (const auto* m = std::get_if<MoveSettings>(&settings); m && !(TileUtils::inWorld(m->x) && TileUtils::inWorld(m->y))) return false;
+    if (const auto* c = std::get_if<CompositorSettings>(&settings); c && c->groups != std::get<CompositorSettings>(now).groups)
+        return false;   // the artboards' (addArtboard, moveStackRows)
     if (id == m_stroke.node()) endStroke();   // finished under the rules it started with
     n->setSettings(key(), settings);
     emit(ProjectEventType::NodeChanged, id);
@@ -395,6 +397,13 @@ bool Project::goToHistory(StepId step)
 void Project::restoreGraph(const GraphState& target)
 {
     target.restore(key(), m_nodes, emitter());
+    const Artboards boards = target.artboards ? *target.artboards : Artboards{};
+    if (boards != m_artboards) {
+        m_artboards = boards;
+        showArtboards();
+        emit(ProjectEventType::ArtboardsChanged, m_master->id());
+    }
+    assert(artboardsMatchStack() && "a step holds its artboards and the master's groups together");
     const bool anyRaster = std::any_of(nodes().begin(), nodes().end(), [](const NodePtr& n) { return n->type() == NodeType::Raster; });
     if (m_active != kNoNodeId ? !find(m_active) : anyRaster) fallBackActiveRaster();
 }

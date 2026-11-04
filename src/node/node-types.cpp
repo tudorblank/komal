@@ -1,6 +1,7 @@
 #include "node-types.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <utility>
 
 // ============================ RASTER ROOT ============================
@@ -100,16 +101,138 @@ const Tile* MoveNode::fetchWet(int tx, int ty, RenderCtx& ctx)
 }
 
 // ============================ COMPOSITOR ============================
+namespace {
+
+const GroupLook* lookOf(const std::vector<GroupLook>& looks, GroupKey key)
+{
+    for (const GroupLook& l : looks)
+        if (l.key == key) return &l;
+    return nullptr;
+}
+
+void addTiles(const BoundsI& b, TileSet& out)
+{
+    forEachTileSpan(b, [&](const TileSpan& s) { out.insert(TileUtils::packKey(s.tx, s.ty)); });
+}
+
+}
+
 std::shared_ptr<CompositorNode> CompositorNode::create()
 {
     return std::make_shared<CompositorNode>(Private{});
 }
 
+bool CompositorNode::muted(const Node& layer) const
+{
+    return std::binary_search(m_settings.muted.begin(), m_settings.muted.end(), layer.id());
+}
+
+void CompositorNode::setSettings(GraphKey, const NodeSettings& s)
+{
+    const auto* c = std::get_if<CompositorSettings>(&s);
+    if (!c) return;
+    // Kept to what it holds: mutes of its own layers, each once; groups as a stack holds them.
+    CompositorSettings next;
+    for (NodeId id : c->muted)
+        if (std::any_of(layers().begin(), layers().end(), [&](const NodePtr& l) { return l->id() == id; })) next.muted.push_back(id);
+    std::sort(next.muted.begin(), next.muted.end());
+    next.muted.erase(std::unique(next.muted.begin(), next.muted.end()), next.muted.end());
+    next.groups = StackGroups::normalized(c->groups, layers().size());
+    if (next == m_settings) return;
+    changeDrawing([&] { m_settings = std::move(next); });
+}
+
+void CompositorNode::setLooks(GraphKey, std::vector<GroupLook> looks)
+{
+    if (looks == m_looks) return;
+    changeDrawing([&] { m_looks = std::move(looks); });
+}
+
+void CompositorNode::layersEdited(const LayerEdit& e)
+{
+    std::vector<StackGroup>& groups = m_settings.groups;
+    if (const auto* in = std::get_if<LayerInserted>(&e))        StackGroups::rowInserted(groups, in->at);
+    else if (const auto* out = std::get_if<LayerRemoved>(&e))   StackGroups::rowRemoved(groups, out->at);
+    else if (const auto* move = std::get_if<LayerMoved>(&e))    StackGroups::rowMoved(groups, move->from, move->to);
+    else if (std::holds_alternative<LayersCleared>(e))          StackGroups::rowsCleared(groups);
+    // A layer that went takes its mute with it: linked again, it shows.
+    std::erase_if(m_settings.muted, [&](NodeId id) {
+        return std::none_of(layers().begin(), layers().end(), [&](const NodePtr& l) { return l->id() == id; });
+    });
+    refresh();
+}
+
+void CompositorNode::movedLayerTiles(size_t, size_t, const TileSet& moved, TileSet& dirty) const
+{
+    // Crossing a fill changes it where they overlap; in or out of a hidden group, everywhere it is.
+    const bool hiding = std::any_of(m_looks.begin(), m_looks.end(), [](const GroupLook& l) { return l.hidden; });
+    for (TileKey k : moved) {
+        if (hiding) { dirty.insert(k); continue; }
+        const auto t = TileUtils::unpackKey(k);
+        for (const Drawn& d : m_drawn)
+            if (d.row < 0 && TileUtils::tileOverlaps(d.fill, t.x, t.y)) { dirty.insert(k); break; }
+    }
+}
+
+void CompositorNode::refresh()
+{
+    const std::vector<NodePtr>& rows = layers();
+    m_shown.assign(rows.size(), 1);
+    for (size_t i = 0; i < rows.size(); ++i)
+        if (muted(*rows[i])) m_shown[i] = 0;
+    for (const StackGroup& g : m_settings.groups)
+        if (const GroupLook* l = lookOf(m_looks, g.key); l && l->hidden)
+            for (uint32_t i = g.begin; i < g.end && i < rows.size(); ++i) m_shown[i] = 0;
+
+    // Bottom first: a group's fill, then its rows.
+    m_drawn.clear();
+    for (const StackGroups::Entry& e : StackGroups::entries(m_settings.groups, rows.size())) {
+        if (e.group != kNoGroup) {
+            const GroupLook* l = lookOf(m_looks, e.group);
+            if (l && !l->hidden && !l->fill.empty() && l->color.a > 0)
+                m_drawn.push_back({ -1, e.group, e.begin, l->fill, premultiply(l->color), l->color });
+        }
+        for (uint32_t row = e.begin; row < e.end; ++row)
+            if (m_shown[row]) m_drawn.push_back({ int(row), kNoGroup, 0, {}, {}, {} });
+    }
+}
+
+void CompositorNode::changeDrawing(const std::function<void()>& mutate)
+{
+    const std::vector<char>  shownWas = m_shown;
+    const std::vector<Drawn> drawnWas = m_drawn;
+    mutate();
+    refresh();
+    // Where a layer came or went, and every fill that isn't the same, in the same place.
+    TileSet dirty;
+    for (size_t i = 0; i < layers().size(); ++i)
+        if (i >= shownWas.size() || shownWas[i] != m_shown[i]) layers()[i]->addFootprint(dirty);
+    const auto same = [](const Drawn& a, const Drawn& b) {
+        return a.key == b.key && a.at == b.at && a.fill == b.fill && a.color == b.color;
+    };
+    const auto fillsOnly = [&](const std::vector<Drawn>& from, const std::vector<Drawn>& other) {
+        for (const Drawn& d : from)
+            if (d.row < 0 && std::none_of(other.begin(), other.end(), [&](const Drawn& o) { return o.row < 0 && same(d, o); }))
+                addTiles(d.fill, dirty);
+    };
+    fillsOnly(drawnWas, m_drawn);
+    fillsOnly(m_drawn, drawnWas);
+    changeKnown(std::move(dirty), Bounds::Recompute, Evict::All, [] {});
+}
+
 BoundsI CompositorNode::wetBounds() const
 {
     BoundsI r;
-    for (auto& l : layers()) r.expand(l->bounds());
+    for (const Drawn& d : m_drawn) r.expand(d.row >= 0 ? layers()[size_t(d.row)]->bounds() : d.fill);
     return r;
+}
+
+void CompositorNode::wetFootprint(TileSet& out)
+{
+    for (const Drawn& d : m_drawn) {
+        if (d.row >= 0) layers()[size_t(d.row)]->addFootprint(out);
+        else            addTiles(d.fill, out);
+    }
 }
 
 void CompositorNode::enableCache(GraphKey, bool on)
@@ -149,22 +272,32 @@ void CompositorNode::evictRawTile(int tx, int ty)
 
 const Tile* CompositorNode::composeTile(int tx, int ty, RenderCtx& ctx)
 {
-    return composeStack(layers().data(), layers().data() + layers().size(), tx, ty, ctx);
-}
-
-const Tile* composeStack(const NodePtr* bottom, const NodePtr* top, int tx, int ty, RenderCtx& ctx)
-{
-    // Top layer down, accumulating *under* what's there; stops once every pixel is opaque.
-    Tile& acc = ctx.take();
+    // Top down, accumulating *under* what's there (layers and fills alike, Over); stops once every
+    // pixel is opaque.
+    Tile& acc = ctx.take();   // cleared
     const size_t mk = ctx.mark();
     int  opaque = 0;
     bool any = false;
     {
         Tile::BulkWrite w(acc, Tile::BulkWrite::Trusted);
         RGBA* d = w.data();
-        for (const NodePtr* it = top; it != bottom && opaque < Tile::kPixels;) {
-            --it;
-            if (const Tile* src = (*it)->fetch(tx, ty, ctx)) {
+        for (auto it = m_drawn.rbegin(); it != m_drawn.rend() && opaque < Tile::kPixels; ++it) {
+            if (it->row < 0) {   // a fill: its colour where its rect covers the tile
+                if (!TileUtils::tileOverlaps(it->fill, tx, ty)) continue;
+                const int wx = TileUtils::tileToWorld(tx), wy = TileUtils::tileToWorld(ty);
+                const int lx0 = std::max(0, it->fill.minX - wx), lx1 = std::min(Tile::kSize - 1, it->fill.maxX - wx);
+                const int ly0 = std::max(0, it->fill.minY - wy), ly1 = std::min(Tile::kSize - 1, it->fill.maxY - wy);
+                for (int ly = ly0; ly <= ly1; ++ly)
+                    for (int lx = lx0; lx <= lx1; ++lx) {
+                        RGBA& px = d[ly * Tile::kSize + lx];
+                        if (px.a == 255) continue;
+                        px = over(it->color, px);   // what's accumulated sits on top of the fill
+                        opaque += px.a == 255;
+                    }
+                any = true;
+                continue;
+            }
+            if (const Tile* src = layers()[size_t(it->row)]->fetch(tx, ty, ctx)) {
                 const RGBA* s = src->getReadAll();
                 if (!any) {
                     std::memcpy(d, s, sizeof(RGBA) * Tile::kPixels);

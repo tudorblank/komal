@@ -86,9 +86,9 @@ void GraphPanel::draw()
     // A link dragged over a stack opens a gap where it would land (laid out from next frame on).
     if (auto* link = std::get_if<LinkDrag>(&m_drag)) {
         const LinkTarget t = linkTarget(*link, hit);
-        const auto* gap = t.valid ? t.slot.as<InputSlot::NewLayer>() : nullptr;
-        link->gapStack = gap ? t.node : kNoNodeId;
-        link->gapAt    = gap ? int(gap->at) : -1;
+        const bool placed = t.valid && t.place.dropping();
+        link->gapStack = placed ? t.node : kNoNodeId;
+        link->gap      = placed ? t.place : StackGap{};
     }
 
     {
@@ -114,8 +114,34 @@ const NodeSelection& GraphPanel::selection() const
 
 void GraphPanel::select(const NodeSelection& next)
 {
+    if (!next.empty()) m_scene.pickRows(kNoNodeId, {}, {});   // one kind of thing picked at a time: nodes, so no rows
     if (next == selection()) return;
     ui().actions.run(Actions::SelectionSet, selectionArgs(next));
+}
+
+bool GraphPanel::rowsPicked(NodeId* id) const
+{
+    for (const auto& [node, item] : m_scene.items())
+        if (const NodeItemState* view = m_scene.viewState(node); view && !view->selected.empty()) {
+            if (id) *id = node;
+            return true;
+        }
+    return false;
+}
+
+void GraphPanel::removePickedRows()
+{
+    NodeId id = kNoNodeId;
+    if (!rowsPicked(&id)) return;
+    std::vector<NodeId> layers;
+    std::vector<ArtboardId> artboards;
+    for (const StackRowRef& r : m_scene.viewState(id)->selected) {
+        if (r.layer != kNoNodeId) layers.push_back(r.layer);
+        else                      artboards.push_back(r.artboard);
+    }
+    ActionArgs args{ { DocArgs::kNode, id }, { DocArgs::kLayers, layers } };
+    if (!artboards.empty()) args.add({ DocArgs::kArtboards, artboards });
+    if (ui().actions.run(Actions::LayersRemove, args)) m_scene.pickRows(kNoNodeId, {}, {});
 }
 
 void GraphPanel::updateStackGap()
@@ -123,9 +149,12 @@ void GraphPanel::updateStackGap()
     // A lifted layer leaves a gap where it would land; so does a link dragged over a stack.
     const auto* layer = std::get_if<LayerDrag>(&m_drag);
     const auto* link  = std::get_if<LinkDrag>(&m_drag);
-    if (layer && layer->lifted)                   m_scene.setStackGap(layer->node, { layer->at, int(layer->layer) });
-    else if (link && link->gapStack != kNoNodeId) m_scene.setStackGap(link->gapStack, { link->gapAt, -1 });
-    else                                          m_scene.setStackGap(kNoNodeId, {});
+    if (layer && layer->lifted)
+        m_scene.setStackGap(layer->node, { layer->at, layer->rows });
+    else if (link && link->gapStack != kNoNodeId)
+        m_scene.setStackGap(link->gapStack, { link->gap, {} });
+    else
+        m_scene.setStackGap(kNoNodeId, {});
 }
 
 void GraphPanel::layoutOverlays(ImVec2 canvasMin, ImVec2 canvasMax)
@@ -188,7 +217,8 @@ void GraphPanel::registerActions(ActionRegistry& actions)
     const auto ui    = ActionKind::Interface;
     actions.add({ .id = Actions::GraphDelete, .title = "Delete Selected", .kind = ui,
                   .scope = graph,
-                  .enabled = [this] { return !selection().empty(); }, .run = [this] { deleteSelection(); } });
+                  .enabled = [this] { return !selection().empty() || rowsPicked(); },
+                  .run = [this] { if (rowsPicked()) removePickedRows(); else deleteSelection(); } });
     actions.add({ .id = Actions::GraphFrameSelected, .title = "Frame Selected", .kind = ui, .scope = graph,
                   .run = [this] { m_autoFrame = false; frameNodes(!selection().empty(), m_surface.size()); } });
     actions.add({ .id = Actions::GraphFrameAll, .title = "Frame All", .kind = ui, .scope = graph,

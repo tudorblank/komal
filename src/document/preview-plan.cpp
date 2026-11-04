@@ -62,7 +62,12 @@ int PreviewPlan::planFor(const NodePtr& n)
     if (shape == InputShape::One) {
         if (in.input) p.input = sourceFor(in.input);
     } else if (recompose) {   // layers the edit reaches are rebuilt; the rest are drawn as they are
-        for (const NodePtr& l : in.layers) p.layers.push_back(sourceFor(l));
+        p.stack = true;
+        const auto& stack = static_cast<const CompositorNode&>(*n);   // the one stack kind
+        for (const CompositorNode::Drawn& d : stack.drawn()) {
+            if (d.row >= 0) p.layers.push_back(sourceFor(in.layers[size_t(d.row)]));
+            else            p.fills.push_back({ d.fill, d.tint, p.layers.size() });
+        }
     } else {
         p.wet = leafFor(n, PreviewLeaf::Kind::Wet);   // its wet can't change: frozen, its signals change on the GPU
         if (m_stroke && n->id() == m_edited) p.stroke = leafFor(n, PreviewLeaf::Kind::Stroke);

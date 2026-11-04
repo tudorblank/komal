@@ -181,6 +181,8 @@ void gradientSlider(const Painter& p, const Style::GradientSliderStyle& s, float
 {
     const float th = s.thickness;
     const float y0 = cy - th * 0.5f, y1 = cy + th * 0.5f, len = x1 - x0;
+    if (std::any_of(stops, stops + count, [](ImU32 c) { return (c >> IM_COL32_A_SHIFT & 0xFF) != 0xFF; }))
+        checker(p, ImVec2(x0, y0), ImVec2(x1, y1), s.checkerCell, s.checkerA, s.checkerB);
     for (int i = 0; i + 1 < count; ++i) {
         const float a = x0 + len * float(i) / float(count - 1), b = x0 + len * float(i + 1) / float(count - 1);
         p.gradientRect(ImVec2(a, y0), ImVec2(b, y1), stops[i], stops[i + 1], stops[i + 1], stops[i]);
@@ -188,6 +190,33 @@ void gradientSlider(const Painter& p, const Style::GradientSliderStyle& s, float
     // Rounded ends: the panel colour drawn over the gradient's corners.
     p.strokeRect(ImVec2(x0 - 1.0f, y0 - 1.0f), ImVec2(x1 + 1.0f, y1 + 1.0f), s.edge, th * 0.5f + 1.0f, s.edgeWidth);
     sliderGrab(p, s.grab, xv, cy, hot);
+}
+
+// ---------------------------------------------------------------- colour pickers
+
+void checker(const Painter& p, ImVec2 a, ImVec2 b, float cell, ImU32 colorA, ImU32 colorB)
+{
+    p.fillRect(a, b, colorB);
+    if (cell <= 0.0f) return;
+    for (float y = a.y; y < b.y; y += cell)
+        for (float x = a.x; x < b.x; x += cell)
+            if ((int((x - a.x) / cell) + int((y - a.y) / cell)) % 2 == 0)
+                p.fillRect(ImVec2(x, y), ImVec2(std::min(x + cell, b.x), std::min(y + cell, b.y)), colorA);
+}
+
+void colorMarker(const Painter& p, const Style::ColorPickerStyle& s, ImVec2 at, float radius)
+{
+    p.strokeCircle(at, radius + 1.0f, s.markerRim, s.markerRimWidth);
+    p.strokeCircle(at, radius, s.marker, s.markerWidth);
+}
+
+void colorSquare(const Painter& p, const Style::ColorPickerStyle& s, ImVec2 a, ImVec2 b, ImU32 pureHue, float sat, float value,
+                 float markerRadius)
+{
+    // White -> the pure hue left to right, then darkened towards the bottom.
+    p.gradientRect(a, b, s.white, pureHue, pureHue, s.white);
+    p.gradientRect(a, b, s.clear, s.clear, s.black, s.black);
+    colorMarker(p, s, ImVec2(a.x + sat * (b.x - a.x), a.y + (1.0f - value) * (b.y - a.y)), markerRadius);
 }
 
 // ---------------------------------------------------------------- the Toolbox

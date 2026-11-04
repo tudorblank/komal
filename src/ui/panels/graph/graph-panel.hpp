@@ -58,16 +58,18 @@ private:
         InputSlot slot{};                  // ... or that input
         bool      pickedUp = false;        // lifted off an input (link.move)
         NodeId    gapStack = kNoNodeId;    // the stack it would land in: a gap opens there next frame
-        int       gapAt = -1;
+        StackGap  gap{};
     };
     struct ScaleDrag  { ScaleControl control; ActionArgs args; };               // signal.scrub, as last dragged
     struct OffsetDrag { OffsetControl control; int start; ActionArgs args; };   // move.scrub
-    struct LayerDrag {
-        NodeId   node;                     // the compositor
-        uint32_t layer;                    // stack index of the row being dragged
-        float    grab;                     // mouse below the row's top, graph units
-        bool     lifted = false;           // past the drag threshold: floats, with a gap where it lands
-        int      at = -1;                  // that gap: a position among the other layers
+    struct LayerDrag {                     // a stack's rows picked, pressed, then dragged together
+        NodeId      node;                  // the compositor
+        std::vector<StackRowRef> rows;     // what it carries, top first
+        StackRowRef pressed;               // the row under the mouse
+        float       grab;                  // mouse below the pressed row's top, graph units
+        bool        wasPicked = false;     // a click (no drag) on a row of a bigger pick picks just it
+        bool        lifted = false;        // past the drag threshold: floats, with a gap where it lands
+        StackGap    at{};                  // that gap
     };
     struct MinimapDrag {};
     using Drag = std::variant<std::monostate, PressNode, MoveNodes, PressEmpty, RubberBand, LinkDrag, ScaleDrag, OffsetDrag,
@@ -76,6 +78,7 @@ private:
         bool      valid = false;
         NodeId    node = kNoNodeId;
         InputSlot slot;
+        StackGap  place;              // into a stack: where (kind Link), else none
         ImVec2    pos;                // screen
     };
 
@@ -95,7 +98,15 @@ private:
     void endDrag(const GraphHit& hit);   // the button went up
     bool dragging() const { return !std::holds_alternative<std::monostate>(m_drag); }
     LinkTarget linkTarget(const LinkDrag& link, const GraphHit& hit) const;
-    uint32_t   stackPosition(NodeId id, float y) const;   // where in its stack something dropped at graph y goes
+    // Where something dropped at graph (x, y) on a stack lands: a place among the rows left (an
+    // artboard never goes into one), and how it shows (StackGap::Target).
+    StackGap   stackPlace(NodeId id, ImVec2 at, StackGap::Kind kind, bool carriesArtboard, const std::vector<StackRowRef>& carried) const;
+    void       dropped(NodeId id, const StackPlace& place);   // into a folded artboard: it unfolds now
+    bool       rowsPicked(NodeId* id = nullptr) const;     // a stack's rows are picked (whose)
+    void       removePickedRows();                         // Del: the layers unlinked, the artboards gone
+    StackRowRef rowRef(NodeId id, const NodeItemLayerRow& row) const;   // a layer row's node, or an artboard's key
+    std::vector<StackRowRef> shownRows(NodeId id) const;               // the stack's rows as laid out, top first
+    void pressRow(NodeId id, StackRowRef row, float grab);            // click, Ctrl, Shift: picks; starts a LayerDrag
     void finishLink(const LinkDrag& link, const GraphHit& hit);
     const NodeSelection& selection() const;
     void select(const NodeSelection& next);   // selection.set, if it changes anything

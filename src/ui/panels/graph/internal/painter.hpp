@@ -4,6 +4,7 @@
 
 #include "ui/panels/graph/internal/camera.hpp"
 #include "ui/panels/graph/internal/item.hpp"
+#include "document/artboard.hpp"
 #include "ui/render/painter.hpp"
 
 #include <string>
@@ -45,8 +46,16 @@ void paintNode(const GraphPaint& g, const Project& project, const Node& n, const
                const NodeItemVisual& visual, NodeThumbnails& thumbs);
 void paintNodeOutline(const GraphPaint& g, const NodeItem& item, const NodeItemVisual& visual);
 void paintNodePorts(const GraphPaint& g, const Project& project, const NodeItem& item, const NodeItemVisual& visual);
-// One row of a layer stack; lifted: the row being dragged, floating over the stack.
-void paintLayerRow(const GraphPaint& g, const Node& layer, const ImRect& rect, NodeThumbnails& thumbs, bool hot, bool lifted);
+// How a stack's row shows: under the mouse, carried by a drag (floating over the stack), picked;
+// a layer muted there; the part of it under the mouse.
+struct RowLook {
+    bool hot = false, lifted = false, selected = false, muted = false;
+    bool eyeHot = false, foldHot = false, colorHot = false;
+    bool folded = false;   // an artboard's layers folded away
+};
+void paintLayerRow(const GraphPaint& g, const Node& layer, const ImRect& rect, NodeThumbnails& thumbs, const RowLook& look);
+// An artboard's row (the master's): its triangle, eye, colour and name. Null: gone.
+void paintArtboardRow(const GraphPaint& g, const Artboard* board, const ImRect& rect, const RowLook& look);
 
 // Links run between two screen points: out of an output (rightwards) into an input.
 struct LinkCurve { ImVec2 p0, p1, p2, p3; };

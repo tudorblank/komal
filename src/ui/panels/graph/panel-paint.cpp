@@ -80,27 +80,56 @@ void GraphPanel::paint(const GraphPaint& g, const GraphHit& hit, ImVec2 canvasMi
         paintNodeOutline(pg, *s, v);
         paintNodePorts(pg, ui().project, *s, v);
 
-        // The layer row being dragged floats over its stack, still linked to its node.
+        // The rows being dragged float over their stack, top first from the pressed one's place,
+        // each layer still linked to its node.
         const auto* lifted = std::get_if<LayerDrag>(&m_drag);
         if (!lifted || id != lifted->node || !lifted->lifted) return;
-        const NodePtr layer = ui().project.inputAt(id, InputSlot::stackLayer(lifted->layer));
-        if (!layer) return;
-        const float y = pg.camera.toGraph(ImGui::GetIO().MousePos).y - lifted->grab;
-        const ImRect row(s->header.Min.x + 6.0f, y, s->header.Max.x - 6.0f, y + kLayerRowH);
-        if (const NodeItem* from = m_scene.item(layer->id()); from && from->output()) {
-            const ImVec2 a = cameraFor(layer->id()).toScreen(from->output()->pos);
-            const ImVec2 b = pg.at(ImVec2(row.Min.x - 6.0f, row.GetCenter().y));
-            if (m_scene.isMaster(id)) paintFadingLink(g, linkCurve(g, a, b), colors().imageLink, false);
-            else              paintLink(g, linkCurve(g, a, b), colors().imageLink, false);
+        const auto& rows = lifted->rows;
+        // Going into an artboard: see-through, the artboard outlined where it lands.
+        const bool intoArtboard = landing(*s, lifted->at).into != kNoArtboard;
+        const GraphPaint ghost{ intoArtboard ? pg.draw.faded(0.45f) : pg.draw, pg.camera, pg.contentScale, pg.font, pg.numberFont };
+        const size_t pressed = size_t(std::find(rows.begin(), rows.end(), lifted->pressed) - rows.begin());
+        float y = pg.camera.toGraph(ImGui::GetIO().MousePos).y - lifted->grab;
+        for (size_t i = 0; i < pressed && i < rows.size(); ++i)
+            y -= (rows[i].artboard != kNoArtboard ? kArtboardRowH : kLayerRowH) + kLayerGap;
+        for (const StackRowRef& r : rows) {
+            const float h = r.artboard != kNoArtboard ? kArtboardRowH : kLayerRowH;
+            const ImRect row(s->header.Min.x + 6.0f, y, s->header.Max.x - 6.0f, y + h);
+            y += h + kLayerGap;
+            if (r.artboard != kNoArtboard) {
+                paintArtboardRow(ghost, ui().project.artboard(r.artboard), row, { .lifted = true, .selected = true });
+                continue;
+            }
+            const Node* layer = ui().project.find(r.layer);
+            if (!layer) continue;
+            if (const NodeItem* from = m_scene.item(layer->id()); from && from->output()) {
+                const ImVec2 a = cameraFor(layer->id()).toScreen(from->output()->pos);
+                const ImVec2 b = pg.at(ImVec2(row.Min.x - 6.0f, row.GetCenter().y));
+                if (m_scene.isMaster(id)) paintFadingLink(g, linkCurve(g, a, b), colors().imageLink, false);
+                else              paintLink(g, linkCurve(g, a, b), colors().imageLink, false);
+            }
+            const auto* stack = dynamic_cast<const CompositorNode*>(n);
+            paintLayerRow(ghost, *layer, row, ui().thumbnails, { .lifted = true, .selected = true, .muted = stack && stack->muted(*layer) });
         }
-        paintLayerRow(pg, *layer, row, ui().thumbnails, true, true);
     };
     const NodeId master = ui().project.master().id();
     for (NodeId id : m_scene.zOrder())
         if (id != master) paintOne(g, id);
 
     // ---- the pinned master and the navigator, over the graph
-    paintOne(paintContext(m_pinned), master);
+    const GraphPaint pinned = paintContext(m_pinned);
+    paintOne(pinned, master);
+    {   // its links again, over it: they reach its layers' ports inside it (an artboard's are indented)
+        const Painter::Clip clip = draw.clip(m_pinnedRect.Min, m_pinnedRect.Max);
+        for (size_t i = 0; i < links.size(); ++i)
+            if (links[i].toMaster && links[i].shown)
+                paintFadingLink(g, m_curves[i], links[i].mask ? colors().maskLink : colors().imageLink, linkHovered == int(i));
+        if (const NodeItem* s = m_scene.item(master)) {   // its ports stay on top
+            NodeItemVisual v;
+            v.hoveredPort = hit.port(master);
+            paintNodePorts(pinned, ui().project, *s, v);
+        }
+    }
     m_minimap.paint(draw, ui().project, m_minimapEdges, selection().ids(), m_camera, m_surface.size(), ImGui::GetIO().MousePos,
                     !dragging() || std::holds_alternative<MinimapDrag>(m_drag));
 

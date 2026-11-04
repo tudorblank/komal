@@ -117,6 +117,8 @@ struct GradientSliderStyle {
     float thickness;
     ImU32 edge;           // drawn over the gradient's corners: the panel's colour
     float edgeWidth;
+    ImU32 checkerA, checkerB;   // under a gradient that's see-through (an alpha slider)
+    float checkerCell;
 };
 
 // The Toolbox's square tool buttons.
@@ -176,6 +178,9 @@ struct ColorPickerStyle {
     float markerRimWidth, markerWidth;
     float hueMarker, squareMarker, squareMarkerMin;   // marker radii: of the ring's width, of the hue marker's
     float maxSize, minSize;
+    ImU32 checkerA, checkerB;   // under a colour that's see-through
+    float checkerCell;
+    float floatWidth;           // the floating picker (FloatColorPick): its square and rows
 };
 
 // The graph's popups: the value being typed, the add-node menu.
@@ -199,6 +204,8 @@ struct CanvasStyle {
     Color8 previewFrom;                      // where a dragged edit's area was
     Color8 previewTo;                        // ... and where it goes
     float  previewToWidth;
+    Color8 artboardFrame;                    // an artboard's rect ...
+    Color8 artboardLabel;                    // ... and its name
 };
 const CanvasStyle& canvas();   // scale-free: any time
 

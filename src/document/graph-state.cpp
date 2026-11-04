@@ -26,15 +26,17 @@ NodeStatePtr stateOf(const NodePtr& node)
 
 }
 
-GraphState GraphState::capture(const NodeRegistry& registry)
+GraphState GraphState::capture(const NodeRegistry& registry, const Artboards& artboards)
 {
     GraphState g;
     g.nodes.reserve(registry.nodes().size());
     for (const NodePtr& n : registry.nodes()) g.nodes.push_back(stateOf(n));
+    g.artboards = std::make_shared<const Artboards>(artboards);
     return g;
 }
 
-GraphState GraphState::capture(const NodeRegistry& registry, const GraphState& previous, const absl::flat_hash_set<NodeId>& changed)
+GraphState GraphState::capture(const NodeRegistry& registry, const Artboards& artboards, const GraphState& previous,
+                               const absl::flat_hash_set<NodeId>& changed)
 {
     absl::flat_hash_map<NodeId, const NodeStatePtr*> kept;
     kept.reserve(previous.nodes.size());
@@ -46,12 +48,14 @@ GraphState GraphState::capture(const NodeRegistry& registry, const GraphState& p
         const auto it = kept.find(n->id());
         g.nodes.push_back(it != kept.end() ? *it->second : stateOf(n));
     }
+    g.artboards = previous.artboards && *previous.artboards == artboards ? previous.artboards : std::make_shared<const Artboards>(artboards);
     return g;
 }
 
 bool GraphState::operator==(const GraphState& o) const
 {
-    if (nodes.size() != o.nodes.size()) return false;
+    const auto boards = [](const GraphState& s) { return s.artboards ? *s.artboards : Artboards{}; };
+    if (nodes.size() != o.nodes.size() || (artboards != o.artboards && boards(*this) != boards(o))) return false;
     for (size_t i = 0; i < nodes.size(); ++i)
         if (nodes[i] != o.nodes[i] && !(*nodes[i] == *o.nodes[i])) return false;
     return true;

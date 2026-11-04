@@ -4,7 +4,8 @@
 
 std::shared_ptr<const GraphState> StepRecorder::capture(const std::shared_ptr<const GraphState>& previous) const
 {
-    return std::make_shared<const GraphState>(previous ? GraphState::capture(m_nodes, *previous, m_touched) : GraphState::capture(m_nodes));
+    return std::make_shared<const GraphState>(previous ? GraphState::capture(m_nodes, m_artboards, *previous, m_touched)
+                                                       : GraphState::capture(m_nodes, m_artboards));
 }
 
 void StepRecorder::start()

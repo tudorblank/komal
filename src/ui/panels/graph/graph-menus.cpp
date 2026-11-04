@@ -16,6 +16,8 @@ using namespace DocArgs;
 namespace {
 
 constexpr const char* kContext    = "##node-context";
+constexpr const char* kArtboardMenu = "##artboard-context";
+constexpr const char* kColorPopup = "##artboard-color";
 constexpr const char* kValuePopup = "##value-edit";
 
 }
@@ -42,11 +44,31 @@ void GraphMenus::openContext(NodeId node)
     ImGui::OpenPopup(kContext);   // in the graph's window, like the popup itself
 }
 
+void GraphMenus::openArtboard(ArtboardId id)
+{
+    m_artboard = id;
+    ImGui::OpenPopup(kArtboardMenu);
+}
+
+void GraphMenus::openColor(ArtboardId id)
+{
+    const Artboard* a = m_project->artboard(id);
+    if (!a) return;
+    m_artboard = id;
+    m_colorPick.open(a->color);
+}
+
 bool GraphMenus::openValue(Value value)
 {
-    // Starts from what the node has now.
+    // Starts from what the node (or the artboard) has now.
     const bool known = std::visit([&](auto& v) {
         using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T, RenameArtboard>) {
+            const Artboard* a = m_project->artboard(v.artboard);
+            if (a) std::snprintf(v.text, sizeof v.text, "%s", a->name.c_str());
+            return a != nullptr;
+        }
+        else {
         const Node* n = m_project->find(v.node);
         if (!n) return false;
         if constexpr (std::is_same_v<T, Rename>) {
@@ -60,6 +82,7 @@ bool GraphMenus::openValue(Value value)
             v.pixels = float(v.axis == 0 ? move->x : move->y);
         }
         return true;
+        }
     }, value);
     if (!known) return false;
     m_value = value;
@@ -73,6 +96,8 @@ void GraphMenus::draw()
     NodeType picked;
     if (m_addMenu.draw(picked)) add(picked);
     drawContext();
+    drawArtboard();
+    drawColor();
     drawValue();
 }
 
@@ -143,6 +168,16 @@ void GraphMenus::drawContext()
                                { .label = "Move to Origin", .enabled = !b.empty() && (b.minX != 0 || b.minY != 0) }))
                 actions.run(Actions::GraphShowInCanvas, { { kNodes, std::vector<NodeId>{ id } } });
         }
+        if (master) {
+            // A new one over what the canvas shows (or a 1920 x 1080 from the origin while it's hidden).
+            const Vec2 view = m_project->canvasViewport();
+            BoundsI rect{ 0, 0, 1919, 1079 };
+            if (view.x > 0.0f && view.y > 0.0f) {
+                const ViewRect v = m_project->canvasCamera().visibleWorld(view.x, view.y);
+                rect = { int(std::floor(v.minX)), int(std::floor(v.minY)), int(std::ceil(v.maxX)) - 1, int(std::ceil(v.maxY)) - 1 };
+            }
+            actionMenuItem(actions, Actions::ArtboardAdd, { { kMinX, rect.minX }, { kMinY, rect.minY }, { kMaxX, rect.maxX }, { kMaxY, rect.maxY } });
+        }
         ImGui::Separator();
         actionMenuItem(actions, Actions::GraphRename, { { kNode, id } });
         if (!master) {
@@ -151,6 +186,33 @@ void GraphMenus::drawContext()
         }
     }
     ImGui::EndPopup();
+}
+
+void GraphMenus::drawArtboard()
+{
+    if (!ImGui::BeginPopup(kArtboardMenu)) return;
+    if (const Artboard* a = m_project->artboard(m_artboard)) {
+        using Widgets::actionMenuItem;
+        ImGui::TextDisabled("%s", a->name.c_str());
+        ImGui::Separator();
+        actionMenuItem(*m_actions, Actions::ArtboardSet, { { kArtboard, a->id }, { kVisible, !a->visible } },
+                       { .label = "Shown", .checked = a->visible });
+        if (ImGui::MenuItem("Color...")) openColor(a->id);
+        if (ImGui::MenuItem("Rename")) openValue(RenameArtboard{ a->id });
+        ImGui::Separator();
+        actionMenuItem(*m_actions, Actions::ArtboardDelete, { { kArtboard, a->id } });
+    } else {
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
+void GraphMenus::drawColor()
+{
+    // Shown as it's picked; the artboard takes it once a change is finished (one undo step each).
+    const FloatColorPick::Result r = m_colorPick.draw(kColorPopup);
+    const Artboard* a = m_project->artboard(m_artboard);
+    if (r.done && a && r.color != a->color) m_actions->run(Actions::ArtboardSet, { { kArtboard, a->id }, { kColor, r.color } });
 }
 
 void GraphMenus::drawValue()
@@ -166,6 +228,9 @@ void GraphMenus::drawValue()
         if constexpr (std::is_same_v<T, Rename>) {
             if (Widgets::textField(kField, v.text, sizeof v.text, width))
                 m_actions->run(Actions::NodeRename, { { kNode, v.node }, { kLabel, v.text } });
+        } else if constexpr (std::is_same_v<T, RenameArtboard>) {
+            if (Widgets::textField(kField, v.text, sizeof v.text, width) && v.text[0])
+                m_actions->run(Actions::ArtboardSet, { { kArtboard, v.artboard }, { kName, std::string(v.text) } });
         } else if constexpr (std::is_same_v<T, ScaleValue>) {
             if (Widgets::numberField(kField, v.percent, 0.0f, 100.0f, "%.1f%%", width))
                 m_actions->run(Actions::SignalSet, { { kNode, v.node }, { kSignal, v.signal }, { kChannel, v.channel }, { kValue, v.percent / 100.0f } });

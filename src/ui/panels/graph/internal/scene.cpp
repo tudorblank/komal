@@ -42,6 +42,37 @@ void GraphScene::toggleSection(NodeId id, NodeSignal signal)
     layoutItem(id);
 }
 
+const NodeItemState* GraphScene::viewState(NodeId id) const
+{
+    const auto it = m_viewStates.find(id);
+    return it == m_viewStates.end() ? nullptr : &it->second;
+}
+
+void GraphScene::pickRows(NodeId id, std::vector<StackRowRef> rows, StackRowRef anchor)
+{
+    // One stack's rows at a time: picking rows in one lets go of any other's.
+    for (auto& [other, state] : m_viewStates)
+        if (other != id && !state.selected.empty()) {
+            state.selected.clear();
+            state.anchor = {};
+            layoutItem(other);
+        }
+    if (id == kNoNodeId) return;   // none picked anywhere
+    NodeItemState& s = m_viewStates[id];
+    if (s.selected == rows && s.anchor == anchor) return;
+    s.selected = std::move(rows);
+    s.anchor   = anchor;
+    layoutItem(id);
+}
+
+void GraphScene::toggleArtboard(NodeId id, ArtboardId artboard)
+{
+    std::vector<ArtboardId>& folded = m_viewStates[id].folded;
+    if (const auto it = std::find(folded.begin(), folded.end(), artboard); it != folded.end()) folded.erase(it);
+    else folded.push_back(artboard);
+    layoutItem(id);
+}
+
 void GraphScene::setStackGap(NodeId node, StackLayout layout)
 {
     if (node == m_gapNode && layout == m_gap) return;
@@ -52,13 +83,24 @@ void GraphScene::setStackGap(NodeId node, StackLayout layout)
     if (node != kNoNodeId) layoutItem(node);
 }
 
+NodeItem GraphScene::layoutWith(NodeId node, const StackLayout& layout) const
+{
+    NodeItem out;
+    const Node* n = m_project->find(node);
+    if (!n) return out;
+    const auto view = m_viewStates.find(node);
+    buildNodeItem(*m_project, *n, view != m_viewStates.end() ? view->second : NodeItemState{}, layout, out);
+    if (m_moving.contains(node)) out.moveTo(position(node).x, position(node).y);
+    return out;
+}
+
 StackLayout GraphScene::stackLayout(NodeId id) const
 {
     const Node* n = m_project->find(id);
     if (!n || n->ports().inputs != InputShape::Stack) return {};
     StackLayout l = id == m_gapNode ? m_gap : StackLayout{};
-    if (m_lifted && m_lifted->from == id)   // a layer lifted off it: its row closes up
-        if (const auto* layer = m_lifted->slot.as<InputSlot::Layer>()) l.hidden = int(layer->index);
+    if (m_lifted && m_lifted->from == id && m_lifted->slot.is<InputSlot::Layer>())   // a layer lifted off it: its row closes up
+        l.lifted.push_back({ m_lifted->source, kNoArtboard });
     return l;
 }
 
@@ -108,6 +150,12 @@ void GraphScene::onProjectEvent(const ProjectEvent& e)
     case ProjectEventType::LayersChanged:
         layoutItem(e.node);
         addLinksInto(e.node, true);
+        break;
+    case ProjectEventType::ArtboardsChanged:   // the master's rows: its groups' headers
+        layoutItem(e.node);
+        break;
+    case ProjectEventType::NodeChanged:   // a stack's groups (undone) lay its rows out anew; other values are painted as they are
+        if (const Node* n = m_project->find(e.node); n && n->ports().inputs == InputShape::Stack) layoutItem(e.node);
         break;
     case ProjectEventType::PreviewChanged:
         followPreview();
@@ -194,10 +242,10 @@ void GraphScene::placeLinkEnds(GraphLink& l) const
     const NodeItem* from = item(l.from);
     const NodeItem* to   = item(l.to);
     const NodeItemPort* out = from ? from->output() : nullptr;
-    const NodeItemPort* in  = to ? to->input(l.slot) : nullptr;
+    const std::optional<ImVec2> in = to ? to->linkEnd(l.slot) : std::nullopt;   // a port, or a folded artboard's row
     l.shown = out && in && !lifted(l);
     if (out) l.fromGraph = out->pos;
-    if (in)  l.toGraph   = in->pos;
+    if (in)  l.toGraph   = *in;
 }
 
 void GraphScene::placeLinkEndsOf(NodeId id)

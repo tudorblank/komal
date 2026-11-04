@@ -17,6 +17,7 @@ class Painter {
 public:
     static Painter window();       // the window being drawn
     static Painter foreground();   // over every window of the main viewport
+    Painter faded(float opacity) const;   // the same surface, everything drawn see-through (opacity 0..1)
 
     // ---- shapes. `corners`: ImDrawFlags_RoundCorners* (0: all of them)
     void fillRect(ImVec2 a, ImVec2 b, ImU32 color, float rounding = 0.0f, ImDrawFlags corners = 0) const;
@@ -62,5 +63,7 @@ public:
 
 private:
     explicit Painter(ImDrawList* list) : m_list(list) {}
+    ImU32 ink(ImU32 color) const;   // its opacity applied
     ImDrawList* m_list;
+    float m_opacity = 1.0f;
 };

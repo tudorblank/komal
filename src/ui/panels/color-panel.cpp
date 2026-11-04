@@ -2,6 +2,7 @@
 #include "base/math.hpp"
 #include "command/actions.hpp"
 #include "ui/render/painter.hpp"
+#include "ui/render/skins.hpp"
 #include "ui/style/ui-style.hpp"
 #include "ui/tools/tool-base.hpp"
 #include "ui/tools/tool-manager.hpp"
@@ -72,7 +73,7 @@ void ColorPanel::draw()
     // room below for a gap, the codes row, a gap and the three sliders.
     const Style::ColorPickerStyle& style = Style::get().colorPicker;
     const ImGuiStyle& st = ImGui::GetStyle();
-    const float rowsBelow = Widgets::stackHeight(4, 0, 2) + st.ItemSpacing.y;
+    const float rowsBelow = Widgets::stackHeight(5, 0, 2) + st.ItemSpacing.y;
     const float block = style.block;
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const float wheel = std::clamp(std::min(avail.x - 2.0f * (block + st.ItemSpacing.x), avail.y - rowsBelow), style.minSize, style.maxSize);
@@ -91,14 +92,17 @@ void ColorPanel::draw()
     Widgets::sectionGap();
     drawCodes();
     Widgets::sectionGap();
-    drawSliders();
+    float alpha = fg[3];
+    drawSliders(alpha);
 
+    const char* target = m_editSecondary ? "secondary" : "primary";
     if (m_h != h0 || m_s != s0 || m_v != v0) {   // a control changed the colour: its action writes it
         float rgb[3];
         writeTo(rgb);
-        actions.run(Actions::ColorSet, { { ColorArgs::kTarget, m_editSecondary ? "secondary" : "primary" }, { ColorArgs::kR, rgb[0] },
-                                         { ColorArgs::kG, rgb[1] }, { ColorArgs::kB, rgb[2] } });
+        actions.run(Actions::ColorSet, { { ColorArgs::kTarget, target }, { ColorArgs::kR, rgb[0] }, { ColorArgs::kG, rgb[1] },
+                                         { ColorArgs::kB, rgb[2] } });
     }
+    if (alpha != fg[3]) actions.run(Actions::ColorSet, { { ColorArgs::kTarget, target }, { ColorArgs::kA, alpha } });
 }
 
 void ColorPanel::drawSwatches(const ToolColors& colors, ActionRegistry& actions, float block)
@@ -125,9 +129,10 @@ void ColorPanel::drawSwatches(const ToolColors& colors, ActionRegistry& actions,
 
     const Painter draw = Painter::window();
     const float r = style.swatchRounding, gap = style.swatchGap;
-    const auto swatch = [&](ImVec2 a, ImVec2 b, const float* rgb, bool edited) {
+    const auto swatch = [&](ImVec2 a, ImVec2 b, const float* rgba, bool edited) {
         draw.fillRect(ImVec2(a.x - gap, a.y - gap), ImVec2(b.x + gap, b.y + gap), style.gap, r + 1.0f);   // apart from what's behind
-        draw.fillRect(a, b, ImGui::ColorConvertFloat4ToU32(ImVec4(rgb[0], rgb[1], rgb[2], 1.0f)), r);
+        if (rgba[3] < 1.0f) Skin::checker(draw, a, b, style.checkerCell, style.checkerA, style.checkerB);   // see-through
+        draw.fillRect(a, b, ImGui::ColorConvertFloat4ToU32(ImVec4(rgba[0], rgba[1], rgba[2], rgba[3])), r);
         draw.strokeRect(a, b, style.rim, r, 1.0f);
         draw.strokeRect(ImVec2(a.x + 1.0f, a.y + 1.0f), ImVec2(b.x - 1.0f, b.y - 1.0f), style.lightRim, r - 1.0f);   // a black one still shows
         if (edited) draw.strokeRect(ImVec2(a.x - 1.5f, a.y - 1.5f), ImVec2(b.x + 1.5f, b.y + 1.5f), style.edited, r + 1.0f, style.editedWidth);
@@ -192,19 +197,10 @@ void ColorPanel::drawWheel(float size)
     draw.strokeCircle(c, outer + 0.5f, style.ringEdge, style.ringEdgeWidth, segments);
     draw.strokeCircle(c, inner - 0.5f, style.ringEdge, style.ringEdgeWidth, segments);
 
-    // The square: white -> the pure hue left to right, then darkened towards the bottom.
-    const ImU32 pure = hsv(m_h, 1.0f, 1.0f);
-    draw.gradientRect(q0, q1, style.white, pure, pure, style.white);
-    draw.gradientRect(q0, q1, style.clear, style.clear, style.black, style.black);
-
-    // Markers: rings, light inside dark, readable on any colour.
-    const auto marker = [&](ImVec2 at, float r) {
-        draw.strokeCircle(at, r + 1.0f, style.markerRim, style.markerRimWidth);
-        draw.strokeCircle(at, r, style.marker, style.markerWidth);
-    };
+    // The square, and the markers: rings, light inside dark, readable on any colour.
     const float ringMid = (inner + outer) * 0.5f, ringR = (outer - inner) * style.hueMarker;
-    marker(ImVec2(c.x + std::cos(angleOf(m_h)) * ringMid, c.y + std::sin(angleOf(m_h)) * ringMid), ringR);
-    marker(ImVec2(q0.x + m_s * (q1.x - q0.x), q0.y + (1.0f - m_v) * (q1.y - q0.y)), std::max(style.squareMarkerMin, ringR * style.squareMarker));
+    Skin::colorSquare(draw, style, q0, q1, hsv(m_h, 1.0f, 1.0f), m_s, m_v, std::max(style.squareMarkerMin, ringR * style.squareMarker));
+    Skin::colorMarker(draw, style, ImVec2(c.x + std::cos(angleOf(m_h)) * ringMid, c.y + std::sin(angleOf(m_h)) * ringMid), ringR);
 }
 
 void ColorPanel::drawCodes()
@@ -228,7 +224,7 @@ void ColorPanel::drawCodes()
     }
 }
 
-void ColorPanel::drawSliders()
+void ColorPanel::drawSliders(float& alpha)
 {
     // [letter] [gradient] [value]: hue in degrees (0..360, both ends kept), the others in percent.
     using namespace Widgets;
@@ -252,4 +248,7 @@ void ColorPanel::drawSliders()
 
     const ImU32 bri[2] = { hsv(m_h, m_s, 0.0f), hsv(m_h, m_s, 1.0f) };   // black -> the full colour
     row("B", "brightness", m_v, bri, 2, 100.0f, "%.0f%%");
+
+    const ImU32 opacity[2] = { hsv(m_h, m_s, m_v, 0.0f), hsv(m_h, m_s, m_v, 1.0f) };   // see-through -> solid
+    row("A", "alpha", alpha, opacity, 2, 100.0f, "%.0f%%");
 }

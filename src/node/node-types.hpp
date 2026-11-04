@@ -90,7 +90,17 @@ private:
 };
 
 // ============================ COMPOSITOR ============================
-// layers()[0] is the bottom of the stack.
+// How a group of a stack shows (the document's: an artboard's rect and colour, and its eye).
+struct GroupLook {
+    GroupKey key = kNoGroup;        // the StackGroup's
+    BoundsI  fill;                  // filled with `color` behind its layers (empty: nothing)
+    Color8   color{ 0, 0, 0, 0 };   // straight; transparent: no fill
+    bool     hidden = false;        // its fill and its layers left out
+    bool operator==(const GroupLook&) const = default;
+};
+
+// layers()[0] is the bottom of the stack. Each layer may be muted (CompositorSettings), and runs
+// of layers may be grouped, a group drawing a fill behind its layers (GroupLook).
 class CompositorNode : public Node {
     struct Private { explicit Private() = default; };
 public:
@@ -100,9 +110,27 @@ public:
     NodeType type() const override { return NodeType::Compositor; }
 
     const std::vector<NodePtr>& layers() const { return links().layers; }
+    NodeSettings settings() const override { return m_settings; }
+    void setSettings(GraphKey, const NodeSettings& s) override;   // kept to its rows: mutes of its layers, groups in range
+    const CompositorSettings& stack() const { return m_settings; }
+    bool muted(const Node& layer) const;
+    bool shows(size_t row) const { return row < m_shown.size() && m_shown[row]; }   // neither muted nor in a hidden group
+    void setLooks(GraphKey, std::vector<GroupLook> looks);   // by group key; a group without one draws nothing of its own
+    const std::vector<GroupLook>& looks() const { return m_looks; }
+
+    // What the composite draws, bottom first: a layer shown, or a group's fill.
+    struct Drawn {
+        int      row = -1;    // the layer's; -1: a fill
+        GroupKey key = kNoGroup;   // a fill's: its group ...
+        uint32_t at  = 0;          // ... and the row it's under
+        BoundsI  fill;
+        RGBA     color{};     // premultiplied ...
+        Color8   tint{};      // ... and straight
+    };
+    const std::vector<Drawn>& drawn() const { return m_drawn; }
 
     BoundsI wetBounds() const override;
-    void wetFootprint(TileSet& out) override { for (auto& l : layers()) l->addFootprint(out); }
+    void wetFootprint(TileSet& out) override;
     const Tile* fetchWet(int tx, int ty, RenderCtx& ctx) override;
 
     // Cache of the raw composite (the master keeps one: the canvas reads it tile by tile).
@@ -111,14 +139,21 @@ public:
 
     void evictRawTile(int tx, int ty) override;
 
+protected:
+    void layersEdited(const LayerEdit& e) override;
+    void movedLayerTiles(size_t from, size_t to, const TileSet& moved, TileSet& dirty) const override;
+
 private:
     const Tile* composeTile(int tx, int ty, RenderCtx& ctx);
+    void refresh();   // m_shown and m_drawn, from the rows, the settings and the looks
+    // Changes it through `mutate` (settings or looks): dirty where what it draws differs.
+    void changeDrawing(const std::function<void()>& mutate);
 
+    CompositorSettings     m_settings;
+    std::vector<GroupLook> m_looks;
+    std::vector<char>      m_shown;   // per row
+    std::vector<Drawn>     m_drawn;
     bool     m_cacheOn  = false;
     TileGrid m_cache;       // raw composite
     TileSet  m_empty;       // tiles known to composite to nothing
 };
-
-// Layers [bottom, top) composited (Over), as a compositor does: the bottom first. The result
-// lives in ctx scratch (nullptr: nothing there).
-const Tile* composeStack(const NodePtr* bottom, const NodePtr* top, int tx, int ty, RenderCtx& ctx);

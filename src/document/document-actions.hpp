@@ -6,7 +6,8 @@
 //   document edits   edit.undo  edit.redo  history.goTo
 //                    node.add  node.reference  node.delete  node.rename
 //                    raster.activate  raster.lock  raster.lockAlpha
-//                    link.connect  link.disconnect  layer.move
+//                    link.connect  link.disconnect  layer.move  layers.move  layer.add  layers.remove  layer.mute
+//                    artboard.add  artboard.set  artboard.delete
 //                    signal.set  move.set  image.import
 //   gestures         brush.stroke  node.drag  signal.scrub  move.scrub  link.move
 //   what views share selection.set
@@ -19,6 +20,7 @@
 //   image.import   const TileGrid*
 
 #include "command/actions.hpp"
+#include "document/artboard.hpp"
 #include "document/history.hpp"
 #include "node/input-slot.hpp"
 #include "document/node-selection.hpp"
@@ -53,7 +55,14 @@ inline constexpr ArgKey<float> kY{ "y" };
 // History, layers, values.
 inline constexpr ArgKey<StepId>      kStep{ "step" };
 inline constexpr ArgKey<size_t>      kLayerFrom{ "from" };   // layer.move: a layer's index (0 = bottom)
-inline constexpr ArgKey<size_t>      kLayerTo{ "to" };
+inline constexpr ArgKey<size_t>      kLayerTo{ "to" };       // ... where it goes; layers.move: a place among the rows left
+inline constexpr ArgKey<NodeId>      kLayer{ "layer" };      // layer.mute: one of the compositor's layers
+inline constexpr ArgKey<std::vector<NodeId>>     kLayers{ "layers" };        // layers.move: the layers moved ...
+inline constexpr ArgKey<std::vector<ArtboardId>> kArtboards{ "artboards" };  // ... and artboards, whole (the master's)
+inline constexpr ArgKey<ArtboardId>  kArtboard{ "artboard" };
+inline constexpr ArgKey<ArtboardId>  kIntoArtboard{ "into" };   // layers.move, layer.add, link.move: into this artboard (else the top level)
+inline constexpr ArgKey<size_t>      kPlaceAt{ "at" };          // layer.add, link.move: a place among the stack's rows (see StackMove)
+inline constexpr ArgKey<bool>        kVisible{ "visible" };     // artboard.set: its eye
 inline constexpr ArgKey<bool>        kOn{ "on" };
 inline constexpr ArgKey<NodeSignal>  kSignal{ "signal" };
 inline constexpr ArgKey<NodeChannel> kChannel{ "channel" };

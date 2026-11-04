@@ -15,7 +15,15 @@ constexpr float kThumbH     = 123.0f;
 constexpr float kThumbBelow = 13.0f;
 constexpr float kRowH       = 20.0f;   // property, section and channel rows
 constexpr float kLayerRowH  = 34.0f;
+constexpr float kArtboardRowH = 26.0f;
+constexpr float kArtboardIndent = 12.0f;   // its layers, and their ports
+constexpr float kDropLineH  = 3.0f;    // the line a drop at the bottom, under an artboard, shows
+constexpr float kArtboardEdge = 0.3f;  // the top of an artboard's row a drop goes above it from (the rest: onto it), under another artboard
+constexpr float kStackBleed = 10.0f;   // a link takes the stack this far above and below its rows
 constexpr float kLayerGap   = 3.0f;
+// Room a drop opens between rows. Shorter than the shortest row (an artboard's): closing it moves
+// the rows under it up by less than one, so the row under the mouse stays under it.
+constexpr float kRoomH      = 14.0f;
 constexpr float kIconSize   = 14.0f;
 constexpr float kGrid       = 32.0f;
 

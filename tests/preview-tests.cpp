@@ -18,7 +18,8 @@ public:
     float unit() { return std::uniform_real_distribution<float>(0.0f, 1.0f)(m_rng); }
     NodeId any(const Project& p) { return p.nodes()[size_t(pick(int(p.nodes().size())))]->id(); }
 
-    // The starter project grown at random: rasters with pixels, Moves, stacks, references, masks.
+    // The starter project grown at random: rasters with pixels, Moves, stacks, references, masks,
+    // muted layers, artboards.
     void grow(Project& p)
     {
         for (int i = 0; i < 3; ++i) {
@@ -42,6 +43,24 @@ public:
         for (const NodePtr& n : p.nodes())   // some offsets, so Moves move
             if (std::holds_alternative<MoveSettings>(n->settings()))
                 step(p, "Offset", [&] { p.setNodeSettings(n->id(), MoveSettings{ pick(200) - 100, pick(200) - 100 }); });
+        // Layers muted where they are, and artboards on the master with a fill and layers in them.
+        for (const NodePtr& n : p.nodes())
+            if (const auto* c = dynamic_cast<const CompositorNode*>(n.get()); c && !c->layers().empty() && unit() < 0.5f) {
+                const NodeId layer = c->layers()[size_t(pick(int(c->layers().size())))]->id();
+                step(p, "Mute", [&] { p.setLayerMuted(n->id(), layer, true); });
+            }
+        for (int i = 0; i < 2; ++i) {
+            const int x0 = pick(300) - 150, y0 = pick(300) - 150;
+            ArtboardId id = kNoArtboard;
+            step(p, "Artboard", [&] { id = p.addArtboard({ x0, y0, x0 + 20 + pick(80), y0 + 20 + pick(80) }); });
+            Artboard a = *p.artboard(id);
+            a.color = Color8{ 10, 200, 10, uint8_t(100 + pick(156)) };
+            step(p, "Color", [&] { p.setArtboard(a); });
+            const auto& layers = p.master().layers();
+            if (layers.empty()) continue;
+            const NodeId layer = layers[size_t(pick(int(layers.size())))]->id();
+            step(p, "Into", [&] { p.moveStackRows(p.master().id(), { { layer }, {}, id, 0 }); });
+        }
     }
 
     std::mt19937 m_rng;

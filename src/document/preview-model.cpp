@@ -50,8 +50,9 @@ BoundsI PreviewModel::boundsOf(int node, Vec2 offset) const
             b = sourceBounds(s.input, { offset.x + by->x, offset.y + by->y });
         } else if (n.ports().inputs == InputShape::One) {
             b = sourceBounds(s.input, offset);
-        } else if (!s.layers.empty()) {
+        } else if (s.stack) {
             for (PreviewPlan::Source l : s.layers) b.expand(sourceBounds(l, offset));
+            for (const PreviewPlan::Fill& f : s.fills) b.expand(f.rect.offsetBy(int(offset.x), int(offset.y)));
         } else if (s.wet >= 0) {
             b = leafBounds(s.wet, offset);
             const BrushParams& brush = m_project->stroke().params();

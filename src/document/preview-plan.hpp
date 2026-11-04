@@ -3,7 +3,8 @@
 // edited node and every node downstream of it (through inputs and masks), each rebuilt on the GPU
 // every frame from the values being dragged; and the leaves they read, which the edit can't
 // change, frozen as tiles:
-//   - the layers of a reached stack that the edit doesn't reach: their outputs,
+//   - the layers of a reached stack that the edit doesn't reach: their outputs (a stack is
+//     recomposed as it draws: its layers shown, its groups' fills between them),
 //   - the raw wet of reached nodes that read no input (a raster's own pixels; a stack's whole
 //     composite when only its signals change),
 //   - every mask the edit doesn't reach: its output,
@@ -29,10 +30,17 @@ public:
         int leaf = -1, node = -1;
         explicit operator bool() const { return leaf >= 0 || node >= 0; }
     };
+    struct Fill {
+        BoundsI rect;
+        Color8  color;    // straight
+        size_t  under;    // drawn under layers[under] (layers.size(): on top)
+    };
     struct Node {
         NodePtr node;
         Source  input;                                // a one-input node's (InputShape::One)
-        std::vector<Source> layers;                   // a recomposed stack's, bottom first
+        bool    stack = false;                        // a recomposed stack: ...
+        std::vector<Source> layers;                   // ... its layers shown, bottom first ...
+        std::vector<Fill>   fills;                    // ... and its groups' fills
         int     wet = -1;                             // otherwise its raw wet, frozen (leaf)
         int     stroke = -1;                          // ... with the stroke over it (leaf)
         Source  masks[kSignalCount][kChannelCount];

@@ -61,8 +61,7 @@ GraphHit hitNodeItem(NodeId id, const NodeItem& item, ImVec2 p, float reach)
         if (within(p, item.ports[i].pos, reach)) return PortHit{ id, int(i) };
     for (size_t i = 0; i < item.widgets.size(); ++i)
         if (item.widgets[i].rect.Contains(p)) return WidgetHit{ id, int(i) };
-    for (const NodeItemBox& b : item.boxes)
-        if (b.rect.Contains(p)) return NodeHit{ id };
+    if (item.bounds.Contains(p)) return NodeHit{ id };   // its boxes, and the gaps between them
     return {};
 }
 

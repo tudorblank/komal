@@ -204,10 +204,12 @@ if(KOMAL_TESTS)
     add_test(NAME komal-tests COMMAND komal-tests)
     add_custom_command(TARGET komal-tests POST_BUILD COMMAND komal-tests --minimal COMMENT "Running the tests" VERBATIM)
 
-    # The UI's blocks that need no window or GPU: its look (theme files, palette, styles).
+    # The UI's blocks that need no window or GPU: its look (theme files, palette, styles), and how
+    # the graph lays a node out and where a drop on a stack lands.
     file(GLOB UI_TEST_SOURCES CONFIGURE_DEPENDS tests/ui/*.cpp tests/ui/*.hpp)
     add_executable(komal-ui-tests ${UI_TEST_SOURCES}
         src/ui/style/theme.cpp src/ui/style/palette.cpp src/ui/style/ui-style.cpp src/ui/style/graph-style.cpp
+        src/ui/panels/graph/internal/item.cpp src/ui/panels/graph/internal/stack-drop.cpp
         ${GENERATED_DIR}/theme-main-dark.cpp ${GENERATED_DIR}/theme-main-light.cpp)
     target_include_directories(komal-ui-tests PRIVATE src)
     target_include_directories(komal-ui-tests SYSTEM PRIVATE ${doctest_SOURCE_DIR} ${tomlplusplus_SOURCE_DIR}/include)

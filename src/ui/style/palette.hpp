@@ -88,6 +88,10 @@ struct Palette {
     Color8 hudBack;                     // a status line over the canvas
     Color8 hudText;
 
+    // ---- artboards on the canvas
+    Color8 artboardFrame;                   // its rect
+    Color8 artboardLabel;                   // its name, above it
+
     // ---- notices: something went wrong
     Color8 noticeBack;
     Color8 noticeMark;
@@ -102,6 +106,9 @@ struct Palette {
     Color8 nodeBody;
     Color8 nodeInset;                   // thumbnail well, value fields
     Color8 nodeRow;                     // layer rows
+    Color8 nodeRowSelected;                 // a stack row picked: over its row ...
+    Color8 nodeRowSelectedText;             // ... its name
+    Color8 nodeRowOrigin;                   // a row a drag carries: its spot, outlined dashed
     Color8 nodeRowHot;
     Color8 nodeBorder;
     Color8 nodeBorderHot;

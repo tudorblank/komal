@@ -98,6 +98,7 @@ void CanvasPanel::shutdown()
     m_scene.shutdown();
     m_output = nullptr;
     m_selectionBounds.clear();
+    m_artboards.clear();
     m_previewItem  = nullptr;
     m_previewFrom  = nullptr;
     m_previewTo    = nullptr;
@@ -200,6 +201,17 @@ void CanvasPanel::updateOutlines()
     for (size_t i = 0; i < m_selectionBounds.size(); ++i) {
         m_selectionBounds[i]->setVisible(i < outlined.size());
         if (i < outlined.size()) m_selectionBounds[i]->setPixelBounds(outlined[i]);
+    }
+
+    // The master's artboards: their frames, under the outlines.
+    const Artboards& boards = ui().project.artboards();
+    while (m_artboards.size() < boards.size()) {
+        m_artboards.push_back(m_scene.addItem<ArtboardFrameItem>());
+        m_artboards.back()->setZ(kZBounds - 1.0f);
+    }
+    for (size_t i = 0; i < m_artboards.size(); ++i) {
+        m_artboards[i]->setVisible(i < boards.size());
+        if (i < boards.size()) m_artboards[i]->set(boards[i]);
     }
 
     // A drag that doesn't reach the master (nothing on the canvas changes): outline the area it

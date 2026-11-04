@@ -69,6 +69,46 @@ void drawAlphaLockIcon(const GraphPaint& g, const ImRect& r, bool locked, bool h
     g.draw.strokeRect(ImVec2(a.x + inset, a.y + inset), ImVec2(b.x - inset, b.y - inset), col, 0.0f, std::max(1.0f, cell * 0.2f));
 }
 
+// Shown: an open eye. Muted: a small dark square in its place.
+void drawEye(const GraphPaint& g, const ImRect& r, bool shown, bool hovered)
+{
+    const ImVec2 a = g.at(r.Min), b = g.at(r.Max);
+    const float w = b.x - a.x, h = b.y - a.y, s = g.scale();
+    if (!shown) {
+        const float in = w * 0.2f;
+        const ImVec2 p0(a.x + in, a.y + in), p1(b.x - in, b.y - in);
+        g.draw.fillRect(p0, p1, colors().inset, 2.0f * s);
+        g.draw.strokeRect(p0, p1, hovered ? colors().borderHover : colors().border, 2.0f * s, g.px(1.0f));
+        return;
+    }
+    const ImU32 col = hovered ? colors().title : colors().text;
+    const float cx = a.x + w * 0.5f, cy = a.y + h * 0.5f, hw = w * 0.47f, lid = h * 0.42f;
+    const float t = std::max(1.0f, w * 0.09f);
+    const ImVec2 l(cx - hw, cy), rt(cx + hw, cy);
+    g.draw.bezier(l, ImVec2(cx - hw * 0.45f, cy - lid), ImVec2(cx + hw * 0.45f, cy - lid), rt, col, t);
+    g.draw.bezier(l, ImVec2(cx - hw * 0.45f, cy + lid), ImVec2(cx + hw * 0.45f, cy + lid), rt, col, t);
+    g.draw.fillCircle(ImVec2(cx, cy), h * 0.19f, col);
+}
+
+// A rectangle's outline in dashes, screen space.
+void dashedRect(const GraphPaint& g, ImVec2 a, ImVec2 b, ImU32 col, float width)
+{
+    const float dash = g.px(5.0f), gap = g.px(3.0f);
+    const auto edge = [&](ImVec2 p, ImVec2 q) {
+        const float len = std::hypot(q.x - p.x, q.y - p.y);
+        if (len <= 0.0f) return;
+        const ImVec2 d((q.x - p.x) / len, (q.y - p.y) / len);
+        for (float t = 0.0f; t < len; t += dash + gap) {
+            const float e = std::min(t + dash, len);
+            g.draw.line(ImVec2(p.x + d.x * t, p.y + d.y * t), ImVec2(p.x + d.x * e, p.y + d.y * e), col, width);
+        }
+    };
+    edge(a, ImVec2(b.x, a.y));
+    edge(ImVec2(b.x, a.y), b);
+    edge(b, ImVec2(a.x, b.y));
+    edge(ImVec2(a.x, b.y), a);
+}
+
 void drawArrow(const GraphPaint& g, ImVec2 center, float size, bool down, ImU32 col)
 {
     const ImVec2 c = g.at(center);
@@ -209,16 +249,40 @@ void paintNode(const GraphPaint& g, const Project& project, const Node& n, const
     const std::vector<NodePtr>& layers = n.links().layers;
     for (const NodeItemLayerRow& row : item.layers) {
         const ImVec2 a = g.at(row.rect.Min), b = g.at(row.rect.Max);
-        if (row.as<NodeItemLayerRow::Gap>()) {           // where the dragged link or layer lands
-            draw.fillRect(a, b, colors().gapFill, 3.0f * s);
-            draw.strokeRect(a, b, colors().accent, 3.0f * s, g.px(1.5f));
-        } else if (row.as<NodeItemLayerRow::Empty>()) {  // a stack with nothing in it yet
-            draw.fillRect(a, b, colors().inset, 3.0f * s);
-            draw.strokeRect(a, b, colors().emptyStack, 3.0f * s, bw);
+        if (const auto* gap = row.as<NodeItemLayerRow::Gap>()) {   // room where the dragged link or rows land, or the line
+            if (gap->line) {
+                draw.fillRect(a, b, colors().accent, b.y - a.y);
+            } else {
+                draw.fillRect(a, b, colors().gapFill, 3.0f * s);
+                draw.strokeRect(a, b, colors().accent, 3.0f * s, g.px(1.5f));
+            }
+        } else if (row.as<NodeItemLayerRow::Origin>()) {   // a row a drag carries: its spot, kept ("moving away from here")
+            dashedRect(g, a, b, colors().originEdge, g.px(1.5f));
+        } else if (const auto* empty = row.as<NodeItemLayerRow::Empty>()) {  // a stack with nothing in it yet
+            draw.fillRect(a, b, empty->target ? colors().gapFill : colors().inset, 3.0f * s);
+            if (empty->target) draw.strokeRect(a, b, colors().accent, 3.0f * s, g.px(1.5f));   // a drop lands here
+            else               draw.strokeRect(a, b, colors().emptyStack, 3.0f * s, bw);
             textCentered(g, row.rect, kSmallText, colors().dimText, "Drop nodes here");
         } else if (const auto* layer = row.as<NodeItemLayerRow::Layer>(); layer && layer->index < layers.size()) {
-            paintLayerRow(g, *layers[layer->index], row.rect, thumbs, widgetHovered(LayerControl{ layer->index }), false);
+            const Node& l = *layers[layer->index];
+            const auto* stack = dynamic_cast<const CompositorNode*>(&n);
+            const bool eyeHot = widgetHovered(LayerMuteControl{ layer->index });
+            paintLayerRow(g, l, row.rect, thumbs, { .hot = eyeHot || widgetHovered(LayerControl{ layer->index }), .selected = row.selected,
+                                                    .muted = stack && stack->muted(l), .eyeHot = eyeHot });
+        } else if (const auto* board = row.as<NodeItemLayerRow::Artboard>()) {
+            const ArtboardId k = board->key;
+            const bool parts[3] = { widgetHovered(ArtboardFoldControl{ k }), widgetHovered(ArtboardMuteControl{ k }), widgetHovered(ArtboardColorControl{ k }) };
+            paintArtboardRow(g, project.artboard(k), row.rect,
+                             { .hot = parts[0] || parts[1] || parts[2] || widgetHovered(ArtboardControl{ k }), .selected = row.selected,
+                               .eyeHot = parts[1], .foldHot = parts[0], .colorHot = parts[2], .folded = board->folded });
         }
+    }
+
+    // ---- the artboard a drag would land in: outlined
+    if (item.dropInto) {
+        const float d = g.px(2.0f);
+        const ImVec2 a = g.at(item.dropInto->Min), b = g.at(item.dropInto->Max);
+        draw.strokeRect(ImVec2(a.x - d, a.y - d), ImVec2(b.x + d, b.y + d), colors().accent, 4.0f * s, g.px(2.0f));
     }
 
     // ---- signals
@@ -248,25 +312,66 @@ void paintNode(const GraphPaint& g, const Project& project, const Node& n, const
 
 }
 
-void paintLayerRow(const GraphPaint& g, const Node& layer, const ImRect& rect, NodeThumbnails& thumbs, bool hot, bool lifted)
+namespace {
+
+// A stack row's band: its shadow while carried, its fill (picked: tinted, and kept so), its edge.
+void paintRowBand(const GraphPaint& g, const ImRect& rect, const RowLook& look)
+{
+    const Painter& draw = g.draw;
+    const float s = g.scale();
+    const ImVec2 a = g.at(rect.Min), b = g.at(rect.Max);
+    if (look.lifted) draw.fillRect(ImVec2(a.x, a.y + g.px(2.0f)), ImVec2(b.x, b.y + g.px(5.0f)), colors().liftShadow, 3.0f * s);
+    draw.fillRect(a, b, look.hot || look.lifted ? colors().rowHovered : colors().row, 3.0f * s);
+    if (look.selected) draw.fillRect(a, b, colors().rowSelected, 3.0f * s);
+    if (look.lifted) draw.strokeRect(a, b, colors().accent, 3.0f * s, g.px(1.5f));
+}
+
+}
+
+void paintLayerRow(const GraphPaint& g, const Node& layer, const ImRect& rect, NodeThumbnails& thumbs, const RowLook& look)
 {
     const Painter& draw = g.draw;
     const float s = g.scale(), bw = g.px(1.0f);
-    const ImVec2 a = g.at(rect.Min), b = g.at(rect.Max);
-    if (lifted) draw.fillRect(ImVec2(a.x, a.y + g.px(2.0f)), ImVec2(b.x, b.y + g.px(5.0f)), colors().liftShadow, 3.0f * s);
-    draw.fillRect(a, b, hot || lifted ? colors().rowHovered : colors().row, 3.0f * s);
-    if (lifted) draw.strokeRect(a, b, colors().accent, 3.0f * s, g.px(1.5f));
+    paintRowBand(g, rect, look);
+    drawEye(g, layerEyeRect(rect), !look.muted, look.eyeHot);
     const ImRect thumb = layerThumbRect(rect);
     drawThumb(g, thumb, layer.id(), thumbs, kSmallText);
 
     // Blend mode chip: the node system composites Normal (over) only, for now.
     const ImRect chip(rect.Max.x - 52.0f, rect.GetCenter().y - 8.0f, rect.Max.x - 6.0f, rect.GetCenter().y + 8.0f);
-    draw.strokeRect(g.at(chip.Min), g.at(chip.Max), colors().chipEdge, 2.0f * s, bw);
-    textCentered(g, chip, kSmallText, colors().dimText, "Normal");
+    draw.strokeRect(g.at(chip.Min), g.at(chip.Max), look.selected ? colors().selectedEdge : colors().chipEdge, 2.0f * s, bw);
+    textCentered(g, chip, kSmallText, look.selected ? colors().selectedText : colors().dimText, "Normal");
 
     const float nameX = thumb.Max.x + 6.0f;
     const std::string name = elide(g, layer.label(), kSmallText, chip.Min.x - 4.0f - nameX);
-    textInRow(g, nameX, rect, kSmallText, colors().text, name.c_str());
+    textInRow(g, nameX, rect, kSmallText, look.selected ? colors().selectedText : look.muted ? colors().dimText : colors().text, name.c_str());
+}
+
+void paintArtboardRow(const GraphPaint& g, const Artboard* board, const ImRect& rect, const RowLook& look)
+{
+    paintRowBand(g, rect, look);
+    if (!board) return;
+    const float s = g.scale();
+    const ImRect fold = artboardFoldRect(rect);
+    drawArrow(g, fold.GetCenter(), 7.0f, !look.folded, look.foldHot ? colors().title : colors().dimText);
+    drawEye(g, artboardEyeRect(rect), board->visible, look.eyeHot);
+
+    // Its colour: over a 2x2 checkerboard where it's see-through.
+    const ImRect sw = artboardColorRect(rect);
+    const ImVec2 a = g.at(sw.Min), b = g.at(sw.Max), m((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
+    const float r = 2.0f * s;
+    if (board->color.a < 255) {
+        g.draw.fillRect(a, b, colors().swatchCheckerB, r);
+        g.draw.fillRect(a, m, colors().swatchCheckerA, r, ImDrawFlags_RoundCornersTopLeft);
+        g.draw.fillRect(m, b, colors().swatchCheckerA, r, ImDrawFlags_RoundCornersBottomRight);
+    }
+    g.draw.fillRect(a, b, board->color.packed(), r);
+    g.draw.strokeRect(a, b, look.colorHot ? colors().borderHover : colors().border, r, g.px(1.0f));
+
+    const float nameX = sw.Max.x + 7.0f;
+    const std::string name = elide(g, board->name, kText, rect.Max.x - 6.0f - nameX);
+    const ImU32 ink = look.selected ? colors().selectedText : board->visible ? colors().title : colors().dimText;
+    textInRow(g, nameX, rect, kText, ink, name.c_str());
 }
 
 void paintNodePorts(const GraphPaint& g, const Project& project, const NodeItem& item, const NodeItemVisual& visual)

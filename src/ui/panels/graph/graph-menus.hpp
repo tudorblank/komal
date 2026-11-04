@@ -6,9 +6,12 @@
 //   menus.openAdd(GraphMenus::FromOutput{ node }, graphPos);   // a link dropped on nothing
 //   menus.openContext(node);                                   // a right click on a node
 //   menus.openValue(GraphMenus::Rename{ node });               // a double-clicked title
+//   menus.openArtboard(id);  menus.openColor(id);             // an artboard's menu, its colour
 
+#include "document/artboard.hpp"
 #include "node/node.hpp"
 #include "ui/panels/graph/node-menu.hpp"
+#include "ui/widgets/float-color-pick.hpp"
 
 #include <imgui.h>
 #include <variant>
@@ -29,18 +32,23 @@ public:
     struct Rename      { NodeId node; char text[128] = ""; };
     struct ScaleValue  { NodeId node; NodeSignal signal; NodeChannel channel; float percent = 0.0f; };
     struct OffsetValue { NodeId node; int axis; float pixels = 0.0f; };
-    using Value = std::variant<Rename, ScaleValue, OffsetValue>;
+    struct RenameArtboard { ArtboardId artboard; char text[128] = ""; };
+    using Value = std::variant<Rename, ScaleValue, OffsetValue, RenameArtboard>;
 
     void init(const Project& project, ActionRegistry& actions);
 
     void openAdd(Wiring wiring, ImVec2 graphPos);   // shows the kinds that fit the wiring
     void openContext(NodeId node);
+    void openArtboard(ArtboardId id);   // a right click on an artboard's row
+    void openColor(ArtboardId id);      // its colour, in a floating picker at the mouse
     bool openValue(Value value);   // false: no such node (or not one with that value)
     void draw();
 
 private:
     void add(NodeType type);
     void drawContext();
+    void drawArtboard();
+    void drawColor();
     void drawValue();
 
     const Project*  m_project = nullptr;
@@ -50,6 +58,8 @@ private:
     Wiring   m_wiring;
     ImVec2   m_addAt;            // graph
     NodeId   m_contextNode = kNoNodeId;
+    ArtboardId m_artboard = kNoArtboard;   // the artboard menu's, or the colour picker's
+    FloatColorPick m_colorPick;
     Value    m_value = Rename{ kNoNodeId };
     bool     m_valuePending = false;   // opened at window level on the next draw
     bool     m_valueJustOpened = false;

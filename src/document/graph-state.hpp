@@ -1,7 +1,7 @@
 #pragma once
-// The graph as a history step leaves it: every node, its settings and its links. Undo and redo
-// restore it; pixels travel separately, as raster commits. A kind's own settings are its
-// NodeSettings: a new kind needs nothing here.
+// The graph as a history step leaves it: every node, its settings and its links, and the master's
+// artboards. Undo and redo restore it; pixels travel separately, as raster commits. A kind's own
+// settings are its NodeSettings: a new kind needs nothing here.
 //
 // A node's state is immutable once captured, and steps share it: a step that moved one node of
 // five hundred holds one new NodeState and the other 499 of the step before.
@@ -11,6 +11,7 @@
 //   const GraphState t = GraphState::capture(nodes, &s, { 4, 7 });   // the rest shared with s
 //   s.restore(key, nodes, emit);   // nodes come back or go, links and settings as they were
 
+#include "document/artboard.hpp"
 #include "document/links.hpp"
 #include "document/node-registry.hpp"
 
@@ -34,12 +35,14 @@ using NodeStatePtr = std::shared_ptr<const NodeState>;
 
 struct GraphState {
     std::vector<NodeStatePtr> nodes;   // creation order
+    std::shared_ptr<const Artboards> artboards;   // shared with the step before while they're the same
 
-    static GraphState capture(const NodeRegistry& registry);   // every node anew
+    static GraphState capture(const NodeRegistry& registry, const Artboards& artboards);   // every node anew
     // Every node anew but those `previous` holds and `changed` doesn't name: theirs are shared.
     // `previous` must be the graph as it was before exactly those nodes changed (Project tracks them).
-    static GraphState capture(const NodeRegistry& registry, const GraphState& previous, const absl::flat_hash_set<NodeId>& changed);
-    // Makes the registry's graph this one. Nodes that come back do so as themselves, told right
+    static GraphState capture(const NodeRegistry& registry, const Artboards& artboards, const GraphState& previous,
+                              const absl::flat_hash_set<NodeId>& changed);
+    // Makes the registry's graph this one (the artboards are the Project's to take). Nodes that come back do so as themselves, told right
     // away (unlinked); links, settings and the nodes that go are told once it's all done. Links
     // are all let go of before any is taken, so the graph never passes through a cycle on the way.
     void restore(GraphKey key, NodeRegistry& registry, const EmitEvent& emit) const;

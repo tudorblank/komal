@@ -1,6 +1,7 @@
 // History under random use: edits of every kind, undone, redone and jumped across in any order,
 // branches included. Every step reached again must look exactly as it did when it was made: the
-// graph, each raster's pixels and bounds, and the master as rendered (caches included).
+// graph (a stack's mutes and groups too), the artboards, each raster's pixels and bounds, and the
+// master as rendered (caches included). Each artboard is one of the master's groups throughout.
 
 #include "helpers.hpp"
 
@@ -36,6 +37,11 @@ std::string fingerprint(Project& p)
         if (const auto* r = std::get_if<RasterSettings>(&settings)) out += " locks " + std::to_string(r->locked) + std::to_string(r->alphaLocked);
         for (int s = 0; s < kSignalCount; ++s)
             for (int c = 0; c < kChannelCount; ++c) out += " " + std::to_string(Node::gainByte(n->signal(NodeSignal(s)).scale[c]));
+        if (const auto* c = std::get_if<CompositorSettings>(&settings)) {
+            for (NodeId id : c->muted) out += " muted " + std::to_string(uint32_t(id));
+            for (const StackGroup& g : c->groups)
+                out += " group " + std::to_string(uint32_t(g.key)) + ":" + std::to_string(g.begin) + "-" + std::to_string(g.end);
+        }
         for (const auto& [source, slot] : n->links().all()) out += " <" + std::to_string(uint32_t(source->id())) + "@" + slot.text();
         if (n->type() == NodeType::Raster) {
             const RasterData& r = static_cast<const RasterRootNode&>(*n).raster();
@@ -51,6 +57,9 @@ std::string fingerprint(Project& p)
         const auto [tx, ty] = TileUtils::unpackKey(key);
         if (const Tile* t = renderTile(p.master(), tx, ty, ctx)) master += hashTile(1469598103934665603ull, tx, ty, *t);
     }
+    for (const Artboard& a : p.artboards())
+        out += "artboard " + std::to_string(uint32_t(a.id)) + " " + a.name + " " + bounds(a.rect) + " " + std::to_string(a.color.r) + "," +
+               std::to_string(a.color.g) + "," + std::to_string(a.color.b) + "," + std::to_string(a.color.a) + (a.visible ? "" : " hidden") + "\n";
     out += "master " + std::to_string(master) + " " + bounds(p.master().bounds()) + "\n";
     return out;
 }
@@ -67,7 +76,7 @@ public:
     void edit()
     {
         Project& p = m_p;
-        switch (pick(10)) {
+        switch (pick(14)) {
         case 0: {
             const NodeType type = NodeType(pick(4));
             step(p, "Add", [&] { p.addNode(type, unit() * 500.0f, unit() * 500.0f, { .from = unit() < 0.5f ? anyNode() : kNoNodeId, .into = kNoNodeId, .slot = {} }); });
@@ -135,6 +144,45 @@ public:
             if (p.canMoveLink(src, from, fromSlot, to, toSlot)) step(p, "Move Link", [&] { p.moveLink(src, from, fromSlot, to, toSlot); });
             break;
         }
+        case 10: {   // a layer muted, or shown again, in its compositor
+            const NodeId id = anyNode();
+            const auto* c = dynamic_cast<const CompositorNode*>(p.find(id));
+            if (!c || c->layers().empty()) break;
+            const NodeId layer = c->layers()[size_t(pick(int(c->layers().size())))]->id();
+            const bool muted = !c->muted(*p.find(layer));
+            step(p, "Mute", [&] { p.setLayerMuted(id, layer, muted); });
+            break;
+        }
+        case 11:   // an artboard
+            if (p.artboards().size() < 4) {
+                const int x0 = pick(200) - 100, y0 = pick(200) - 100;
+                step(p, "Artboard", [&] { p.addArtboard({ x0, y0, x0 + 10 + pick(60), y0 + 10 + pick(60) }); });
+            }
+            break;
+        case 12: {   // one changed, or deleted
+            if (p.artboards().empty()) break;
+            Artboard a = p.artboards()[size_t(pick(int(p.artboards().size())))];
+            if (unit() < 0.3f) {
+                step(p, "Delete Artboard", [&] { p.deleteArtboard(a.id); });
+                break;
+            }
+            a.color   = Color8{ uint8_t(pick(256)), uint8_t(pick(256)), 40, uint8_t(pick(256)) };
+            a.visible = unit() < 0.8f;
+            a.rect    = { a.rect.minX + pick(21) - 10, a.rect.minY, a.rect.maxX + pick(21), a.rect.maxY };
+            step(p, "Change Artboard", [&] { p.setArtboard(a); });
+            break;
+        }
+        case 13: {   // the master's rows moved together: some layers, maybe an artboard, to a place
+            const auto& layers = p.master().layers();
+            StackMove m;
+            for (const NodePtr& l : layers) if (unit() < 0.3f) m.layers.push_back(l->id());
+            const Artboards& boards = p.artboards();
+            if (!boards.empty() && unit() < 0.4f) m.groups.push_back(boards[size_t(pick(int(boards.size())))].id);
+            else if (!boards.empty() && unit() < 0.6f) m.into = boards[size_t(pick(int(boards.size())))].id;
+            m.at = size_t(pick(int(layers.size()) + 2));
+            step(p, "Move Rows", [&] { p.moveStackRows(p.master().id(), m); });
+            break;
+        }
         case 9: {   // an image
             const int x0 = pick(200) - 100, y0 = pick(200) - 100;
             const uint8_t shade = uint8_t(pick(256));
@@ -166,6 +214,7 @@ TEST_CASE("history under random use: every step comes back exactly as it was")
             if (i < 40 || f.unit() < 0.5f) {   // an edit: a new step, maybe a new branch
                 const StepId before = p.history().current();
                 f.edit();
+                REQUIRE(p.artboardsMatchStack());
                 if (p.history().current() != before) seen[p.history().current()] = fingerprint(p);
                 else REQUIRE(fingerprint(p) == seen[before]);   // no step: nothing changed
                 continue;
@@ -175,6 +224,7 @@ TEST_CASE("history under random use: every step comes back exactly as it was")
             else if (how == 1) p.redo();
             else p.goToHistory(StepId(f.pick(int(p.history().size()))));
             const StepId at = p.history().current();
+            REQUIRE(p.artboardsMatchStack());
             REQUIRE(seen.contains(at));
             CHECK(fingerprint(p) == seen[at]);
         }

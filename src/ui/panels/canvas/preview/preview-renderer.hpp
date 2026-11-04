@@ -65,7 +65,8 @@ public:
     void release();   // and the GPU resources
 
 private:
-    struct Layer { int op = -1, leaf = -1; Vec2 offset; };   // a stack's: a pass blitted, or a leaf drawn shifted
+    // A stack's: a pass blitted, a leaf drawn shifted, or a group's fill (its rect, shifted).
+    struct Layer { int op = -1, leaf = -1; Vec2 offset; const PreviewPlan::Fill* fill = nullptr; };
     struct Op {
         enum class Kind : uint8_t { Leaf, Stroke, Stack, Signal } kind = Kind::Leaf;
         int  leaf = -1;  Vec2 offset;                 // Leaf
@@ -107,6 +108,7 @@ private:
     FrameKey frameKey(const PreviewSpace& space) const;
     bool execute(const PreviewSpace& space, const CanvasPipelines& p, WGPUCommandEncoder enc);   // false: no GPU memory for it
     void drawLeaf(WGPURenderPassEncoder pass, int leaf, Vec2 offset, const PreviewSpace& space, const CanvasPipelines& p);
+    void drawFill(WGPURenderPassEncoder pass, const PreviewPlan::Fill& fill, Vec2 offset, const PreviewSpace& space, const CanvasPipelines& p);
     GpuTexture* target(const PreviewSpace& space, const CanvasPipelines& p, size_t i);   // null: couldn't make it
     GpuUniform* uniform(const CanvasPipelines& p, UniformPool& pool, WGPUBindGroupLayout layout, uint64_t size);
 
@@ -128,5 +130,6 @@ private:
     UniformPool m_cameras;                // atlas pipeline group 0, per leaf drawn
     UniformPool m_signalParams;
     UniformPool m_strokeParams;
+    UniformPool m_fills;                  // a fill's rect and colour
     GpuTexture  m_empty;                  // 1x1 transparent, for unused texture slots
 };

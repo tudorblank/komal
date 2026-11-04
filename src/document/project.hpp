@@ -13,12 +13,14 @@
 // alone (a stroke) captures nothing and shares the last step's state.
 
 #include "base/signal.hpp"
+#include "document/artboard.hpp"
 #include "document/canvas-camera.hpp"
 #include "document/edit-preview.hpp"
 #include "document/links.hpp"
 #include "document/node-registry.hpp"
 #include "document/node-selection.hpp"
 #include "document/project-event.hpp"
+#include "document/stack-rows.hpp"
 #include "document/step-recorder.hpp"
 #include "document/stroke-session.hpp"
 #include "node/node-kinds.hpp"
@@ -71,9 +73,9 @@ public:
     bool   setNodePosition(NodeId id, float x, float y);
     bool   setNodeLabel(NodeId id, std::string label);
     bool   setActiveRaster(NodeId id);
-    // Its kind's own settings (NodeSettings: a Move's offset, a raster's locks); refused if they
-    // aren't its kind's or don't fit (an offset out of the world). A stroke on it ends first: it
-    // keeps the rules it started with.
+    // Its kind's own settings (NodeSettings: a Move's offset, a raster's locks, a stack's mutes);
+    // refused if they aren't its kind's or don't fit (an offset out of the world, a stack's groups:
+    // those are the artboards'). A stroke on it ends first: it keeps the rules it started with.
     bool   setNodeSettings(NodeId id, const NodeSettings& settings);
 
     bool canConnect(NodeId from, NodeId to, const InputSlot& slot) const;
@@ -84,6 +86,29 @@ public:
     bool canMoveLink(NodeId source, NodeId from, const InputSlot& slot, NodeId to, const InputSlot& toSlot) const;
     bool moveLink(NodeId source, NodeId from, const InputSlot& slot, NodeId to, const InputSlot& toSlot);
     bool moveLayer(NodeId compositor, size_t from, size_t to);
+    // ---- a stack's rows (document/project-stacks.cpp)
+    // A layer left out of a compositor's composite, there only (it shows anywhere else it's used).
+    bool setLayerMuted(NodeId compositor, NodeId layer, bool muted);
+    // Layers, and the master's artboards whole, moved together to one place: see StackMove.
+    bool moveStackRows(NodeId compositor, const StackMove& move);
+    // `source` into a compositor's stack at a place (into an artboard, at a position among the rows
+    // there): linked on top, then moved there.
+    bool addLayer(NodeId source, NodeId compositor, ArtboardId into, size_t at);
+    // Rows taken out of a stack: its layers unlinked (the nodes stay in the graph), the master's
+    // artboards deleted (their layers stay, in no artboard).
+    bool removeStackRows(NodeId compositor, const std::vector<NodeId>& layers, const std::vector<ArtboardId>& artboards);
+
+    // ---- the master's artboards (document/artboard.hpp): each a group of the master's stack
+    const Artboards& artboards() const { return m_artboards; }
+    const Artboard*  artboard(ArtboardId id) const;
+    // A new one, empty and transparent, on top of the master's stack (kNoArtboard: an empty rect,
+    // or out of the world).
+    ArtboardId addArtboard(const BoundsI& rect);
+    bool setArtboard(const Artboard& a);   // the one with its id: its name, rect, colour and eye
+    bool deleteArtboard(ArtboardId id);    // its layers stay where they are, in no artboard
+    // Each artboard is exactly one of the master's groups and each group an artboard: held by every
+    // edit above and by history (asserted where the master is shown them; the tests check it).
+    bool artboardsMatchStack() const;
 
     bool setSignalScale(NodeId id, NodeSignal s, NodeChannel c, float v);
 
@@ -144,12 +169,16 @@ private:
     void recordCommit(const RasterCommitRef& commit, const char* label);   // into the open step (or one of its own)
     void restoreGraph(const GraphState& target);
     void fallBackActiveRaster();   // the active raster went: the most recently made one, if any
+    void showArtboards();          // the master draws them as they are (CompositorNode::setLooks)
+    bool setMasterGroups(std::vector<StackGroup> groups);
 
     NodeRegistry m_nodes;   // first, destroyed last: everything else holds its nodes
     std::shared_ptr<CompositorNode> m_master;
     NodeId m_active = kNoNodeId;
 
-    StepRecorder m_steps{ m_nodes };
+    Artboards  m_artboards;   // before the history, which reads them
+    ArtboardId m_lastArtboard = kNoArtboard;   // ids never come back
+    StepRecorder m_steps{ m_nodes, m_artboards };
     bool m_seeding = false;   // init()'s seed runs: its edits are the start, no step of their own
 
     NodeSelection m_selection;

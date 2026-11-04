@@ -104,10 +104,16 @@ int PreviewRenderer::build(int node, Vec2 offset)
             wet = opFor(s.input, { offset.x + by->x, offset.y + by->y });   // a move moves its input
         } else if (n.ports().inputs == InputShape::One) {
             wet = opFor(s.input, offset);
-        } else if (!s.layers.empty()) {   // a stack the edit reaches: recomposed
+        } else if (s.stack) {   // a stack the edit reaches: recomposed, as it draws
             Op stack;
             stack.kind = Op::Kind::Stack;
-            for (PreviewPlan::Source l : s.layers) {
+            size_t fill = 0;
+            const auto fillsUnder = [&](size_t row) {
+                for (; fill < s.fills.size() && s.fills[fill].under <= row; ++fill) stack.layers.push_back({ -1, -1, offset, &s.fills[fill] });
+            };
+            for (size_t i = 0; i < s.layers.size(); ++i) {
+                fillsUnder(i);
+                const PreviewPlan::Source l = s.layers[i];
                 Layer layer;
                 if (l.node >= 0) {
                     layer.op = build(l.node, offset);
@@ -117,6 +123,7 @@ int PreviewRenderer::build(int node, Vec2 offset)
                 }
                 stack.layers.push_back(layer);
             }
+            fillsUnder(s.layers.size());
             wet = push(std::move(stack));
         } else if (s.stroke >= 0) {   // the raster being painted: the stroke over its pixels
             Op stroke;
@@ -272,6 +279,28 @@ void PreviewRenderer::drawLeaf(WGPURenderPassEncoder pass, int leaf, Vec2 offset
     d.draw.draw(pass);
 }
 
+void PreviewRenderer::drawFill(WGPURenderPassEncoder pass, const PreviewPlan::Fill& fill, Vec2 offset, const PreviewSpace& space,
+                               const CanvasPipelines& p)
+{
+    GpuUniform* camera = uniform(p, m_cameras, p.cameraLayout, sizeof(Mat4::m));
+    GpuUniform* rect   = uniform(p, m_fills, p.colorLayout, sizeof(RectParams));
+    if (!camera || !rect) return;
+    const Mat4 viewProj = space.camera.viewProj(space.viewW, space.viewH, offset);
+    camera->write(p.ctx.queue, viewProj.m, sizeof(viewProj.m));
+    const BoundsI& b = fill.rect;
+    const float w = float(b.maxX - b.minX + 1), h = float(b.maxY - b.minY + 1);
+    const Mat4 model = Mat4::translateScale(float(b.minX) + w * 0.5f, float(b.minY) + h * 0.5f, w, h);
+    RectParams params{};
+    std::copy(std::begin(model.m), std::end(model.m), std::begin(params.model));
+    const auto color = fill.color.floats();   // straight
+    std::copy(color.begin(), color.end(), std::begin(params.color));
+    rect->write(p.ctx.queue, &params, sizeof(params));
+    wgpuRenderPassEncoderSetPipeline(pass, p.colorPipeline);
+    wgpuRenderPassEncoderSetBindGroup(pass, 0, camera->group, 0, nullptr);
+    wgpuRenderPassEncoderSetBindGroup(pass, 1, rect->group, 0, nullptr);
+    wgpuRenderPassEncoderDraw(pass, 4, 1, 0, 0);
+}
+
 bool PreviewRenderer::execute(const PreviewSpace& space, const CanvasPipelines& p, WGPUCommandEncoder enc)
 {
     const WGPUDevice device = p.ctx.device;
@@ -290,7 +319,7 @@ bool PreviewRenderer::execute(const PreviewSpace& space, const CanvasPipelines& 
         const WGPUExtent3D size = { 1, 1, 1 };
         wgpuQueueWriteTexture(queue, &dst, &zero, 4, &layout, &size);
     }
-    m_cameras.used = m_signalParams.used = m_strokeParams.used = 0;
+    m_cameras.used = m_signalParams.used = m_strokeParams.used = m_fills.used = 0;
     for (size_t i = 0; i < m_ops.size(); ++i)   // first: growing them drops every one
         if (!target(space, p, i)) return false;  // no memory for it: no picture (logged)
     const auto viewOf = [&](int op) { return op >= 0 ? m_targets[size_t(op)].view() : m_empty.view(); };
@@ -335,6 +364,10 @@ bool PreviewRenderer::execute(const PreviewSpace& space, const CanvasPipelines& 
         }
         case Op::Kind::Stack:
             for (const Layer& l : op.layers) {
+                if (l.fill) {
+                    drawFill(pass, *l.fill, l.offset, space, p);
+                    continue;
+                }
                 if (l.leaf >= 0) {
                     drawLeaf(pass, l.leaf, l.offset, space, p);
                     continue;
@@ -403,7 +436,7 @@ void PreviewRenderer::release()
     forget();
     m_targets.clear();
     m_targetW = m_targetH = 0;
-    for (UniformPool* pool : { &m_cameras, &m_signalParams, &m_strokeParams }) {
+    for (UniformPool* pool : { &m_cameras, &m_signalParams, &m_strokeParams, &m_fills }) {
         for (GpuUniform& u : pool->items) u.release();
         pool->items.clear();
         pool->used = 0;

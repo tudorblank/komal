@@ -18,7 +18,8 @@
 
 class StepRecorder {
 public:
-    explicit StepRecorder(const NodeRegistry& nodes) : m_nodes(nodes) {}   // the project's: outlives it
+    // The project's: they outlive it.
+    StepRecorder(const NodeRegistry& nodes, const Artboards& artboards) : m_nodes(nodes), m_artboards(artboards) {}
 
     void start();   // the graph now: where undo goes back to
     void touched(NodeId node) { m_touched.insert(node); }
@@ -36,6 +37,7 @@ private:
     std::shared_ptr<const GraphState> capture(const std::shared_ptr<const GraphState>& previous) const;
 
     const NodeRegistry& m_nodes;
+    const Artboards&    m_artboards;
     History m_history;
     int     m_depth = 0;   // open steps (nested ones merge)
     std::string m_label;

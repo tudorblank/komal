@@ -8,6 +8,8 @@
 //   LinkAdded      one link (a mask link also lays out its node: a row appears)
 //   LinkRemoved    one link
 //   LayersChanged  the stack laid out again, its layer links re-added
+//   ArtboardsChanged the master laid out again (its artboards' rows)
+//   NodeChanged    a stack laid out again (its groups may have changed)
 //   PreviewChanged nodes being dragged shown where they're going; a lifted link hidden (a stack
 //                  row it fed closes up), until the edit ends
 //   anything else  nothing: values and pixels are painted as they are
@@ -57,9 +59,16 @@ public:
     // the project's: the canvas shows it too.)
     void bringToFront(NodeId id);
     void toggleSection(NodeId id, NodeSignal signal);   // a signal's section opened or closed
+    const NodeItemState* viewState(NodeId id) const;    // null: nothing kept for it yet
+    // A stack's rows picked (moved together by a drag), and where a Shift+click range starts;
+    // any other stack's let go.
+    void pickRows(NodeId id, std::vector<StackRowRef> rows, StackRowRef anchor);
+    void toggleArtboard(NodeId id, ArtboardId artboard);   // its layers folded away, or shown
     // The gap a drag opens in a stack: compositor `node` laid out with `layout` (kNoNodeId: none).
     // One at a time; the stack it leaves closes again.
     void setStackGap(NodeId node, StackLayout layout);
+    // Compositor `node` as it would be laid out around a drag (not kept: to settle a drop on).
+    NodeItem layoutWith(NodeId node, const StackLayout& layout) const;
 
 private:
     void onProjectEvent(const ProjectEvent& e);

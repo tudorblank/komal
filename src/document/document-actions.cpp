@@ -115,6 +115,56 @@ void registerDocumentActions(ActionRegistry& actions, Project& project)
                   .args = { Arg::id(kNode), Arg::integer(kLayerFrom, 0), Arg::integer(kLayerTo, 0) }, .run = [&p](const ActionArgs& a) {
         return p.moveLayer(a.get(kNode), a.get(kLayerFrom), a.get(kLayerTo));
     } });
+    // Rows of a stack moved together (layers, and the master's artboards whole) to one place: a
+    // position among the rows left, at the top level or into an artboard (Project::moveStackRows).
+    actions.add({ .id = Actions::LayersMove, .title = "Move Layers", .kind = K::DocumentEdit,
+                  .args = { Arg::id(kNode), Arg::ids(kLayers), Arg::ids(kArtboards).optional(), Arg::id(kIntoArtboard).optional(),
+                            Arg::integer(kLayerTo, 0) }, .run = [&p](const ActionArgs& a) {
+        StackMove m;
+        m.layers = a.get(kLayers);
+        m.groups = a.get(kArtboards, {});
+        m.into   = a.get(kIntoArtboard, kNoArtboard);
+        m.at   = a.get(kLayerTo);
+        return p.moveStackRows(a.get(kNode), m);
+    } });
+    // A link dropped on a stack: `from` linked into it at a place (layers.move's), into an artboard or not.
+    actions.add({ .id = Actions::LayerAdd, .title = "Connect", .kind = K::DocumentEdit,
+                  .args = { Arg::id(kFrom), Arg::id(kNode), Arg::id(kIntoArtboard).optional(), Arg::integer(kPlaceAt, 0) },
+                  .run = [&p](const ActionArgs& a) {
+        return p.addLayer(a.get(kFrom), a.get(kNode), a.get(kIntoArtboard, kNoArtboard), a.get(kPlaceAt));
+    } });
+    // Del on rows picked in a stack: its layers unlinked, the master's artboards deleted.
+    actions.add({ .id = Actions::LayersRemove, .title = "Remove from Stack", .kind = K::DocumentEdit,
+                  .args = { Arg::id(kNode), Arg::ids(kLayers), Arg::ids(kArtboards).optional() }, .run = [&p](const ActionArgs& a) {
+        return p.removeStackRows(a.get(kNode), a.get(kLayers), a.get(kArtboards, {}));
+    } });
+    actions.add({ .id = Actions::LayerMute, .title = "Mute Layer", .kind = K::DocumentEdit,
+                  .args = { Arg::id(kNode), Arg::id(kLayer), Arg::flag(kOn) }, .run = [&p](const ActionArgs& a) {
+        return p.setLayerMuted(a.get(kNode), a.get(kLayer), a.get(kOn));
+    } });
+
+    // ---------------------------------------------------------------- artboards (the master's)
+    // A new one over the rect (world pixels, inclusive): empty, transparent, on top of the stack.
+    actions.add({ .id = Actions::ArtboardAdd, .title = "Add Artboard", .kind = K::DocumentEdit,
+                  .args = { Arg::integer(kMinX), Arg::integer(kMinY), Arg::integer(kMaxX), Arg::integer(kMaxY) },
+                  .run = [&p](const ActionArgs& a) -> ActionResult {
+        const ArtboardId id = p.addArtboard({ a.get(kMinX), a.get(kMinY), a.get(kMaxX), a.get(kMaxY) });
+        return { id != kNoArtboard, int64_t(id) };
+    } });
+    // What's given changes; the rest stays.
+    actions.add({ .id = Actions::ArtboardSet, .title = "Change Artboard", .kind = K::DocumentEdit,
+                  .args = { Arg::id(kArtboard), Arg::text(kName).optional(), Arg::parsed(kColor).optional(), Arg::flag(kVisible).optional() },
+                  .run = [&p](const ActionArgs& a) {
+        const Artboard* now = p.artboard(a.get(kArtboard));
+        if (!now) return false;
+        Artboard next = *now;
+        next.name    = a.get(kName, next.name);
+        next.color   = a.get(kColor, next.color);
+        next.visible = a.get(kVisible, next.visible);
+        return p.setArtboard(next);
+    } });
+    actions.add({ .id = Actions::ArtboardDelete, .title = "Delete Artboard", .kind = K::DocumentEdit, .args = { Arg::id(kArtboard) },
+                  .run = [&p](const ActionArgs& a) { return p.deleteArtboard(a.get(kArtboard)); } });
 
     // ---------------------------------------------------------------- values
     actions.add({ .id = Actions::SignalSet, .title = "Set Signal", .kind = K::DocumentEdit,
@@ -275,17 +325,23 @@ void registerDocumentActions(ActionRegistry& actions, Project& project)
                   .cancel = [&p] { p.cancelPreview(); } });
 
     // A link lifted off an input (source from slot) and carried, previewed: dropped on an input (to
-    // toSlot) it moves there, dropped on nothing it comes off. Cancelled, nothing changes.
+    // toSlot) it moves there, dropped on nothing it comes off; into a stack, `at` (and `into`) put it
+    // at a place there. Cancelled, nothing changes.
     actions.add({ .id = Actions::LinkMove, .title = "Move Link", .kind = K::Gesture,
                   .args = { Arg::id(kSource), Arg::id(kFrom), Arg::parsed(kSlot) },
-                  .endArgs = { Arg::id(kTo).optional(), Arg::parsed(kToSlot).optional(), Arg::flag(kDropped).optional() },
+                  .endArgs = { Arg::id(kTo).optional(), Arg::parsed(kToSlot).optional(), Arg::flag(kDropped).optional(),
+                               Arg::id(kIntoArtboard).optional(), Arg::integer(kPlaceAt, 0).optional() },
                   .begin = [&p](const ActionArgs& a) { return p.previewEdit(LinkMoveEdit{ a.get(kSource), a.get(kFrom), a.get(kSlot) }); },
                   .end   = [&p](const ActionArgs& a) {
                       const auto* lifted = p.preview() ? p.preview()->as<LinkMoveEdit>() : nullptr;
                       if (!lifted) return false;
                       const LinkMoveEdit link = *lifted;
                       p.cancelPreview();
-                      return p.moveLink(link.source, link.from, link.slot, a.get(kTo, kNoNodeId), a.get(kToSlot, InputSlot{}));
+                      const NodeId to = a.get(kTo, kNoNodeId);
+                      if (!p.moveLink(link.source, link.from, link.slot, to, a.get(kToSlot, InputSlot{}))) return false;
+                      // Into a stack at a place (layers.move's): then moved there.
+                      if (a.has(kPlaceAt)) p.moveStackRows(to, { { link.source }, {}, a.get(kIntoArtboard, kNoArtboard), a.get(kPlaceAt) });
+                      return true;
                   },
                   .cancel = [&p] { p.cancelPreview(); } });
 }

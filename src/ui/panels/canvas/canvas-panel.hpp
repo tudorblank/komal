@@ -1,5 +1,6 @@
 #pragma once
 #include "base/signal.hpp"
+#include "ui/panels/canvas/items/artboard-frame.hpp"
 #include "ui/panels/canvas/items/checker.hpp"
 #include "ui/panels/canvas/items/origin.hpp"
 #include "ui/panels/canvas/items/outline.hpp"
@@ -64,6 +65,7 @@ private:
     CanvasView   m_view;
     RasterItem*      m_output       = nullptr;   // owned by m_scene
     std::vector<OutlineItem*> m_selectionBounds;   // one per outlined node, spares hidden
+    std::vector<ArtboardFrameItem*> m_artboards;   // one per artboard, spares hidden
     const Preview*   m_preview      = nullptr;   // the edit in progress (the engine's): bounds under it
     PreviewItem*     m_previewItem  = nullptr;   // ... live on the GPU, in the scene
     OutlineItem*     m_previewFrom  = nullptr;   // ... or, a drag that doesn't reach the master: where it was

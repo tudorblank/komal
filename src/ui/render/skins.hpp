@@ -39,6 +39,14 @@ void figureSlider(const Painter& p, const Style::FigureSliderStyle& s, const Sty
 void gradientSlider(const Painter& p, const Style::GradientSliderStyle& s, float x0, float x1, float cy, float xv,
                     const ImU32* stops, int count, bool hot);
 
+// ---- colour pickers
+// A checkerboard of `cell`-sized squares, `a` at the corner: behind a colour that's see-through.
+void checker(const Painter& p, ImVec2 a, ImVec2 b, float cell, ImU32 colorA, ImU32 colorB);
+// The saturation (left to right) / brightness (top to bottom) square of a hue, its marker at s, v.
+void colorSquare(const Painter& p, const Style::ColorPickerStyle& s, ImVec2 a, ImVec2 b, ImU32 pureHue, float sat, float value,
+                 float markerRadius);
+void colorMarker(const Painter& p, const Style::ColorPickerStyle& s, ImVec2 at, float radius);   // a light ring inside a dark one
+
 // ---- the Toolbox's tool buttons: the button; the tool draws its own icon on it
 void toolButton(const Painter& p, const Style::ToolButtonStyle& s, ImVec2 a, ImVec2 b, bool selected, bool hot);
 
