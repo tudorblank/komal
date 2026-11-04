@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/icon/komal-icon.png" width="128" height="128" alt="Komal icon">
+  <img src="assets/icons/komal-icon.png" width="128" height="128" alt="Komal icon">
 </p>
 
 <h1 align="center">Komal</h1>
