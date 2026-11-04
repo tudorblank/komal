@@ -14,7 +14,7 @@ public:
     NodeType type() const override { return NodeType::Raster; }
 
     const RasterData& raster() const { return *m_raster; }
-    // Editing policy only (the Project and the brush enforce it): RasterSettings.
+    // Editing policy only (the Workspace and the brush enforce it): RasterSettings.
     bool locked() const { return m_settings.locked; }
     bool alphaLocked() const { return m_settings.alphaLocked; }
     NodeSettings settings() const override { return m_settings; }
@@ -31,7 +31,7 @@ public:
     void wetFootprint(TileSet& out) override;
 
 private:
-    RasterData* m_raster;   // owned by the Project, outlives this node
+    RasterData* m_raster;   // owned by the Workspace, outlives this node
     RasterSettings m_settings;
     TileSet  m_fp;          // footprint cache
     uint64_t m_fpRev = ~0ull;

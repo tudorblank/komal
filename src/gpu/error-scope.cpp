@@ -1,4 +1,4 @@
-#include "gfx/error-scope.hpp"
+#include "gpu/error-scope.hpp"
 #include "base/log.hpp"
 
 namespace {

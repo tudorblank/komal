@@ -31,7 +31,7 @@
 #include <variant>
 #include <vector>
 
-class Project;
+class Workspace;
 
 struct NodeItemPort {
     ImVec2    pos;                  // on the box edge
@@ -165,7 +165,7 @@ struct NodeItem {
 
 
 // Lays `n` out into `out`, reusing its storage.
-void buildNodeItem(const Project& project, const Node& n, const NodeItemState& view, StackLayout stack, NodeItem& out);
+void buildNodeItem(const Workspace& workspace, const Node& n, const NodeItemState& view, StackLayout stack, NodeItem& out);
 
 // A layer row's parts, inside its rect: its eye, its thumbnail.
 ImRect layerEyeRect(const ImRect& row);

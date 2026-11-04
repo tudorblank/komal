@@ -1,7 +1,7 @@
 #include "ui/panels/graph/internal/painter.hpp"
 #include "ui/style/ui-style.hpp"
 #include "base/math.hpp"
-#include "document/project.hpp"
+#include "document/workspace.hpp"
 #include "ui/render/skins.hpp"
 #include "ui/panels/graph/internal/layout.hpp"
 #include "ui/style/graph-style.hpp"
@@ -159,9 +159,9 @@ std::string elide(const GraphPaint& g, const std::string& text, float size, floa
 
 // ---------------------------------------------------------------- nodes
 
-ImU32 headerColor(const Project& project, const Node& n)
+ImU32 headerColor(const Workspace& workspace, const Node& n)
 {
-    return project.isMaster(n.id()) ? colors().headerOutput : kindHeader(n.type());
+    return workspace.isMaster(n.id()) ? colors().headerOutput : kindHeader(n.type());
 }
 
 void paintPort(const GraphPaint& g, ImVec2 graphPos, ImU32 color, bool connected, bool hovered, bool placeholder)
@@ -175,7 +175,7 @@ void paintPort(const GraphPaint& g, ImVec2 graphPos, ImU32 color, bool connected
     if (!connected) g.draw.fillCircle(c, r * 0.5f, colors().body);   // hollow: nothing linked
 }
 
-void paintNode(const GraphPaint& g, const Project& project, const Node& n, const NodeItem& item,
+void paintNode(const GraphPaint& g, const Workspace& workspace, const Node& n, const NodeItem& item,
                const NodeItemVisual& visual, NodeThumbnails& thumbs)
 {
     const Painter& draw = g.draw;
@@ -191,7 +191,7 @@ void paintNode(const GraphPaint& g, const Project& project, const Node& n, const
 
     // A value being dragged shows its previewed value (the graph only gets it on release).
     const auto scaleOf = [&](NodeSignal sig, NodeChannel ch) {
-        const EditPreview* pv = project.preview();
+        const EditPreview* pv = workspace.preview();
         if (const std::optional<float> v = pv ? pv->scaleOf(id, sig, ch) : std::nullopt) return *v;
         return n.signal(sig).scale[int(ch)];
     };
@@ -205,7 +205,7 @@ void paintNode(const GraphPaint& g, const Project& project, const Node& n, const
         draw.fillRect(a, b, colors().body, r);
         if (box.header > 0.0f) {
             const float hb = a.y + box.header * s;
-            draw.fillRect(a, ImVec2(b.x, hb), headerColor(project, n), r, ImDrawFlags_RoundCornersTop);
+            draw.fillRect(a, ImVec2(b.x, hb), headerColor(workspace, n), r, ImDrawFlags_RoundCornersTop);
             draw.fillRect(ImVec2(a.x, hb - bw * 0.5f), ImVec2(b.x, hb + bw * 0.5f), colors().separator);
         }
     }
@@ -228,7 +228,7 @@ void paintNode(const GraphPaint& g, const Project& project, const Node& n, const
 
     // ---- its kind's settings: the controls on its rows
     for (const NodeItemPropertyRow& row : item.properties) textInRow(g, row.rect.Min.x + kPad, row.rect, kText, colors().text, row.label);
-    const OffsetEdit* dragged = project.preview() ? project.preview()->offsetOf(id) : nullptr;   // shown as dragged
+    const OffsetEdit* dragged = workspace.preview() ? workspace.preview()->offsetOf(id) : nullptr;   // shown as dragged
     for (const NodeItemWidget& w : item.widgets) {
         if (const auto* raster = std::get_if<RasterSettings>(&settings)) {
             if (w.as<LockControl>())      drawLockIcon(g, w.rect, raster->locked, widgetHovered(w.control));
@@ -265,14 +265,13 @@ void paintNode(const GraphPaint& g, const Project& project, const Node& n, const
             textCentered(g, row.rect, kSmallText, colors().dimText, "Drop nodes here");
         } else if (const auto* layer = row.as<NodeItemLayerRow::Layer>(); layer && layer->index < layers.size()) {
             const Node& l = *layers[layer->index];
-            const auto* stack = dynamic_cast<const CompositorNode*>(&n);
             const bool eyeHot = widgetHovered(LayerMuteControl{ layer->index });
             paintLayerRow(g, l, row.rect, thumbs, { .hot = eyeHot || widgetHovered(LayerControl{ layer->index }), .selected = row.selected,
-                                                    .muted = stack && stack->muted(l), .eyeHot = eyeHot });
+                                                    .muted = stackSettings(n).mutes(l.id()), .eyeHot = eyeHot });
         } else if (const auto* board = row.as<NodeItemLayerRow::Artboard>()) {
             const ArtboardId k = board->key;
             const bool parts[3] = { widgetHovered(ArtboardFoldControl{ k }), widgetHovered(ArtboardMuteControl{ k }), widgetHovered(ArtboardColorControl{ k }) };
-            paintArtboardRow(g, project.artboard(k), row.rect,
+            paintArtboardRow(g, workspace.artboard(k), row.rect,
                              { .hot = parts[0] || parts[1] || parts[2] || widgetHovered(ArtboardControl{ k }), .selected = row.selected,
                                .eyeHot = parts[1], .foldHot = parts[0], .colorHot = parts[2], .folded = board->folded });
         }
@@ -374,11 +373,11 @@ void paintArtboardRow(const GraphPaint& g, const Artboard* board, const ImRect& 
     textInRow(g, nameX, rect, kText, ink, name.c_str());
 }
 
-void paintNodePorts(const GraphPaint& g, const Project& project, const NodeItem& item, const NodeItemVisual& visual)
+void paintNodePorts(const GraphPaint& g, const Workspace& workspace, const NodeItem& item, const NodeItemVisual& visual)
 {
     for (size_t i = 0; i < item.ports.size(); ++i) {
         const NodeItemPort& p = item.ports[i];
-        const bool connected = p.output || project.inputAt(item.id, p.slot) != nullptr;
+        const bool connected = p.output || workspace.inputAt(item.id, p.slot) != nullptr;
         paintPort(g, p.pos, p.mask ? colors().maskPort : colors().imagePort, connected, visual.hoveredPort == int(i), p.placeholder);
     }
 }

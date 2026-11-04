@@ -9,7 +9,7 @@
 //   hit.link()   the link it's on, or its insert button: -1 if none
 
 #include "ui/panels/graph/internal/camera.hpp"
-#include "ui/panels/graph/internal/item.hpp"
+#include "ui/panels/graph/internal/node-item.hpp"
 #include "ui/panels/graph/internal/painter.hpp"
 
 #include <span>

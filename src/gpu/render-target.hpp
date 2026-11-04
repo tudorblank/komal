@@ -2,7 +2,7 @@
 // A texture to render into and show with ImGui::Image, sized to what's shown. Re-creating it on
 // resize is safe: ImGui's wgpu backend rebuilds image bind groups every frame.
 
-#include "gfx/texture.hpp"
+#include "gpu/texture.hpp"
 
 class RenderTarget {
 public:

@@ -1,4 +1,4 @@
-#include "item.hpp"
+#include "ui/panels/canvas/canvas-item.hpp"
 #include "ui/panels/canvas/scene.hpp"
 
 void CanvasItem::setZ(float z)

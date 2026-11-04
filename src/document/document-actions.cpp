@@ -1,5 +1,5 @@
 #include "document/document-actions.hpp"
-#include "document/project.hpp"
+#include "document/workspace.hpp"
 
 #include <memory>
 #include <span>
@@ -42,10 +42,10 @@ BrushParams strokeParams(const ActionArgs& a)
 
 }
 
-void registerDocumentActions(ActionRegistry& actions, Project& project)
+void registerDocumentActions(ActionRegistry& actions, Workspace& workspace)
 {
     using K = ActionKind;
-    Project& p = project;
+    Workspace& p = workspace;
 
     // Every document action below is one undo step, named by its title.
     actions.setUndoSteps([&p](const Action& a) { p.beginStep(a.title); }, [&p] { p.endStep(); });
@@ -67,7 +67,7 @@ void registerDocumentActions(ActionRegistry& actions, Project& project)
                   .args = { Arg::choice(kType, kindIds()), Arg::number(kX), Arg::number(kY), Arg::id(kFrom).optional(),
                             Arg::id(kInto).optional(), Arg::parsed(kSlot).optional() },
                   .run = [&p](const ActionArgs& a) -> ActionResult {
-        Project::NodeWiring wiring;
+        Workspace::NodeWiring wiring;
         wiring.from = a.get(kFrom, kNoNodeId);
         if (a.has(kInto)) {
             wiring.into = a.get(kInto);
@@ -111,12 +111,8 @@ void registerDocumentActions(ActionRegistry& actions, Project& project)
                   .run = [&p](const ActionArgs& a) { return p.connect(a.get(kFrom), a.get(kTo), a.get(kSlot)); } });
     actions.add({ .id = Actions::LinkDisconnect, .title = "Disconnect", .kind = K::DocumentEdit, .args = { Arg::id(kTo), Arg::parsed(kSlot) },
                   .run = [&p](const ActionArgs& a) { return p.disconnect(a.get(kTo), a.get(kSlot)); } });
-    actions.add({ .id = Actions::LayerMove, .title = "Move Layer", .kind = K::DocumentEdit,
-                  .args = { Arg::id(kNode), Arg::integer(kLayerFrom, 0), Arg::integer(kLayerTo, 0) }, .run = [&p](const ActionArgs& a) {
-        return p.moveLayer(a.get(kNode), a.get(kLayerFrom), a.get(kLayerTo));
-    } });
     // Rows of a stack moved together (layers, and the master's artboards whole) to one place: a
-    // position among the rows left, at the top level or into an artboard (Project::moveStackRows).
+    // position among the rows left, at the top level or into an artboard (Workspace::moveStackRows).
     actions.add({ .id = Actions::LayersMove, .title = "Move Layers", .kind = K::DocumentEdit,
                   .args = { Arg::id(kNode), Arg::ids(kLayers), Arg::ids(kArtboards).optional(), Arg::id(kIntoArtboard).optional(),
                             Arg::integer(kLayerTo, 0) }, .run = [&p](const ActionArgs& a) {
@@ -186,7 +182,7 @@ void registerDocumentActions(ActionRegistry& actions, Project& project)
                   .run = [&p](const ActionArgs& a) -> ActionResult {
         const TileGrid* const* tiles = a.payloadAs<const TileGrid*>();
         if (!tiles || !*tiles) return {};
-        Project::ImportOptions options;
+        Workspace::ImportOptions options;
         if (a.get(kTarget) == "graph") {   // a node where it was dropped, linked to nothing
             options.addToMaster = false;
             options.makeActive  = false;

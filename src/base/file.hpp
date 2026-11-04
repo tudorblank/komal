@@ -16,6 +16,9 @@ namespace File {
 bool read(const std::string& path, std::vector<uint8_t>& out, std::string& error);
 bool write(const std::string& path, std::span<const uint8_t> bytes, std::string& error);   // the whole file, replaced
 bool write(const std::string& path, const std::string& text, std::string& error);
+// The whole file, replaced only once the new bytes are all written (beside it, then renamed over
+// it): a save cut short leaves the old file as it was.
+bool replace(const std::string& path, std::span<const uint8_t> bytes, std::string& error);
 
 std::string name(const std::string& path);   // "photo.png"
 std::string stem(const std::string& path);   // "photo"

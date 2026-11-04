@@ -1,7 +1,7 @@
 #include "ui/panels/history-panel.hpp"
 #include "document/document-actions.hpp"
 #include "command/actions.hpp"
-#include "document/project.hpp"
+#include "document/workspace.hpp"
 #include "ui/render/painter.hpp"
 #include "ui/style/ui-style.hpp"
 #include "ui/widgets/widgets.hpp"
@@ -64,10 +64,17 @@ bool HistoryPanel::init()
     return true;
 }
 
+void HistoryPanel::documentsChanged(const DocumentsEvent& e)
+{
+    if (e.type != DocumentsEvent::Type::Activated) return;
+    m_laidOut = 0;
+    m_shownCurrent = kNoStep;
+}
+
 void HistoryPanel::draw()
 {
     if (!isOpen()) return;
-    const History& history = ui().project.history();
+    const History& history = ui().workspace().history();
     ActionRegistry& actions = ui().actions;
     const Widgets::PanelWindow window(*this, actions);
     if (!window) return;

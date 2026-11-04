@@ -66,15 +66,21 @@ The source folders are layers, lowest first. A folder only includes the ones bel
 |---|---|
 | `src/base` | Colors, math, clocks, logging, files: the standard library only |
 | `src/input` | What input is (one frame of it, a press followed to its release), and SDL turned into it |
-| `src/raster` | Pixels, tiles, tile grids, brush strokes |
+| `src/raster` | Pixels, tiles, tile grids, brush strokes, tiles as compressed binary |
 | `src/node` | The node graph: nodes, signals, masks, rendering |
 | `src/command` | The actions that input and menus trigger |
-| `src/document` | The project: nodes, rasters, history, the document's actions |
-| `src/gfx` | The GPU: device, buffers, textures, render passes |
+| `src/document` | The workspace (nodes, rasters, history), the open documents, `.komal` files, and their actions |
+| `src/gpu` | The GPU: device, buffers, textures, render passes |
 | `src/ui` | The interface: its look (`style`), drawing (`render`), controls (`widgets`), panels and tools |
 | `src/app` | The window, the main loop, startup |
 | `assets` | Fonts, icons and themes, baked into the binary |
 | `tests` | The core's tests; `tests/ui` the UI's |
+
+The code's words for what you work on:
+
+- **Workspace** (`document/workspace.hpp`): everything one piece of work holds: its nodes and their pixels, its history, its canvas view. Edited only through actions.
+- **Document** (`document/document.hpp`): one open workspace, with its own actions and its file. The app holds the open ones (`Documents`); each is a tab.
+- **Project**: what a user calls a `.komal` file. In the code it's only ever the file (`document/workspace-file.hpp`), never an object.
 
 ## Credits
 

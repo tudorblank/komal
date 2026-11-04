@@ -7,7 +7,7 @@
 //   node.link(key, source, slot);                                       // canLink() said yes
 //   Links::emitChanges(id, before, node.links(), emit);                 // LinkAdded / LinkRemoved / LayersChanged
 
-#include "document/project-event.hpp"
+#include "document/workspace-event.hpp"
 #include "node/node.hpp"
 
 #include <absl/container/flat_hash_set.h>

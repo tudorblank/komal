@@ -613,3 +613,10 @@ const Tile* Node::blendOver(const Tile* top, const Tile* bottom, RenderCtx& ctx)
     }
     return &out;
 }
+
+CompositorSettings stackSettings(const Node& n)
+{
+    const NodeSettings s = n.settings();
+    if (const auto* c = std::get_if<CompositorSettings>(&s)) return *c;
+    return {};
+}

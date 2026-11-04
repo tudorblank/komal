@@ -1,4 +1,4 @@
-#include "gfx/render-target.hpp"
+#include "gpu/render-target.hpp"
 
 #include <algorithm>
 

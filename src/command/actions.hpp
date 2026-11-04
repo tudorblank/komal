@@ -2,6 +2,10 @@
 
 // Every action, in one registry: added once, found by id, run (or begun and ended, for a gesture)
 // with checked arguments, dispatched from shortcuts, and logged by kind.
+//
+// A registry can hand on what it doesn't have (delegateTo): the interface's holds the app's own
+// actions and hands the document's to the active document's registry, which runs, logs and
+// undoes them. Keys for those are bound here, by id, so they stay whichever document is active.
 
 #include "base/clock.hpp"
 #include "command/action.hpp"
@@ -39,7 +43,11 @@ public:
     // A key for an action that's been added (the keymap, ui/keymap): one that means one thing
     // wherever it can fire. False (logged) if not.
     bool bind(ActionId id, Shortcut shortcut);
-    const Action* find(ActionId id) const;
+    const Action* find(ActionId id) const;   // its own, else the delegate's
+    // Actions it doesn't have are found, run, begun and ended there (null: none). Changed only
+    // between frames, with no gesture open (anyGesture).
+    void delegateTo(ActionRegistry* other) { m_delegate = other; }
+    bool anyGesture() const;   // here or in the delegate
 
     // A command: runs and logs it. Refused (not done) if unknown or disabled.
     ActionResult run(ActionId id, ActionArgs args = {});
@@ -86,7 +94,13 @@ private:
     void write(ActionLogEntry entry);
     void flushPending();
 
+    const Action* own(ActionId id) const;   // this registry's only
+    ActionRegistry* handler(ActionId id);   // which one has it: this, the delegate, or null
+
     std::vector<Action> m_actions;                       // in the order they were added (menus, dispatch)
+    ActionRegistry* m_delegate = nullptr;
+    struct DelegatedKey { ActionId id; Shortcut shortcut; };
+    std::vector<DelegatedKey> m_delegatedKeys;           // keys for the delegate's actions, by id
     absl::flat_hash_map<std::string_view, size_t> m_index;        // name -> m_actions index
     struct OpenGesture { ActionId id; ActionArgs args; };   // begin's arguments
     absl::flat_hash_map<std::string_view, OpenGesture> m_gestures;   // in progress, by name

@@ -1,11 +1,11 @@
 #pragma once
-// The project's changes as history steps: the History tree, the step open now (what it opened
+// The workspace's changes as history steps: the History tree, the step open now (what it opened
 // with, the raster commits made in it), and which nodes changed since the graph was last captured.
 // A step captures the graph when it closes, only if a graph event came, and then anew only for
 // the nodes those events named: the rest share the step before's states.
 //
 //   steps.begin("Connect");    // nested ones merge into the outermost
-//   steps.touched(node);       // every graph event, by the node it names (Project::emit)
+//   steps.touched(node);       // every graph event, by the node it names (Workspace::emit)
 //   if (steps.end()) ...       // a step was kept: tell HistoryChanged
 
 #include "document/graph-state.hpp"
@@ -18,7 +18,7 @@
 
 class StepRecorder {
 public:
-    // The project's: they outlive it.
+    // The workspace's: they outlive it.
     StepRecorder(const NodeRegistry& nodes, const Artboards& artboards) : m_nodes(nodes), m_artboards(artboards) {}
 
     void start();   // the graph now: where undo goes back to

@@ -1,10 +1,10 @@
 #include "ui/panels/canvas/node-thumbnails.hpp"
 #include "ui/panels/canvas/imgui-texture.hpp"
-#include "gfx/render-pass.hpp"
+#include "gpu/render-pass.hpp"
 #include "base/perf.hpp"
 #include "base/frames.hpp"
 #include "ui/panels/canvas/preview/preview.hpp"
-#include "document/project.hpp"
+#include "document/workspace.hpp"
 #include "base/math.hpp"
 
 #include <algorithm>
@@ -71,7 +71,7 @@ void NodeThumbnails::release(Thumb& t)
 
 // ---------------------------------------------------------------- CPU side
 
-void NodeThumbnails::refresh(const Project& project, const Deadline& budget)
+void NodeThumbnails::refresh(const Workspace& workspace, const Deadline& budget)
 {
     PerfScope perf(Perf::Thumbnails);
     m_nextFrameIn = kNoFrame;
@@ -86,7 +86,7 @@ void NodeThumbnails::refresh(const Project& project, const Deadline& budget)
     absl::erase_if(m_pictures, [&](const auto& kv) { return !previewing || !m_preview->plan().reaches(kv.first); });
 
     for (NodeId id : m_requested) {
-        const NodePtr n = project.findPtr(id);
+        const NodePtr n = workspace.findPtr(id);
         if (!n) continue;
         std::unique_ptr<Thumb>& tp = m_thumbs[id];
         if (!tp) {

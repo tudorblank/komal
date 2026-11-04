@@ -3,8 +3,8 @@
 // space); an open artboard holds its own array. A drop goes between rows (room there) or onto an
 // artboard's row (into it, nothing moving).
 
-#include "document/project.hpp"
-#include "ui/panels/graph/internal/item.hpp"
+#include "document/workspace.hpp"
+#include "ui/panels/graph/internal/node-item.hpp"
 #include "ui/panels/graph/internal/stack-drop.hpp"
 #include "ui/panels/graph/internal/layout.hpp"
 
@@ -19,14 +19,14 @@ constexpr auto kRows = StackGap::Kind::Rows;
 
 // Master, top first: [A: a2 a1] [B: b1] d. The top level, bottom first: d 0, B 1, A 2.
 struct Stack {
-    Project p;
+    Workspace p;
     NodeId a1, a2, b1, d;
     ArtboardId A, B;
     NodeItemState view;
 
     Stack()
     {
-        p.init([&](Project& s) {
+        p.init([&](Workspace& s) {
             const auto raster = [&] {
                 TileGrid g;
                 g.writeOrCreateTile(0, 0).setPx(0, 0, RGBA{ 255, 0, 0, 255 });
@@ -48,7 +48,7 @@ struct Stack {
     }
 };
 
-const NodeItemLayerRow& rowOf(const Project& p, const NodeItem& item, NodeId layer, ArtboardId board = kNoArtboard)
+const NodeItemLayerRow& rowOf(const Workspace& p, const NodeItem& item, NodeId layer, ArtboardId board = kNoArtboard)
 {
     for (const NodeItemLayerRow& r : item.layers) {
         if (const auto* a = r.as<NodeItemLayerRow::Artboard>(); a && board != kNoArtboard && a->key == board) return r;
@@ -366,9 +366,9 @@ TEST_CASE("an empty artboard with the layer right under it, dragged up onto it: 
     // The ref picture: [Artboard 1: empty] Raster 1; Raster 1 dragged up onto the artboard. Nothing on
     // the way is a place between rows (its own spot, onto the artboard): no room, nothing moves.
     // Above the artboard (genuinely above it) the room opens, at the top.
-    Project p;
+    Workspace p;
     NodeId raster = kNoNodeId;
-    p.init([&](Project& s) {
+    p.init([&](Workspace& s) {
         TileGrid g;
         g.writeOrCreateTile(0, 0).setPx(0, 0, RGBA{ 255, 0, 0, 255 });
         raster = s.importTiles(g, "", {});
@@ -426,7 +426,7 @@ TEST_CASE("going up, above an artboard opens room under the row above it")
 
 TEST_CASE("an empty stack: a drop lands on its zone, and nothing changes size")
 {
-    Project p;
+    Workspace p;
     p.init();   // an empty master ...
     const NodeId comp = p.addNode(NodeType::Compositor, 0.0f, 0.0f, {});   // ... and an empty compositor
     const NodeItemState view;
@@ -466,9 +466,9 @@ TEST_CASE("a layer carried down past an empty or folded artboard reaches the pla
     // so nothing holds the drop on C past its row: l2's upper half is above l2, as anywhere else.
     for (const bool foldedWithLayer : { false, true }) {
         CAPTURE(foldedWithLayer);
-        Project p;
+        Workspace p;
         NodeId l1 = kNoNodeId, l2 = kNoNodeId, inside = kNoNodeId;
-        p.init([&](Project& s) {
+        p.init([&](Workspace& s) {
             const auto raster = [&] {
                 TileGrid g;
                 g.writeOrCreateTile(0, 0).setPx(0, 0, RGBA{ 255, 0, 0, 255 });

@@ -7,8 +7,8 @@
 
 TEST_CASE("links: no cycles, the master feeds nothing, a slot takes one source")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const NodeId m1 = p.addNode(NodeType::Move, 0, 0, {});
     const NodeId m2 = p.addNode(NodeType::Move, 0, 0, {});
     CHECK(p.connect(m1, m2, InputSlot::input()));
@@ -24,8 +24,8 @@ TEST_CASE("links: no cycles, the master feeds nothing, a slot takes one source")
 
 TEST_CASE("deleting a node heals the links through it")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const NodeId move = p.addNode(NodeType::Move, 0, 0, {});
     REQUIRE(p.connect(s.background, move, InputSlot::input()));
     REQUIRE(p.connect(move, s.master, InputSlot::stackLayer(0)));   // the move takes the background's place
@@ -39,8 +39,8 @@ TEST_CASE("deleting a node heals the links through it")
 
 TEST_CASE("undo and redo restore the graph and its settings")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     NodeId move = kNoNodeId;
     step(p, "Add", [&] {
         move = p.addNode(NodeType::Move, 10, 20, {});
@@ -67,16 +67,16 @@ TEST_CASE("undo and redo restore the graph and its settings")
 
 TEST_CASE("a step that changes nothing isn't kept")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     step(p, "Nothing", [&] { p.setSignalScale(s.paint, NodeSignal::Main, NodeChannel::A, 1.0f); });
     CHECK(p.history().size() == 1);
 }
 
 TEST_CASE("a graph snapshot restores what changed since")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const NodeId move = p.addNode(NodeType::Move, 0, 0, {});   // outside any step: the next one captures it first
     step(p, "Change", [&] {
         p.setNodePosition(move, 50, 60);
@@ -94,10 +94,10 @@ TEST_CASE("a graph snapshot restores what changed since")
 
 TEST_CASE("a dragged value is previewed, then applied once or cancelled")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     int changes = 0;
-    const Connection c = p.changed.connect([&](const ProjectEvent& e) { if (e.type == ProjectEventType::NodeChanged) ++changes; });
+    const Connection c = p.changed.connect([&](const WorkspaceEvent& e) { if (e.type == WorkspaceEventType::NodeChanged) ++changes; });
     p.previewEdit(ScaleEdit{ s.paint, NodeSignal::Main, NodeChannel::A, 0.5f });
     REQUIRE(p.preview());
     CHECK(p.find(s.paint)->signal(NodeSignal::Main).scale[0] == 1.0f);   // the graph waits
@@ -115,8 +115,8 @@ TEST_CASE("a dragged value is previewed, then applied once or cancelled")
 
 TEST_CASE("a stroke changes the raster once, when it ends: one undo step")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     REQUIRE(p.activeRasterId() == s.paint);
     BrushParams brush;
     brush.diameter = 6.0f;
@@ -143,8 +143,8 @@ TEST_CASE("a stroke changes the raster once, when it ends: one undo step")
 TEST_CASE("a stroke's bounds while it's painted are the raster's once it ends")
 {
     // Soft and faint: the rim's least coverage rounds away. A short stroke that doubles back.
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     BrushParams brush;
     brush.diameter = 9.0f;
     brush.hardness = 0.0f;
@@ -164,8 +164,8 @@ TEST_CASE("a stroke's bounds while it's painted are the raster's once it ends")
 
 TEST_CASE("alpha lock: a stroke keeps the raster's transparency; a locked raster takes none")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     p.setNodeSettings(s.paint, RasterSettings{ false, true });
     BrushParams brush;
     brush.diameter = 200.0f;
@@ -185,13 +185,13 @@ TEST_CASE("alpha lock: a stroke keeps the raster's transparency; a locked raster
 
 TEST_CASE("the selection follows the nodes: a deleted node leaves it")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     CHECK(p.setSelection({ { s.background, s.paint }, s.background }));
     CHECK_FALSE(p.setSelection({ { s.background, s.paint }, s.background }));   // the same: no change
     bool stale = false;   // whoever hears the node went sees it unselected already
-    const Connection c = p.changed.connect([&](const ProjectEvent& e) {
-        if (e.type == ProjectEventType::NodeRemoved && p.selection().contains(e.node)) stale = true;
+    const Connection c = p.changed.connect([&](const WorkspaceEvent& e) {
+        if (e.type == WorkspaceEventType::NodeRemoved && p.selection().contains(e.node)) stale = true;
     });
     p.deleteNodes({ s.background });
     CHECK_FALSE(stale);
@@ -205,8 +205,8 @@ TEST_CASE("the selection follows the nodes: a deleted node leaves it")
 
 TEST_CASE("selection rules: click, toggle, chain along links")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const NodeSelection one = NodeSelection::only(s.background);
     CHECK(one.single() == s.background);
     const NodeSelection two = one.toggled(s.paint);
@@ -220,8 +220,8 @@ TEST_CASE("selection rules: click, toggle, chain along links")
 
 TEST_CASE("a dragged offset is the edit's alone: the Move keeps its own until applied")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const NodeId move = p.addNode(NodeType::Move, 0, 0, {});
     REQUIRE(p.connect(s.background, move, InputSlot::input()));
     const BoundsI before = p.find(move)->bounds();
@@ -241,8 +241,8 @@ TEST_CASE("a dragged offset is the edit's alone: the Move keeps its own until ap
 
 TEST_CASE("an edit that doesn't fit the document is refused")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     CHECK_FALSE(p.previewEdit(ScaleEdit{ s.paint, NodeSignal::Main, NodeChannel::A, 1.5f }));    // out of range
     CHECK_FALSE(p.previewEdit(ScaleEdit{ s.paint, NodeSignal::Wet, NodeChannel::A, 0.5f }));     // a raster has no wet
     CHECK_FALSE(p.previewEdit(OffsetEdit{ s.paint, 1, 1 }));                                     // not a Move
@@ -255,8 +255,8 @@ TEST_CASE("an edit that doesn't fit the document is refused")
 
 TEST_CASE("nodes dragged in the graph move once, when let go")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const float x = p.find(s.paint)->x();
     CHECK(p.previewEdit(NodesMoveEdit{ { s.paint, s.background }, 25.0f, -10.0f }));
     CHECK(p.find(s.paint)->x() == x);
@@ -270,8 +270,8 @@ TEST_CASE("nodes dragged in the graph move once, when let go")
 
 TEST_CASE("a lifted link changes nothing until it lands; deleting what it names drops it")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     CHECK(p.previewEdit(LinkMoveEdit{ s.paint, s.master, InputSlot::stackLayer(1) }));
     CHECK(p.master().layers().size() == 2);   // still linked while carried
     p.deleteNodes({ s.paint });
@@ -280,8 +280,8 @@ TEST_CASE("a lifted link changes nothing until it lands; deleting what it names 
 
 TEST_CASE("a node's settings are its kind's own: anything else is refused")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const NodeId move = p.addNode(NodeType::Move, 0, 0, {});
     CHECK(p.setNodeSettings(move, MoveSettings{ 3, 4 }));
     CHECK_FALSE(p.setNodeSettings(move, MoveSettings{ 3, 4 }));            // no change
@@ -303,8 +303,8 @@ TEST_CASE("a kind's input shape comes from its class")
 
 TEST_CASE("links into a node: inputs, layers and masks, each with its slot")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const NodeId move = p.addNode(NodeType::Move, 0, 0, {});
     REQUIRE(p.connect(s.background, move, InputSlot::input()));
     REQUIRE(p.connect(s.paint, move, InputSlot::mask(NodeSignal::Main, NodeChannel::A)));
@@ -324,8 +324,8 @@ TEST_CASE("links into a node: inputs, layers and masks, each with its slot")
 
 TEST_CASE("deleting a chain heals through every deleted node with one input")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const NodeId a = p.addNode(NodeType::Move, 0, 0, {});
     const NodeId b = p.addNode(NodeType::Reference, 0, 0, {});
     REQUIRE(p.connect(s.background, a, InputSlot::input()));
@@ -339,8 +339,8 @@ TEST_CASE("a history jump across a deleted raster keeps its pixels shown")
 {
     // A stroke, undone; a branch deletes the raster; the History Tree jumps back to the stroke.
     // The stroke's commit flips while the raster is out of the graph: it must come back drawn.
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     BrushParams brush;
     brush.diameter = 20.0f;
     step(p, "Stroke", [&] {
@@ -368,8 +368,8 @@ TEST_CASE("a history jump across a deleted raster keeps its pixels shown")
 
 TEST_CASE("an imported image is part of its step: undo takes it away, redo brings it back")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     TileGrid tiles;
     TileEdit::fill(tiles.writeOrCreateTile(10, 10), RGBA{ 10, 20, 30, 255 });
     NodeId imported = kNoNodeId;
@@ -385,8 +385,8 @@ TEST_CASE("an imported image is part of its step: undo takes it away, redo bring
 
 TEST_CASE("a lifted link lands where it's dropped, or nothing changes at all")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     // Within its own stack: at a position among the others (the stack without it).
     CHECK(p.moveLink(s.background, s.master, InputSlot::stackLayer(0), s.master, InputSlot::newLayer(1)));
     REQUIRE(p.master().layers().size() == 2);
@@ -403,8 +403,8 @@ TEST_CASE("a lifted link lands where it's dropped, or nothing changes at all")
 
 TEST_CASE("a node is added with all of its wiring, or not at all")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const size_t nodes = p.nodes().size();
     // A raster takes no input: a Move made to feed one isn't made.
     CHECK(p.addNode(NodeType::Move, 0, 0, { .from = s.paint, .into = s.background, .slot = InputSlot::input() }) == kNoNodeId);
@@ -419,8 +419,8 @@ TEST_CASE("a node is added with all of its wiring, or not at all")
 
 TEST_CASE("history steps share the states of the nodes they didn't change")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     std::vector<NodeId> extra;
     step(p, "Add", [&] {
         for (int i = 0; i < 200; ++i) extra.push_back(p.addNode(NodeType::Move, float(i), 0.0f, {}));
@@ -447,7 +447,7 @@ TEST_CASE("history steps share the states of the nodes they didn't change")
 
 TEST_CASE("a new project is blank: the master alone, nothing to undo")
 {
-    Project p;
+    Workspace p;
     p.init();
     REQUIRE(p.nodes().size() == 1);
     CHECK(p.isMaster(p.nodes().front()->id()));
@@ -459,13 +459,13 @@ TEST_CASE("a new project is blank: the master alone, nothing to undo")
 
 TEST_CASE("a seed is the project's start: its pixels and nodes, no undo steps")
 {
-    StarterProject s;
-    const Project& p = s.project;
+    StarterWorkspace s;
+    const Workspace& p = s.workspace;
     CHECK(p.nodes().size() == 3);
     CHECK(p.master().layers().size() == 2);
     CHECK(p.activeRasterId() == s.paint);
     CHECK(pixelOf(p, s.background, 10, 20) == RGBA{ 10, uint8_t(20 * 255 / 191), 160, 255 });
     CHECK(pixelOf(p, s.paint, -48, -48) == RGBA{ 255, 160, 40, 255 });
     CHECK(p.history().size() == 1);
-    CHECK_FALSE(s.project.undo());   // nothing before the seed
+    CHECK_FALSE(s.workspace.undo());   // nothing before the seed
 }

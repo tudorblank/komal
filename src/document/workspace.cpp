@@ -1,4 +1,4 @@
-#include "project.hpp"
+#include "workspace.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -6,7 +6,7 @@
 #include <string>
 #include <utility>
 
-void Project::init(const std::function<void(Project&)>& seed)
+void Workspace::init(const std::function<void(Workspace&)>& seed)
 {
     const NodeId master = createNode(NodeType::Compositor, 320.0f, 120.0f);
     m_master = std::static_pointer_cast<CompositorNode>(findPtr(master));
@@ -22,24 +22,24 @@ void Project::init(const std::function<void(Project&)>& seed)
 
 // ---------------------------------------------------------------- read
 
-RasterRootNode* Project::activeRaster() const
+RasterRootNode* Workspace::activeRaster() const
 {
     return rasterAt(m_active);
 }
 
-RasterRootNode* Project::rasterAt(NodeId id) const
+RasterRootNode* Workspace::rasterAt(NodeId id) const
 {
     Node* n = find(id);
     return n && n->type() == NodeType::Raster ? static_cast<RasterRootNode*>(n) : nullptr;
 }
 
-NodePtr Project::inputAt(NodeId to, const InputSlot& slot) const
+NodePtr Workspace::inputAt(NodeId to, const InputSlot& slot) const
 {
     const Node* n = find(to);
     return n ? n->linkAt(slot) : nullptr;
 }
 
-bool Project::preferredInput(NodeId id, InputSlot& out) const
+bool Workspace::preferredInput(NodeId id, InputSlot& out) const
 {
     const Node* n = find(id);
     return n && Links::preferredInput(*n, out);
@@ -47,15 +47,15 @@ bool Project::preferredInput(NodeId id, InputSlot& out) const
 
 // ---------------------------------------------------------------- graph edits
 
-NodeId Project::createNode(NodeType type, float x, float y)
+NodeId Workspace::createNode(NodeType type, float x, float y)
 {
     const NodeId id = m_nodes.create(key(), type, x, y);
-    emit(ProjectEventType::NodeAdded, id);
+    emit(WorkspaceEventType::NodeAdded, id);
     if (m_active == kNoNodeId && rasterAt(id)) setActiveRaster(id);
     return id;
 }
 
-NodeId Project::addNode(NodeType type, float x, float y, const NodeWiring& wiring)
+NodeId Workspace::addNode(NodeType type, float x, float y, const NodeWiring& wiring)
 {
     // What can be told without the node first: the ends are there, and something can feed it.
     if (wiring.from != kNoNodeId && (!find(wiring.from) || isMaster(wiring.from) || nodeKind(type).ports.inputs == InputShape::None)) return kNoNodeId;
@@ -69,7 +69,7 @@ NodeId Project::addNode(NodeType type, float x, float y, const NodeWiring& wirin
     return kNoNodeId;
 }
 
-NodeId Project::importTiles(const TileGrid& tiles, const std::string& name, const ImportOptions& options)
+NodeId Workspace::importTiles(const TileGrid& tiles, const std::string& name, const ImportOptions& options)
 {
     float x = options.nodeX, y = options.nodeY;
     if (!options.placeNode) {   // below the lowest raster in the graph
@@ -90,7 +90,7 @@ NodeId Project::importTiles(const TileGrid& tiles, const std::string& name, cons
     return id;
 }
 
-bool Project::deleteNodes(const std::vector<NodeId>& ids)
+bool Workspace::deleteNodes(const std::vector<NodeId>& ids)
 {
     absl::flat_hash_set<NodeId> doomed;
     for (NodeId id : ids)
@@ -121,41 +121,41 @@ bool Project::deleteNodes(const std::vector<NodeId>& ids)
         Links::emitChanges(id, was, NodeLinks{}, tell);
     }
     for (const NodePtr& n : nodes()) Links::emitChanges(n->id(), before[n->id()], n->links(), tell);
-    for (NodeId id : doomed) emit(ProjectEventType::NodeRemoved, id);
+    for (NodeId id : doomed) emit(WorkspaceEventType::NodeRemoved, id);
 
     if (doomed.contains(m_active)) fallBackActiveRaster();
     return true;
 }
 
-void Project::fallBackActiveRaster()
+void Workspace::fallBackActiveRaster()
 {
     NodeId next = kNoNodeId;
     for (auto r = nodes().rbegin(); r != nodes().rend(); ++r)
         if ((*r)->type() == NodeType::Raster) { next = (*r)->id(); break; }
     m_active = kNoNodeId;
     setActiveRaster(next);
-    if (next == kNoNodeId) emit(ProjectEventType::ActiveRasterChanged);
+    if (next == kNoNodeId) emit(WorkspaceEventType::ActiveRasterChanged);
 }
 
-bool Project::setNodePosition(NodeId id, float x, float y)
+bool Workspace::setNodePosition(NodeId id, float x, float y)
 {
     Node* n = find(id);
     if (!n || (n->x() == x && n->y() == y)) return false;
     n->setPosition(key(), x, y);
-    emit(ProjectEventType::NodeMoved, id);
+    emit(WorkspaceEventType::NodeMoved, id);
     return true;
 }
 
-bool Project::setNodeLabel(NodeId id, std::string label)
+bool Workspace::setNodeLabel(NodeId id, std::string label)
 {
     Node* n = find(id);
     if (!n || label.empty() || n->label() == label) return false;
     n->setLabel(key(), std::move(label));
-    emit(ProjectEventType::NodeChanged, id);
+    emit(WorkspaceEventType::NodeChanged, id);
     return true;
 }
 
-bool Project::setNodeSettings(NodeId id, const NodeSettings& settings)
+bool Workspace::setNodeSettings(NodeId id, const NodeSettings& settings)
 {
     Node* n = find(id);
     if (!n) return false;
@@ -166,34 +166,34 @@ bool Project::setNodeSettings(NodeId id, const NodeSettings& settings)
         return false;   // the artboards' (addArtboard, moveStackRows)
     if (id == m_stroke.node()) endStroke();   // finished under the rules it started with
     n->setSettings(key(), settings);
-    emit(ProjectEventType::NodeChanged, id);
+    emit(WorkspaceEventType::NodeChanged, id);
     return true;
 }
 
-bool Project::activeRasterEditable() const
+bool Workspace::activeRasterEditable() const
 {
     const RasterRootNode* r = activeRaster();
     return r && !r->locked();
 }
 
-bool Project::setActiveRaster(NodeId id)
+bool Workspace::setActiveRaster(NodeId id)
 {
     if (id != kNoNodeId && !rasterAt(id)) return false;
     if (m_active == id) return false;
     endStroke();   // a stroke can't continue on another raster
     m_active = id;
-    emit(ProjectEventType::ActiveRasterChanged, id);
+    emit(WorkspaceEventType::ActiveRasterChanged, id);
     return true;
 }
 
-bool Project::canConnect(NodeId from, NodeId to, const InputSlot& slot) const
+bool Workspace::canConnect(NodeId from, NodeId to, const InputSlot& slot) const
 {
     if (from == to || isMaster(from)) return false;   // the master output feeds only the viewport
     const Node* dst = find(to);
     return dst && dst->canLink(findPtr(from), slot);
 }
 
-bool Project::connect(NodeId from, NodeId to, const InputSlot& slot)
+bool Workspace::connect(NodeId from, NodeId to, const InputSlot& slot)
 {
     if (!canConnect(from, to, slot)) return false;
     Node& dst = *find(to);
@@ -203,7 +203,7 @@ bool Project::connect(NodeId from, NodeId to, const InputSlot& slot)
     return true;
 }
 
-bool Project::disconnect(NodeId to, const InputSlot& slot)
+bool Workspace::disconnect(NodeId to, const InputSlot& slot)
 {
     Node* dst = find(to);
     if (!dst || !dst->linkAt(slot)) return false;
@@ -213,7 +213,7 @@ bool Project::disconnect(NodeId to, const InputSlot& slot)
     return true;
 }
 
-bool Project::canMoveLink(NodeId source, NodeId from, const InputSlot& slot, NodeId to, const InputSlot& toSlot) const
+bool Workspace::canMoveLink(NodeId source, NodeId from, const InputSlot& slot, NodeId to, const InputSlot& toSlot) const
 {
     const Node* f = find(from);
     const NodePtr src = findPtr(source);
@@ -223,7 +223,7 @@ bool Project::canMoveLink(NodeId source, NodeId from, const InputSlot& slot, Nod
     return t && Links::canMove(src, *f, slot, *t, toSlot);
 }
 
-bool Project::moveLink(NodeId source, NodeId from, const InputSlot& slot, NodeId to, const InputSlot& toSlot)
+bool Workspace::moveLink(NodeId source, NodeId from, const InputSlot& slot, NodeId to, const InputSlot& toSlot)
 {
     if (!canMoveLink(source, from, slot, to, toSlot)) return false;
     if (to == from && toSlot == slot) return false;   // back where it was: nothing changes
@@ -235,29 +235,18 @@ bool Project::moveLink(NodeId source, NodeId from, const InputSlot& slot, NodeId
     return true;
 }
 
-bool Project::moveLayer(NodeId compositor, size_t from, size_t to)
-{
-    Node* n = find(compositor);
-    if (!n || n->ports().inputs != InputShape::Stack) return false;
-    const size_t count = n->links().layers.size();
-    if (from >= count || to >= count || from == to) return false;
-    n->moveLayer(key(), from, to);
-    emit(ProjectEventType::LayersChanged, compositor);
-    return true;
-}
-
-bool Project::setSignalScale(NodeId id, NodeSignal s, NodeChannel c, float v)
+bool Workspace::setSignalScale(NodeId id, NodeSignal s, NodeChannel c, float v)
 {
     Node* n = find(id);
     if (!n || !n->hasSignal(s) || !(v >= 0.0f && v <= 1.0f) || n->signal(s).scale[int(c)] == v) return false;   // 0..1 (NaN isn't)
     n->setScale(key(), s, c, v);
-    emit(ProjectEventType::NodeChanged, id);
+    emit(WorkspaceEventType::NodeChanged, id);
     return true;
 }
 
 // ---------------------------------------------------------------- interactive edits
 
-bool Project::previewEdit(const EditPreview& e)
+bool Workspace::previewEdit(const EditPreview& e)
 {
     // Checked here, at the document's edge: what's previewed is what would be applied.
     bool fits = false;
@@ -277,11 +266,11 @@ bool Project::previewEdit(const EditPreview& e)
     if (!fits) return false;
     endStroke();
     m_preview = e;
-    emit(ProjectEventType::PreviewChanged, e.pixelsNode());
+    emit(WorkspaceEventType::PreviewChanged, e.pixelsNode());
     return true;
 }
 
-void Project::applyPreview()
+void Workspace::applyPreview()
 {
     if (!m_preview || m_preview->stroke()) return;   // a stroke ends with endStroke()
     const EditPreview e = *std::exchange(m_preview, std::nullopt);
@@ -291,18 +280,18 @@ void Project::applyPreview()
         for (NodeId id : m->nodes)
             if (const Node* n = find(id)) setNodePosition(id, n->x() + m->dx, n->y() + m->dy);
     // A lifted link lands where link.move drops it: it cancels the preview and makes the change.
-    emit(ProjectEventType::PreviewChanged, e.pixelsNode());
+    emit(WorkspaceEventType::PreviewChanged, e.pixelsNode());
 }
 
-void Project::cancelPreview()
+void Workspace::cancelPreview()
 {
     if (!m_preview || m_preview->stroke()) return;
     const NodeId n = m_preview->pixelsNode();
     m_preview.reset();
-    emit(ProjectEventType::PreviewChanged, n);
+    emit(WorkspaceEventType::PreviewChanged, n);
 }
 
-bool Project::previewTouches(const absl::flat_hash_set<NodeId>& nodes) const
+bool Workspace::previewTouches(const absl::flat_hash_set<NodeId>& nodes) const
 {
     if (!m_preview) return false;
     if (nodes.contains(m_preview->pixelsNode())) return true;
@@ -314,45 +303,45 @@ bool Project::previewTouches(const absl::flat_hash_set<NodeId>& nodes) const
 
 // ---------------------------------------------------------------- raster edits
 
-void Project::beginStroke(const BrushParams& params, StrokePoint at)
+void Workspace::beginStroke(const BrushParams& params, StrokePoint at)
 {
     if (!activeRasterEditable()) return;
     endStroke();
     applyPreview();   // a drag still going (there's one pointer): kept
     if (!m_stroke.begin(std::static_pointer_cast<RasterRootNode>(findPtr(m_active)), params, at)) return;
     m_preview = EditPreview{ StrokeEdit{ m_active, m_stroke.revision() } };
-    emit(ProjectEventType::PreviewChanged, m_active);
+    emit(WorkspaceEventType::PreviewChanged, m_active);
 }
 
-void Project::strokeTo(std::span<const StrokePoint> path)
+void Workspace::strokeTo(std::span<const StrokePoint> path)
 {
     if (!m_stroke.moveTo(path)) return;
     m_preview = EditPreview{ StrokeEdit{ m_stroke.node(), m_stroke.revision() } };
-    emit(ProjectEventType::PreviewChanged, m_stroke.node());
+    emit(WorkspaceEventType::PreviewChanged, m_stroke.node());
 }
 
-void Project::endStroke()
+void Workspace::endStroke()
 {
     if (!m_stroke.active()) return;
     const NodeId raster = m_stroke.node();
     const RasterCommitRef commit = m_stroke.end(key());   // the raster changes now, once
     m_preview.reset();
-    emit(ProjectEventType::PreviewChanged, raster);
+    emit(WorkspaceEventType::PreviewChanged, raster);
     if (commit.commit == kNoRasterCommit) return;
-    emit(ProjectEventType::RasterEdited, raster);
+    emit(WorkspaceEventType::RasterEdited, raster);
     recordCommit(commit, "Brush Stroke");
 }
 
-void Project::cancelStroke()
+void Workspace::cancelStroke()
 {
     if (!m_stroke.active()) return;
     const NodeId raster = m_stroke.node();
     m_stroke.discard();
     m_preview.reset();
-    emit(ProjectEventType::PreviewChanged, raster);
+    emit(WorkspaceEventType::PreviewChanged, raster);
 }
 
-void Project::recordCommit(const RasterCommitRef& commit, const char* label)
+void Workspace::recordCommit(const RasterCommitRef& commit, const char* label)
 {
     if (commit.commit == kNoRasterCommit || m_seeding) return;   // a seed's pixels are the start's own
     const bool own = !m_steps.open();   // made outside any action: a step of its own
@@ -363,61 +352,61 @@ void Project::recordCommit(const RasterCommitRef& commit, const char* label)
 
 // ---------------------------------------------------------------- history
 
-void Project::beginStep(std::string label)
+void Workspace::beginStep(std::string label)
 {
     m_steps.begin(std::move(label));
 }
 
-void Project::endStep()
+void Workspace::endStep()
 {
-    if (m_steps.end()) emit(ProjectEventType::HistoryChanged);
+    if (m_steps.end()) emit(WorkspaceEventType::HistoryChanged);
 }
 
-bool Project::undo()
+bool Workspace::undo()
 {
     return canUndo() && goToHistory(history().parent(history().current()));
 }
 
-bool Project::redo()
+bool Workspace::redo()
 {
     return canRedo() && goToHistory(history().redoChild(history().current()));
 }
 
-bool Project::goToHistory(StepId step)
+bool Workspace::goToHistory(StepId step)
 {
     if (m_stroke.active() || m_steps.open() || !history().contains(step) || step == history().current()) return false;
     cancelPreview();
     const auto graph = m_steps.goTo(step, [&](const RasterCommitRef& c) { flipRasterCommit(c); });   // the pixels, step by step
     if (graph) restoreGraph(*graph);   // the graph, as it was there
     m_steps.synced();                  // the live graph is that step's
-    emit(ProjectEventType::HistoryChanged);
+    emit(WorkspaceEventType::HistoryChanged);
     return true;
 }
 
-void Project::restoreGraph(const GraphState& target)
+void Workspace::restoreGraph(const GraphState& target)
 {
     target.restore(key(), m_nodes, emitter());
     const Artboards boards = target.artboards ? *target.artboards : Artboards{};
     if (boards != m_artboards) {
         m_artboards = boards;
         showArtboards();
-        emit(ProjectEventType::ArtboardsChanged, m_master->id());
+        emit(WorkspaceEventType::ArtboardsChanged, m_master->id());
     }
     assert(artboardsMatchStack() && "a step holds its artboards and the master's groups together");
     const bool anyRaster = std::any_of(nodes().begin(), nodes().end(), [](const NodePtr& n) { return n->type() == NodeType::Raster; });
     if (m_active != kNoNodeId ? !find(m_active) : anyRaster) fallBackActiveRaster();
 }
 
-void Project::flipRasterCommit(const RasterCommitRef& c)
+void Workspace::flipRasterCommit(const RasterCommitRef& c)
 {
     RasterRootNode& n = m_nodes.rasterNode(c.raster);   // in the graph or not: its caches follow its pixels
     n.flip(key(), c.commit);
-    if (m_nodes.contains(n.id())) emit(ProjectEventType::RasterEdited, n.id());
+    if (m_nodes.contains(n.id())) emit(WorkspaceEventType::RasterEdited, n.id());
 }
 
 // ---------------------------------------------------------------- shared by the views
 
-bool Project::setSelection(NodeSelection selection)
+bool Workspace::setSelection(NodeSelection selection)
 {
     NodeSelection::Set ids;
     for (NodeId id : selection.ids())
@@ -426,40 +415,40 @@ bool Project::setSelection(NodeSelection selection)
     NodeSelection next(std::move(ids), anchor);
     if (next == m_selection) return false;   // a rubber band sends the same one every frame it's dragged
     m_selection = std::move(next);
-    emit(ProjectEventType::SelectionChanged);
+    emit(WorkspaceEventType::SelectionChanged);
     return true;
 }
 
-bool Project::setCanvasCamera(const CanvasCamera& camera)
+bool Workspace::setCanvasCamera(const CanvasCamera& camera)
 {
-    if (camera.pan == m_canvasCamera.pan && camera.zoom == m_canvasCamera.zoom && camera.rotation == m_canvasCamera.rotation) return false;
+    if (camera == m_canvasCamera) return false;
     m_canvasCamera = camera;
-    emit(ProjectEventType::CanvasViewChanged);
+    emit(WorkspaceEventType::CanvasViewChanged);
     return true;
 }
 
-bool Project::setCanvasViewport(Vec2 size)
+bool Workspace::setCanvasViewport(Vec2 size)
 {
     if (size == m_canvasViewport) return false;
     m_canvasViewport = size;
-    emit(ProjectEventType::CanvasViewChanged);
+    emit(WorkspaceEventType::CanvasViewChanged);
     return true;
 }
 
 // ---------------------------------------------------------------- events
 
-void Project::emit(const ProjectEvent& e)
+void Workspace::emit(const WorkspaceEvent& e)
 {
     if (changesGraph(e.type)) m_steps.touched(e.node);
     // A node that goes leaves the selection before anyone hears it went (the state is final when
     // told), then the selection's change is told.
-    const bool deselect = e.type == ProjectEventType::NodeRemoved && (m_selection.contains(e.node) || m_selection.anchor() == e.node);
+    const bool deselect = e.type == WorkspaceEventType::NodeRemoved && (m_selection.contains(e.node) || m_selection.anchor() == e.node);
     if (deselect) m_selection = m_selection.without(e.node);
     changed.emit(e);
-    if (deselect) emit(ProjectEventType::SelectionChanged);
+    if (deselect) emit(WorkspaceEventType::SelectionChanged);
 }
 
-void Project::emitInputChanges(NodeId to, const NodeLinks& before)
+void Workspace::emitInputChanges(NodeId to, const NodeLinks& before)
 {
     if (const Node* n = find(to)) Links::emitChanges(to, before, n->links(), emitter());
 }

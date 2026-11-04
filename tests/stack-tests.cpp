@@ -3,23 +3,23 @@
 
 #include "helpers.hpp"
 #include "document/document-actions.hpp"
-#include "document/workspace.hpp"
+#include "document/document.hpp"
 
 namespace {
 
-NodeId pixelAt(Project& p, int x, int y, RGBA c)
+NodeId pixelAt(Workspace& p, int x, int y, RGBA c)
 {
     return rasterWith(p, [&](TileGrid& g) { fillPixel(g, x, y, c); });
 }
 
-std::vector<NodeId> layerIds(const Project& p, NodeId compositor)
+std::vector<NodeId> layerIds(const Workspace& p, NodeId compositor)
 {
     std::vector<NodeId> ids;
     for (const NodePtr& l : p.find(compositor)->links().layers) ids.push_back(l->id());
     return ids;
 }
 
-const CompositorSettings& stackOf(const Project& p, NodeId compositor)
+const CompositorSettings& stackOf(const Workspace& p, NodeId compositor)
 {
     return static_cast<const CompositorNode*>(p.find(compositor))->stack();
 }
@@ -31,8 +31,8 @@ constexpr ArtboardId kFirst{ 1 };   // a project's first artboard: its group's k
 
 TEST_CASE("a muted layer is left out of its compositor, and only there")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const NodeId red  = pixelAt(p, 0, 0, kRed);
     const NodeId blue = pixelAt(p, 0, 0, kBlue);
     const NodeId comp = p.addNode(NodeType::Compositor, 0, 0, {});
@@ -58,8 +58,8 @@ TEST_CASE("a muted layer is left out of its compositor, and only there")
 
 TEST_CASE("muting a master layer reaches the master's cached composite, and undoes")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const NodeId master = s.master;
     CHECK(rendered(p, master, -48, -48) == RGBA{ 255, 160, 40, 255 });   // the disc
     step(p, "Mute", [&] { REQUIRE(p.setLayerMuted(master, s.paint, true)); });
@@ -138,8 +138,8 @@ TEST_CASE("moved rows keep their order and close up")
 
 TEST_CASE("a stack's groups follow its rows through every link edit")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const NodeId master = s.master;   // [background, paint]
     const ArtboardId board = p.addArtboard({ 0, 0, 99, 99 });
     REQUIRE(board != kNoArtboard);
@@ -154,7 +154,7 @@ TEST_CASE("a stack's groups follow its rows through every link edit")
     CHECK(stackOf(p, master).groups == std::vector<StackGroup>{ { kFirst, 2, 3 } });
     REQUIRE(p.moveStackRows(master, { { y }, {}, board, 1 }));   // [background x] [board: paint y]
     CHECK(stackOf(p, master).groups == std::vector<StackGroup>{ { kFirst, 2, 4 } });
-    REQUIRE(p.moveLayer(master, 3, 2));   // y under paint: still in it
+    REQUIRE(p.moveStackRows(master, { { y }, {}, board, 0 }));   // y under paint: still in it
     CHECK(stackOf(p, master).groups == std::vector<StackGroup>{ { kFirst, 2, 4 } });
     REQUIRE(p.deleteNodes({ s.paint }));  // a layer that goes leaves it
     CHECK(stackOf(p, master).groups == std::vector<StackGroup>{ { kFirst, 2, 3 } });
@@ -164,8 +164,8 @@ TEST_CASE("a stack's groups follow its rows through every link edit")
 
 TEST_CASE("an artboard fills its rect behind its layers, which still show past its edges")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const NodeId master = s.master;
     const NodeId red = pixelAt(p, 1200, 5, kRed);   // outside the board's rect (and the starter's pixels)
     REQUIRE(p.connect(red, master, InputSlot::newLayer(2)));
@@ -208,8 +208,8 @@ TEST_CASE("an artboard fills its rect behind its layers, which still show past i
 
 TEST_CASE("artboards refuse what doesn't fit")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     CHECK(p.addArtboard({}) == kNoArtboard);
     CHECK(p.addArtboard({ 0, 0, TileUtils::kWorldLimit + 10, 5 }) == kNoArtboard);
     const ArtboardId id = p.addArtboard({ 0, 0, 9, 9 });
@@ -228,17 +228,17 @@ TEST_CASE("artboards refuse what doesn't fit")
 
 TEST_CASE("the stack's actions: mute, move rows, artboards, each one undo step")
 {
-    Workspace workspace;
-    Project& p = workspace.project();
+    Document document;
+    Workspace& p = document.workspace();
     NodeId a = kNoNodeId, b = kNoNodeId;
-    p.init([&](Project& seeded) {
+    p.init([&](Workspace& seeded) {
         TileGrid one, two;
         fillPixel(one, 0, 0, kRed);
         fillPixel(two, 0, 0, kBlue);
         a = seeded.importTiles(one, "", {});
         b = seeded.importTiles(two, "", {});   // [a b]
     });
-    ActionRegistry& actions = workspace.actions();
+    ActionRegistry& actions = document.actions();
     const NodeId master = p.master().id();
     using namespace DocArgs;
 
@@ -268,8 +268,8 @@ TEST_CASE("the stack's actions: mute, move rows, artboards, each one undo step")
 
 TEST_CASE("a link dropped on a stack lands at a place: into an artboard, at its top or its bottom")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const NodeId master = s.master;   // [background, paint]
     const ArtboardId id = p.addArtboard({ 0, 0, 9, 9 });
     REQUIRE(p.moveStackRows(master, { { s.paint }, {}, id, 0 }));   // [background] [board: paint]
@@ -289,8 +289,8 @@ TEST_CASE("a link dropped on a stack lands at a place: into an artboard, at its 
 
 TEST_CASE("rows removed from a stack: layers unlinked, artboards gone, one undo step")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const NodeId master = s.master;
     const ArtboardId id = p.addArtboard({ 0, 0, 9, 9 });
     REQUIRE(p.moveStackRows(master, { { s.paint }, {}, id, 0 }));
@@ -307,17 +307,17 @@ TEST_CASE("rows removed from a stack: layers unlinked, artboards gone, one undo 
 
 TEST_CASE("a lifted link lands at a place in a stack")
 {
-    Workspace workspace;
-    Project& p = workspace.project();
+    Document document;
+    Workspace& p = document.workspace();
     NodeId a = kNoNodeId, b = kNoNodeId;
-    p.init([&](Project& seeded) {
+    p.init([&](Workspace& seeded) {
         TileGrid one, two;
         fillPixel(one, 0, 0, kRed);
         fillPixel(two, 0, 0, kBlue);
         a = seeded.importTiles(one, "", {});
         b = seeded.importTiles(two, "", {});   // [a b]
     });
-    ActionRegistry& actions = workspace.actions();
+    ActionRegistry& actions = document.actions();
     const NodeId master = p.master().id();
     using namespace DocArgs;
     const ArtboardId board{ uint32_t(actions.run(Actions::ArtboardAdd, { { kMinX, 0 }, { kMinY, 0 }, { kMaxX, 9 }, { kMaxY, 9 } }).made) };

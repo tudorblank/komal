@@ -1,10 +1,10 @@
 #pragma once
-// The project's history: a tree of states. Every step is a node; undo goes to its parent, redo to
+// The workspace's history: a tree of states. Every step is a node; undo goes to its parent, redo to
 // the child last undone or made, and goTo() jumps to any node, across branches. A new step after
 // undoing starts a new branch: the undone steps stay, and stay reachable.
 //
 // A step holds what it changed: the raster commits it made (tiles flip both ways), and the graph
-// as it was after it (GraphState, see Project), which undo and redo restore.
+// as it was after it (GraphState, see Workspace), which undo and redo restore.
 
 #include "raster/raster-data.hpp"
 

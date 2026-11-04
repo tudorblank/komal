@@ -1,8 +1,10 @@
 #include "ui-main.hpp"
+#include "base/file.hpp"
 #include "base/log.hpp"
 #include "input/input-frame.hpp"
 #include "document/document-actions.hpp"
-#include "document/project.hpp"
+#include "document/documents-actions.hpp"
+#include "document/workspace.hpp"
 #include "ui/panels/canvas/canvas-panel.hpp"
 #include "ui/panels/graph/graph-panel.hpp"
 #include "ui/panels/history-panel.hpp"
@@ -17,8 +19,9 @@
 #include <imgui.h>
 #include <imgui_internal.h>   // FindHoveredWindowEx
 #include <algorithm>
+#include <cstdio>
 
-UserInterface::UserInterface(ActionRegistry& actions) : m_actions(actions)
+UserInterface::UserInterface()
 {
     // Every panel, in View menu order. Where each docks and when it draws are its own (PanelInfo).
     m_canvasPanel = addPanel<CanvasPanel>();
@@ -48,29 +51,130 @@ T* UserInterface::addPanel()
     return added;
 }
 
-bool UserInterface::init(GpuDevice& gpu, Project& project, const InputFrame& input, const HostInfo& host)
+bool UserInterface::init(GpuDevice& gpu, Documents& documents, const InputFrame& input, const HostInfo& host)
 {
     m_input = &input;
     m_host  = &host;
-    // What a user can do to the app, next to the document's (the editor's). Panels add their own
-    // interface actions (framing, selecting, opening menus) as they init.
+    m_documents = &documents;
+    // What a user can do to the app and the open documents; the active document's own come
+    // through it. Panels add their own interface actions (framing, selecting, opening menus) as they init.
     registerAppActions();
-    bool ok = m_canvas.init(gpu, project);
-    m_context.emplace(UiContext{ gpu, project, m_actions, m_tools, input, m_owner, m_canvas, m_canvas.thumbnails(), host });
+    registerDocumentsActions(m_documentActions, documents);
+    registerDocumentRequests();
+    bool ok = m_canvas.init(gpu);
+    for (const auto& d : documents.all()) m_canvas.open(d->id(), d->workspace());
+    m_canvas.activate(documents.active().id());
+    m_actions.delegateTo(&documents.active().actions());
+    m_documentsEvents = documents.changed.connect([this](const DocumentsEvent& e) { documentsChanged(e); });
+    m_context.emplace(UiContext{ gpu, documents, m_actions, m_tools, input, m_owner, m_canvas, host });
     for (PanelEntry& e : m_panels) {
         e.panel->m_ui = &*m_context;
         ok = e.panel->init() && ok;   // one failing leaves the rest working
     }
-    bindDefaultKeys(m_actions);   // every action is there now
+    bindDefaultKeys(m_actions);   // every action is there now (the document's through the active one)
     m_initialized = true;
     return ok;
+}
+
+void UserInterface::documentsChanged(const DocumentsEvent& e)
+{
+    switch (e.type) {
+    case DocumentsEvent::Type::Opened:
+        m_canvas.open(e.id, m_documents->find(e.id)->workspace());
+        for (PanelEntry& p : m_panels) p.panel->documentsChanged(e);
+        break;
+    case DocumentsEvent::Type::Closing:   // it's still there: everything lets go of it, the engine last
+        if (e.id == m_documents->active().id()) m_actions.delegateTo(nullptr);
+        for (auto p = m_panels.rbegin(); p != m_panels.rend(); ++p) p->panel->documentsChanged(e);
+        m_canvas.close(e.id);
+        if (m_confirm && m_confirm->document == e.id) m_confirm.reset();
+        break;
+    case DocumentsEvent::Type::Activated:
+        m_actions.delegateTo(&m_documents->find(e.id)->actions());
+        m_canvas.activate(e.id);
+        for (PanelEntry& p : m_panels) p.panel->documentsChanged(e);
+        break;
+    }
+}
+
+void UserInterface::registerDocumentRequests()
+{
+    for (const Action& a : m_documentActions.actions()) {
+        const ActionId id = a.id;
+        m_actions.add({ .id = id, .title = a.title, .kind = ActionKind::Interface, .args = a.args,
+                        .enabled = [this, id] { return m_documentActions.find(id)->isEnabled(); },
+                        .run = [this, id](const ActionArgs& args) {
+            m_documentRequests.push_back({ id, args });
+            return true;
+        } });
+    }
+}
+
+void UserInterface::applyDocumentRequests()
+{
+    std::vector<std::pair<ActionId, ActionArgs>> requests = std::move(m_documentRequests);
+    m_documentRequests.clear();
+    for (auto& [id, args] : requests) {
+        const DocumentId document = args.get(DocArgs::kDocument, m_documents->active().id());
+        const std::string file = File::name(args.get(DocArgs::kPath, std::string()));
+        const ActionResult r = m_documentActions.run(id, std::move(args));
+        if (id == Actions::DocSave && document == m_closeAfterSave) {   // the question's "Save": closed once saved
+            m_closeAfterSave = kNoDocument;
+            if (r) m_actions.run(Actions::DocClose, { { DocArgs::kDocument, document } });
+        }
+        if (r || r.why.empty()) continue;
+        if (id == Actions::DocOpen) m_notices.post("Couldn't open " + file + ": " + r.why);
+        if (id == Actions::DocSave) m_notices.post("Couldn't save: " + r.why);
+    }
+}
+
+void UserInterface::openFile(std::string path)
+{
+    if (!Document::isFileName(path)) {
+        m_importer.open(std::move(path));
+        return;
+    }
+    const std::lock_guard lock(m_inboxLock);
+    m_toOpen.push_back(std::move(path));
+}
+
+void UserInterface::saveTo(DocumentId document, std::string path)
+{
+    const std::lock_guard lock(m_inboxLock);
+    m_toSave.push_back({ document, std::move(path) });
+}
+
+void UserInterface::takeInbox()
+{
+    std::vector<std::string> open;
+    std::vector<std::pair<DocumentId, std::string>> save;
+    {
+        const std::lock_guard lock(m_inboxLock);
+        open.swap(m_toOpen);
+        save.swap(m_toSave);
+    }
+    for (std::string& path : open) m_actions.run(Actions::DocOpen, { { DocArgs::kPath, std::move(path) } });
+    for (auto& [document, path] : save) {
+        if (path.empty()) {   // the dialog was cancelled: nothing waits for it
+            if (m_closeAfterSave == document) m_closeAfterSave = kNoDocument;
+            continue;
+        }
+        m_actions.run(Actions::DocSave, { { DocArgs::kDocument, document }, { DocArgs::kPath, std::move(path) } });
+    }
+}
+
+void UserInterface::requestQuit()
+{
+    m_actions.run(Actions::AppQuit);
 }
 
 void UserInterface::shutdown()
 {
     if (!m_initialized) return;
+    m_documentsEvents.disconnect();
     for (auto e = m_panels.rbegin(); e != m_panels.rend(); ++e) e->panel->shutdown();
     m_canvas.shutdown();   // after every view of it
+    m_actions.delegateTo(nullptr);
     m_initialized = false;
 }
 
@@ -106,6 +210,8 @@ void UserInterface::renderGpu(WGPUCommandEncoder enc)
 
 void UserInterface::draw()
 {
+    takeInbox();
+    applyDocumentRequests();   // last frame's (its pictures are shown now): before anything draws
     const ImageImporter::Polled polled = m_importer.poll(m_actions);
     for (const ImageImporter::Imported& i : polled.imported)
         if (std::holds_alternative<ImageImporter::InGraph>(i.placement))
@@ -115,6 +221,7 @@ void UserInterface::draw()
     m_toldOutOfMemory = m_canvas.outOfMemory();
     m_owner.beginFrame();
     if (!m_owner.typing()) m_actions.dispatch(*m_input, m_owner.keyboard());   // the frame's shortcuts, all of them, before the panels
+    applyDocumentRequests();   // a key's (Ctrl+N): nothing is drawn yet
     drawMenuBar();
 
     // Bars under the menu bar, then the dockspace takes the rest. Then everything else, Edit
@@ -126,6 +233,7 @@ void UserInterface::draw()
         if (e->info.slot != DockSlot::Toolbar) e->panel->draw();
 
     dispatchDrops();   // after the panels: their windows and rects are this frame's
+    drawConfirm();
     m_notices.draw();
     // A control held or a key down: a coalescing setting (a slider drag, a held [ ) is still going.
     m_actions.endFrame(ImGui::IsAnyItemActive() || m_input->anyButtonHeld() || !m_input->held.empty());
@@ -136,6 +244,13 @@ void UserInterface::drawMenuBar()
     if (!ImGui::BeginMainMenuBar())
         return;
     if (ImGui::BeginMenu("File")) {
+        Widgets::actionMenuItem(m_actions, Actions::DocNew);
+        Widgets::actionMenuItem(m_actions, Actions::FileOpen);
+        ImGui::Separator();
+        Widgets::actionMenuItem(m_actions, Actions::FileSave);
+        Widgets::actionMenuItem(m_actions, Actions::FileSaveAs);
+        Widgets::actionMenuItem(m_actions, Actions::FileClose);
+        ImGui::Separator();
         Widgets::actionMenuItem(m_actions, Actions::FileImport);
         ImGui::Separator();
         Widgets::actionMenuItem(m_actions, Actions::AppQuit);
@@ -166,7 +281,9 @@ void UserInterface::dispatchDrops()
         ImGui::FindHoveredWindowEx(d.pos, false, &top, &underMoving);   // the window in front at that point
         Vec2 world;
         ImVec2 nodePos;
-        if (m_canvasPanel->dropTarget(top, d.pos, world))
+        if (Document::isFileName(d.path))   // a project: opened, wherever it lands
+            m_actions.run(Actions::DocOpen, { { DocArgs::kPath, std::move(d.path) } });
+        else if (m_canvasPanel->dropTarget(top, d.pos, world))
             m_importer.open(std::move(d.path), ImageImporter::OnCanvas{ world.x, world.y });
         else if (m_graphPanel->dropTarget(top, d.pos, nodePos))
             m_importer.open(std::move(d.path), ImageImporter::InGraph{ nodePos.x, nodePos.y });
@@ -174,4 +291,43 @@ void UserInterface::dispatchDrops()
             Log::info("drop", "ignored (not on the canvas or the graph): %s", d.path.c_str());
     }
     m_drops.clear();
+}
+
+void UserInterface::drawConfirm()
+{
+    if (!m_confirm) return;
+    constexpr const char* kPopup = "Unsaved changes##confirm";
+    if (!ImGui::IsPopupOpen(kPopup)) ImGui::OpenPopup(kPopup);
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));   // the window's middle, always
+    if (!ImGui::BeginPopupModal(kPopup, nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) return;
+    char text[256];
+    if (m_confirm->quit) {
+        const size_t n = size_t(std::count_if(m_documents->all().begin(), m_documents->all().end(), [](const auto& d) { return d->unsaved(); }));
+        std::snprintf(text, sizeof text, n == 1 ? "A document has unsaved changes." : "%zu documents have unsaved changes.", n);
+    } else {
+        const Document* d = m_documents->find(m_confirm->document);
+        std::snprintf(text, sizeof text, "\"%s\" has unsaved changes.", d ? d->name().c_str() : "");
+    }
+    ImGui::TextUnformatted(text);
+    ImGui::Spacing();
+    const Confirm confirm = *m_confirm;
+    bool done = false;
+    if (!confirm.quit && Widgets::button("Save")) {   // saved (asked where, if it has no file yet), then closed
+        done = true;
+        m_closeAfterSave = confirm.document;
+        m_actions.run(Actions::FileSave, { { DocArgs::kDocument, confirm.document } });
+    }
+    if (!confirm.quit) ImGui::SameLine();
+    if (Widgets::button(confirm.quit ? "Quit without saving" : "Close without saving")) {
+        done = true;
+        if (confirm.quit) m_quit = true;
+        else m_actions.run(Actions::DocClose, { { DocArgs::kDocument, confirm.document }, { DocArgs::kDiscard, true } });
+    }
+    ImGui::SameLine();
+    if (Widgets::button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) done = true;
+    if (done) {
+        m_confirm.reset();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
 }

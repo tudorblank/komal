@@ -1,5 +1,5 @@
 #pragma once
-#include "gfx/handles.hpp"
+#include "gpu/handles.hpp"
 
 #include <cstdint>
 

@@ -16,11 +16,11 @@ public:
 
     int   pick(int n) { return std::uniform_int_distribution<int>(0, n - 1)(m_rng); }
     float unit() { return std::uniform_real_distribution<float>(0.0f, 1.0f)(m_rng); }
-    NodeId any(const Project& p) { return p.nodes()[size_t(pick(int(p.nodes().size())))]->id(); }
+    NodeId any(const Workspace& p) { return p.nodes()[size_t(pick(int(p.nodes().size())))]->id(); }
 
     // The starter project grown at random: rasters with pixels, Moves, stacks, references, masks,
     // muted layers, artboards.
-    void grow(Project& p)
+    void grow(Workspace& p)
     {
         for (int i = 0; i < 3; ++i) {
             const int x0 = pick(300) - 150, y0 = pick(300) - 150, w = 1 + pick(90);
@@ -66,7 +66,7 @@ public:
     std::mt19937 m_rng;
 };
 
-std::vector<std::pair<NodeId, BoundsI>> boundsOf(const Project& p, const PreviewModel* model)
+std::vector<std::pair<NodeId, BoundsI>> boundsOf(const Workspace& p, const PreviewModel* model)
 {
     std::vector<std::pair<NodeId, BoundsI>> out;
     for (const NodePtr& n : p.nodes()) out.emplace_back(n->id(), model ? model->bounds(n->id()) : n->bounds());
@@ -79,8 +79,8 @@ TEST_CASE("the preview model's bounds are the document's once the edit is applie
 {
     int made[3] = {};   // edits of each kind actually tried
     for (const uint32_t seed : { 11u, 12u, 13u, 14u, 15u, 16u, 17u, 18u }) {
-        StarterProject s;
-        Project& p = s.project;
+        StarterWorkspace s;
+        Workspace& p = s.workspace;
         Graphs g(seed);
         g.grow(p);
         for (int round = 0; round < 30; ++round) {

@@ -6,7 +6,7 @@
 #include "input/input-frame.hpp"
 #include "ui/navigation.hpp"
 #include "base/frames.hpp"
-#include "document/project.hpp"
+#include "document/workspace.hpp"
 #include "ui/render/painter.hpp"
 #include "ui/style/ui-style.hpp"
 #include "ui/widgets/widgets.hpp"
@@ -78,6 +78,16 @@ bool Navigator::init()
     return true;
 }
 
+void Navigator::documentsChanged(const DocumentsEvent& e)
+{
+    // Its picture is the active document's tiles: let go of before they go, made again for the next.
+    if (e.type == DocumentsEvent::Type::Closing && e.id == ui().documents.active().id()) shutdown();
+    if (e.type == DocumentsEvent::Type::Activated) {
+        shutdown();
+        init();
+    }
+}
+
 void Navigator::releaseGpu()
 {
     m_previewPicture.release();
@@ -112,7 +122,7 @@ void Navigator::draw()
     m_pictureShown = false;
     if (!isOpen()) return;
     if (const Widgets::PanelWindow window(*this, ui().actions, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse); window) {
-        const Vec2 viewport = ui().project.canvasViewport();
+        const Vec2 viewport = ui().workspace().canvasViewport();
         if (viewport.x <= 0.0f || viewport.y <= 0.0f) {
             ImGui::TextDisabled("The canvas is hidden.");
         } else {
@@ -138,7 +148,7 @@ void Navigator::renderGpu(WGPUCommandEncoder enc)
     if (!m_pictureShown) return;
     m_previewWaiting = false;
     if (m_preview->active() && m_previewW > 0) {
-        const auto r = m_previewPicture.render(*m_preview, ui().project.master().id(), m_previewW, m_previewH, *m_pipelines, enc,
+        const auto r = m_previewPicture.render(*m_preview, ui().workspace().master().id(), m_previewW, m_previewH, *m_pipelines, enc,
                                                ui().canvas.budget(CanvasEngine::Work::Navigator));
         m_previewWaiting = r == PreviewPicture::Result::Waiting;
     }
@@ -152,7 +162,7 @@ Clock::Seconds Navigator::nextFrameIn() const
 
 bool Navigator::showsPreview()
 {
-    if (m_preview->active() && m_preview->plan().reaches(ui().project.master().id())) {
+    if (m_preview->active() && m_preview->plan().reaches(ui().workspace().master().id())) {
         m_handoff = m_previewPicture.hasPicture();
         m_handoffFrames = 0;
         return m_handoff;
@@ -175,8 +185,8 @@ void Navigator::rotateTo(float degrees)
 
 void Navigator::drawMap(ImVec2 size)
 {
-    const CanvasCamera& cam = ui().project.canvasCamera();
-    const Vec2 viewport = ui().project.canvasViewport();
+    const CanvasCamera& cam = ui().workspace().canvasCamera();
+    const Vec2 viewport = ui().workspace().canvasViewport();
     const ImRect map(ImGui::GetCursorScreenPos(), ImVec2(ImGui::GetCursorScreenPos().x + size.x, ImGui::GetCursorScreenPos().y + size.y));
     ImGui::InvisibleButton("##map", size);
     const bool hovered = ImGui::IsItemHovered(), active = ImGui::IsItemActive();
@@ -192,9 +202,9 @@ void Navigator::drawMap(ImVec2 size)
     // Under the edit: the picture renders this frame fitted to what the master covers now; handing
     // back after it, the picture shows what it last fitted.
     const bool preview = showsPreview();
-    const NodeId master = ui().project.master().id();
+    const NodeId master = ui().workspace().master().id();
     const bool live = m_preview->active() && m_preview->plan().reaches(master);
-    const BoundsI b = !preview ? ui().project.master().bounds() : live ? m_preview->model().bounds(master) : m_previewPicture.bounds();
+    const BoundsI b = !preview ? ui().workspace().master().bounds() : live ? m_preview->model().bounds(master) : m_previewPicture.bounds();
     if (b.empty()) {
         const char* text = "Nothing on the canvas yet";
         const ImVec2 t = ImGui::CalcTextSize(text);
@@ -214,7 +224,7 @@ void Navigator::drawMap(ImVec2 size)
         for (int i = 0; i < 4; ++i) q[i] = toMap(c[i]);
     };
 
-    // Navigation first, so the outline is this frame's (the camera is the project's: an action
+    // Navigation first, so the outline is this frame's (the camera is the workspace's: an action
     // changes it at once). Pressing the outline grabs it; elsewhere centres there.
     const Vec2 center = { viewport.x * 0.5f, viewport.y * 0.5f };
     if (hovered && (ui().input.mods & ModPrimary) && io.MouseWheel != 0.0f) zoomBy(std::pow(Navigation::kWheelZoomStep, io.MouseWheel));
@@ -285,7 +295,7 @@ void Navigator::drawControls()
     // Per setting: [-] slider [+] [value], the slider's figure saying which (a ramp: zoom; a wave:
     // rotation). Double-clicking a slider resets it.
     using namespace Widgets;
-    const CanvasCamera& cam = ui().project.canvasCamera();
+    const CanvasCamera& cam = ui().workspace().canvasCamera();
     const Style::Metrics& m = Style::metrics();
     const float afterSlider = m.boxHeight + m.spacing + m.fieldWidth;   // the second button and the field
 

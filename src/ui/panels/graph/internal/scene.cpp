@@ -1,21 +1,21 @@
 #include "ui/panels/graph/internal/scene.hpp"
-#include "document/project.hpp"
+#include "document/workspace.hpp"
 
 #include <algorithm>
 
-void GraphScene::init(const Project& project)
+void GraphScene::init(const Workspace& workspace)
 {
-    m_project = &project;
-    m_projectEvents = project.changed.connect([this](const ProjectEvent& e) { onProjectEvent(e); });
+    m_workspace = &workspace;
+    m_workspaceEvents = workspace.changed.connect([this](const WorkspaceEvent& e) { onWorkspaceEvent(e); });
     // The ones made before it listened: every item first, then the links between them.
-    for (const NodePtr& n : project.nodes()) addItem(n->id(), false);
-    for (const NodePtr& n : project.nodes()) addLinksInto(n->id());
+    for (const NodePtr& n : workspace.nodes()) addItem(n->id(), false);
+    for (const NodePtr& n : workspace.nodes()) addLinksInto(n->id());
 }
 
 void GraphScene::shutdown()
 {
-    m_projectEvents.disconnect();
-    m_project = nullptr;
+    m_workspaceEvents.disconnect();
+    m_workspace = nullptr;
 }
 
 const NodeItem* GraphScene::item(NodeId id) const
@@ -26,7 +26,7 @@ const NodeItem* GraphScene::item(NodeId id) const
 
 bool GraphScene::isMaster(NodeId id) const
 {
-    return id != kNoNodeId && m_project->isMaster(id);
+    return id != kNoNodeId && m_workspace->isMaster(id);
 }
 
 void GraphScene::bringToFront(NodeId id)
@@ -86,17 +86,17 @@ void GraphScene::setStackGap(NodeId node, StackLayout layout)
 NodeItem GraphScene::layoutWith(NodeId node, const StackLayout& layout) const
 {
     NodeItem out;
-    const Node* n = m_project->find(node);
+    const Node* n = m_workspace->find(node);
     if (!n) return out;
     const auto view = m_viewStates.find(node);
-    buildNodeItem(*m_project, *n, view != m_viewStates.end() ? view->second : NodeItemState{}, layout, out);
+    buildNodeItem(*m_workspace, *n, view != m_viewStates.end() ? view->second : NodeItemState{}, layout, out);
     if (m_moving.contains(node)) out.moveTo(position(node).x, position(node).y);
     return out;
 }
 
 StackLayout GraphScene::stackLayout(NodeId id) const
 {
-    const Node* n = m_project->find(id);
+    const Node* n = m_workspace->find(id);
     if (!n || n->ports().inputs != InputShape::Stack) return {};
     StackLayout l = id == m_gapNode ? m_gap : StackLayout{};
     if (m_lifted && m_lifted->from == id && m_lifted->slot.is<InputSlot::Layer>())   // a layer lifted off it: its row closes up
@@ -106,7 +106,7 @@ StackLayout GraphScene::stackLayout(NodeId id) const
 
 ImVec2 GraphScene::position(NodeId id) const
 {
-    const Node* n = m_project->find(id);
+    const Node* n = m_workspace->find(id);
     if (!n) return {};
     const ImVec2 by = m_moving.contains(id) ? m_movedBy : ImVec2();
     return ImVec2(n->x() + by.x, n->y() + by.y);
@@ -114,7 +114,7 @@ ImVec2 GraphScene::position(NodeId id) const
 
 void GraphScene::followPreview()
 {
-    const EditPreview* pv = m_project->preview();
+    const EditPreview* pv = m_workspace->preview();
     absl::flat_hash_set<NodeId> moving;
     ImVec2 by;
     if (const auto* m = pv ? pv->as<NodesMoveEdit>() : nullptr) {
@@ -139,25 +139,25 @@ void GraphScene::followPreview()
     }
 }
 
-void GraphScene::onProjectEvent(const ProjectEvent& e)
+void GraphScene::onWorkspaceEvent(const WorkspaceEvent& e)
 {
     switch (e.type) {
-    case ProjectEventType::NodeAdded:     addItem(e.node); break;
-    case ProjectEventType::NodeRemoved:   removeItem(e.node); break;
-    case ProjectEventType::NodeMoved:     moveItem(e.node); break;
-    case ProjectEventType::LinkAdded:     addLink(e.source, e.node, e.slot); break;
-    case ProjectEventType::LinkRemoved:   removeLink(e.node, e.slot); break;
-    case ProjectEventType::LayersChanged:
+    case WorkspaceEventType::NodeAdded:     addItem(e.node); break;
+    case WorkspaceEventType::NodeRemoved:   removeItem(e.node); break;
+    case WorkspaceEventType::NodeMoved:     moveItem(e.node); break;
+    case WorkspaceEventType::LinkAdded:     addLink(e.source, e.node, e.slot); break;
+    case WorkspaceEventType::LinkRemoved:   removeLink(e.node, e.slot); break;
+    case WorkspaceEventType::LayersChanged:
         layoutItem(e.node);
         addLinksInto(e.node, true);
         break;
-    case ProjectEventType::ArtboardsChanged:   // the master's rows: its groups' headers
+    case WorkspaceEventType::ArtboardsChanged:   // the master's rows: its groups' headers
         layoutItem(e.node);
         break;
-    case ProjectEventType::NodeChanged:   // a stack's groups (undone) lay its rows out anew; other values are painted as they are
-        if (const Node* n = m_project->find(e.node); n && n->ports().inputs == InputShape::Stack) layoutItem(e.node);
+    case WorkspaceEventType::NodeChanged:   // a stack's groups (undone) lay its rows out anew; other values are painted as they are
+        if (const Node* n = m_workspace->find(e.node); n && n->ports().inputs == InputShape::Stack) layoutItem(e.node);
         break;
-    case ProjectEventType::PreviewChanged:
+    case WorkspaceEventType::PreviewChanged:
         followPreview();
         break;
     default:   // values, pixels, history: painted as they are
@@ -167,10 +167,10 @@ void GraphScene::onProjectEvent(const ProjectEvent& e)
 
 void GraphScene::addItem(NodeId id, bool withLinks)
 {
-    const Node* n = m_project->find(id);
+    const Node* n = m_workspace->find(id);
     if (!n || m_items.contains(id)) return;
     NodeItem& item = m_items[id];
-    buildNodeItem(*m_project, *n, m_viewStates[id], {}, item);
+    buildNodeItem(*m_workspace, *n, m_viewStates[id], {}, item);
     if (m_moving.contains(id)) item.moveTo(position(id).x, position(id).y);
     m_zOrder.push_back(id);
     ++m_itemsRevision;
@@ -190,7 +190,7 @@ void GraphScene::removeItem(NodeId id)
 void GraphScene::moveItem(NodeId id)
 {
     auto it = m_items.find(id);
-    const Node* n = m_project->find(id);
+    const Node* n = m_workspace->find(id);
     if (it == m_items.end() || !n) return;
     const ImVec2 at = position(id);
     it->second.moveTo(at.x, at.y);
@@ -201,9 +201,9 @@ void GraphScene::moveItem(NodeId id)
 void GraphScene::layoutItem(NodeId id)
 {
     auto it = m_items.find(id);
-    const Node* n = m_project->find(id);
+    const Node* n = m_workspace->find(id);
     if (it == m_items.end() || !n) return;
-    buildNodeItem(*m_project, *n, m_viewStates[id], stackLayout(id), it->second);
+    buildNodeItem(*m_workspace, *n, m_viewStates[id], stackLayout(id), it->second);
     if (m_moving.contains(id)) it->second.moveTo(position(id).x, position(id).y);
     placeLinkEndsOf(id);
     ++m_itemsRevision;
@@ -229,7 +229,7 @@ void GraphScene::removeLink(NodeId to, const InputSlot& slot)
 
 void GraphScene::addLinksInto(NodeId to, bool layersOnly)
 {
-    const Node* n = m_project->find(to);
+    const Node* n = m_workspace->find(to);
     if (!n) return;
     std::erase_if(m_links, [&](const GraphLink& l) { return l.to == to && (!layersOnly || l.slot.is<InputSlot::Layer>()); });
     ++m_linksRevision;

@@ -3,9 +3,9 @@
 // connected. The one way anything in the app hears about a change (pixels stream through
 // Node::watchOutput instead; caches compare revisions).
 //
-//   Signal<Project, const ProjectEvent&> changed;                        // a public member
-//   Connection c = project.changed.connect([this](const ProjectEvent& e) { ... });
-//   changed.emit(event);                                                 // only Project can
+//   Signal<Workspace, const WorkspaceEvent&> changed;                        // a public member
+//   Connection c = workspace.changed.connect([this](const WorkspaceEvent& e) { ... });
+//   changed.emit(event);                                                 // only Workspace can
 //
 // Anyone may connect; only the owner (the first template argument) can emit.
 // A listener stays connected for as long as its Connection lives: dropping the Connection (or

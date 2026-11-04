@@ -1,5 +1,5 @@
 #include "handles.hpp"
-#include "gfx/error-scope.hpp"
+#include "gpu/error-scope.hpp"
 
 WGPUShaderModule createShaderModule(const GpuHandles& ctx, const char* wgsl, const char* label)
 {

@@ -2,7 +2,7 @@
 // A solid rectangle in world space, drawn in the canvas pass by z (color.wgsl): part of the
 // picture itself (artboards, backgrounds). Screen-space outlines are OutlineItem.
 
-#include "ui/panels/canvas/item.hpp"
+#include "ui/panels/canvas/canvas-item.hpp"
 
 class RectItem : public CanvasItem {
 public:

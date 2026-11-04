@@ -14,8 +14,8 @@
 #include "base/frames.hpp"
 #include "ui/panels/canvas/preview/preview-picture.hpp"
 #include "ui/panels/canvas/tiles/tile-cache.hpp"
-#include "gfx/slot-pages.hpp"
-#include "gfx/handles.hpp"
+#include "gpu/slot-pages.hpp"
+#include "gpu/handles.hpp"
 
 #include <imgui.h>
 #include <webgpu/webgpu.h>
@@ -25,7 +25,7 @@
 #include <vector>
 
 class Preview;
-class Project;
+class Workspace;
 
 class NodeThumbnails {
 public:
@@ -45,7 +45,7 @@ public:
     // The last picture of `id` (false until there is one); also asks to keep it fresh.
     bool get(NodeId id, View& out);
     void forget(NodeId id);
-    void refresh(const Project& project, const Deadline& budget);   // once a frame, after the views: tiles and draws (CanvasEngine)
+    void refresh(const Workspace& workspace, const Deadline& budget);   // once a frame, after the views: tiles and draws (CanvasEngine)
     void renderGpu(WGPUCommandEncoder enc);            // the slots refresh() changed, and the previewed ones
 
     Clock::Seconds nextFrameIn() const { return m_nextFrameIn; }   // tiles left to build: now (base/frames.hpp)

@@ -14,17 +14,18 @@
 
 #include <array>
 #include <functional>
+#include <memory>
 #include <variant>
 #include <vector>
 
 struct InputFrame;
-class Project;
+class Workspace;
 
 // The node graph editor: a view of a GraphScene (the items and links, kept in step with the
-// project) through a camera, with the master pinned top-right and a minimap.
+// workspace) through a camera, with the master pinned top-right and a minimap.
 //
-// Edits go one way: input runs actions, which change the project, whose events update the scene.
-// The selection is the project's too (the canvas outlines it): read there, changed by selection.set.
+// Edits go one way: input runs actions, which change the workspace, whose events update the scene.
+// The selection is the workspace's too (the canvas outlines it): read there, changed by selection.set.
 // The view keeps what's screen space (link curves, placed again when a link or a camera moved;
 // the minimap's layout), and each frame paints and hit-tests the items as they are.
 class GraphPanel : public Panel {
@@ -32,6 +33,7 @@ public:
     PanelInfo info() const override;
     bool init() override;   // node thumbnails: the canvas engine's
     void shutdown() override;
+    void documentsChanged(const DocumentsEvent& e) override;   // a graph per document: made as it's shown, gone as it closes
     void draw() override;
     Clock::Seconds nextFrameIn() const override;
     // A file dropped at `screen` (`window` topmost): true if it lands on the graph, with the
@@ -82,8 +84,26 @@ private:
         ImVec2    pos;                // screen
     };
 
+    // One document's graph: its scene, and how the panel last looked at it.
+    struct GraphView {
+        DocumentId  document = kNoDocument;
+        GraphScene  scene;
+        GraphCamera camera;
+        float       pinnedScroll = 0.0f;   // screen pixels, when the master is taller than the panel
+        // Everything stays framed (the dock settling, an import landing) until the user first works
+        // the graph: reframed whenever the panel's size or the items change.
+        bool        autoFrame = true;
+        ImVec2      framedSize;
+        uint64_t    framedItems = 0;
+    };
+    void show(DocumentId id);   // the active one's graph, made if it's new; what was derived from the last one goes
+    GraphScene&        scene()        { return m_view->scene; }
+    const GraphScene&  scene()  const { return m_view->scene; }
+    GraphCamera&       camera()       { return m_view->camera; }
+    const GraphCamera& camera() const { return m_view->camera; }
+
     GraphPaint paintContext(const GraphCamera& camera) const;   // on its window, the graph's fonts, at the UI scale
-    const GraphCamera& cameraFor(NodeId id) const { return m_scene.isMaster(id) ? m_pinned : m_camera; }   // whose space its node item is in
+    const GraphCamera& cameraFor(NodeId id) const { return scene().isMaster(id) ? m_pinned : camera(); }   // whose space its node item is in
     void updateStackGap();            // the scene's: where a drag would drop into a stack
     void layoutOverlays(ImVec2 canvasMin, ImVec2 canvasMax);   // the pinned master and the navigator
     void placeLinkCurves(const GraphPaint& g);   // when a link or a camera moved
@@ -121,19 +141,12 @@ private:
     float uiScale() const { return ui().host.uiScale; }
 
     PanelSurface m_surface;            // the graph, this frame
-    GraphCamera m_camera;
+    std::vector<std::unique_ptr<GraphView>> m_views;   // the documents shown so far
+    GraphView*  m_view = nullptr;      // the active one's
     GraphCamera m_pinned;              // the master's space: 100%, its item in the top-right corner
-    float       m_pinnedScroll = 0.0f; // screen pixels, when the master is taller than the panel
     ImRect      m_pinnedRect;          // the master on screen
     GraphMinimap m_minimap;
     std::vector<GraphMinimap::Edge> m_minimapEdges;   // built with the links
-    // Everything stays framed (the dock settling, an import landing) until the user first works the
-    // graph: reframed whenever the panel's size or the items change.
-    bool        m_autoFrame = true;
-    ImVec2      m_framedSize;
-    uint64_t    m_framedItems = 0;
-
-    GraphScene             m_scene;
     std::vector<LinkCurve> m_curves;        // screen, one per scene link
     uint64_t m_curvesRevision = 0;          // the scene's links, as the curves were placed for
     std::array<float, 6> m_linkCameras{};   // both cameras, as the curves were placed for

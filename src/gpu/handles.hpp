@@ -1,5 +1,5 @@
 #pragma once
-#include "gfx/gpu-object.hpp"
+#include "gpu/gpu-object.hpp"
 
 #include <cstdint>
 

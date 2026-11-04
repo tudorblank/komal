@@ -1,6 +1,6 @@
 #pragma once
 // A raster's own history: each finished edit is a commit holding the tiles as they were before.
-// The project's history refers to commits by id (RasterCommitRef). Flipping a commit swaps its
+// The workspace's history refers to commits by id (RasterCommitRef). Flipping a commit swaps its
 // tiles with the raster's, so the same commit undoes and redoes.
 
 #include "raster/tile-grid.hpp"

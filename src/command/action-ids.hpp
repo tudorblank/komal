@@ -33,7 +33,6 @@ inline constexpr ActionId RasterLockAlpha{ "raster.lockAlpha" };
 inline constexpr ActionId LinkConnect{ "link.connect" };
 inline constexpr ActionId LinkDisconnect{ "link.disconnect" };
 inline constexpr ActionId LinkMove{ "link.move" };
-inline constexpr ActionId LayerMove{ "layer.move" };
 inline constexpr ActionId LayersMove{ "layers.move" };
 inline constexpr ActionId LayerAdd{ "layer.add" };
 inline constexpr ActionId LayersRemove{ "layers.remove" };
@@ -48,7 +47,7 @@ inline constexpr ActionId MoveScrub{ "move.scrub" };
 inline constexpr ActionId ImageImport{ "image.import" };
 inline constexpr ActionId BrushStroke{ "brush.stroke" };
 
-// ---- what views share, kept in the project (document/document-actions): never undone
+// ---- what views share, kept in the workspace (document/document-actions): never undone
 inline constexpr ActionId SelectionSet{ "selection.set" };
 inline constexpr ActionId CanvasViewport{ "canvas.viewport" };
 inline constexpr ActionId CanvasPan{ "canvas.pan" };
@@ -58,9 +57,20 @@ inline constexpr ActionId CanvasCenterOn{ "canvas.centerOn" };
 inline constexpr ActionId CanvasFrame{ "canvas.frame" };
 inline constexpr ActionId CanvasFrameAll{ "canvas.frameAll" };
 
+// ---- the open documents (document/documents-actions): logged, never undone
+inline constexpr ActionId DocNew{ "doc.new" };
+inline constexpr ActionId DocClose{ "doc.close" };
+inline constexpr ActionId DocActivate{ "doc.activate" };
+inline constexpr ActionId DocSave{ "doc.save" };
+inline constexpr ActionId DocOpen{ "doc.open" };
+
 // ---- the app (ui/app-actions)
 inline constexpr ActionId AppQuit{ "app.quit" };
 inline constexpr ActionId FileImport{ "file.import" };
+inline constexpr ActionId FileClose{ "file.close" };   // asks first if it's unsaved, then doc.close
+inline constexpr ActionId FileOpen{ "file.open" };     // the OS's dialog, then doc.open
+inline constexpr ActionId FileSave{ "file.save" };     // doc.save to its file, else file.saveAs
+inline constexpr ActionId FileSaveAs{ "file.saveAs" }; // the OS's dialog, then doc.save there
 inline constexpr ActionId ViewResetLayout{ "view.resetLayout" };
 inline constexpr ActionId ViewCanvas{ "view.canvas" };   // each panel's toggle (PanelInfo::toggle)
 inline constexpr ActionId ViewGraph{ "view.graph" };

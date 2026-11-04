@@ -7,7 +7,7 @@
 //
 //   OutlineItem* o = scene.addItem<OutlineItem>(OutlineItem::Kind::Selection);   // owned by the scene
 
-#include "ui/panels/canvas/item.hpp"
+#include "ui/panels/canvas/canvas-item.hpp"
 #include "ui/style/ui-style.hpp"
 
 #include <cstdint>

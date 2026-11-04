@@ -1,5 +1,5 @@
 #include "ui/panels/graph/internal/stack-drop.hpp"
-#include "ui/panels/graph/internal/item.hpp"
+#include "ui/panels/graph/internal/node-item.hpp"
 #include "ui/panels/graph/internal/layout.hpp"
 
 #include <algorithm>

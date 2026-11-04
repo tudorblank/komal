@@ -1,6 +1,6 @@
 #include "hand-tool.hpp"
 #include "document/document-actions.hpp"
-#include "document/project.hpp"
+#include "document/workspace.hpp"
 #include "ui/widgets/widgets.hpp"
 
 #include <algorithm>
@@ -23,13 +23,13 @@ void HandTool::drawIcon(const Painter& draw, ImVec2 c, float size, ImU32 color) 
 
 void HandTool::drawProperties(ToolContext& ctx)
 {
-    const Vec2 viewport = ctx.project.canvasViewport();
+    const Vec2 viewport = ctx.workspace.canvasViewport();
     if (viewport.x <= 0.0f || viewport.y <= 0.0f) {
         ImGui::TextDisabled("The canvas is hidden.");
         return;
     }
     // Zooms about the canvas's middle.
-    const CanvasCamera& cam = ctx.project.canvasCamera();
+    const CanvasCamera& cam = ctx.workspace.canvasCamera();
     const auto zoomTo = [&](float zoom) { ctx.actions.run(Actions::CanvasZoom, { { DocArgs::kFactor, zoom / cam.zoom } }); };
 
     float percent = cam.zoom * 100.0f;

@@ -1,54 +1,54 @@
-// The Project's stack rows and artboards: a layer muted in its compositor, rows moved together,
+// The Workspace's stack rows and artboards: a layer muted in its compositor, rows moved together,
 // and the master's artboards (a list here, a group of the master's stack each).
 
-#include "document/project.hpp"
+#include "document/workspace.hpp"
 
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
 
-bool Project::setLayerMuted(NodeId compositor, NodeId layer, bool muted)
+bool Workspace::setLayerMuted(NodeId compositor, NodeId layer, bool muted)
 {
-    auto* c = dynamic_cast<CompositorNode*>(find(compositor));
-    if (!c) return false;
-    const auto& layers = c->layers();
+    Node* c = find(compositor);
+    if (!c || c->ports().inputs != InputShape::Stack) return false;
+    const auto& layers = c->links().layers;
     if (std::none_of(layers.begin(), layers.end(), [&](const NodePtr& l) { return l->id() == layer; })) return false;
-    CompositorSettings s = c->stack();
-    const bool now = std::binary_search(s.muted.begin(), s.muted.end(), layer);
-    if (now == muted) return false;
+    CompositorSettings s = stackSettings(*c);
+    if (s.mutes(layer) == muted) return false;
     if (muted) s.muted.insert(std::lower_bound(s.muted.begin(), s.muted.end(), layer), layer);
     else       std::erase(s.muted, layer);
     c->setSettings(key(), s);
-    emit(ProjectEventType::NodeChanged, compositor);
+    emit(WorkspaceEventType::NodeChanged, compositor);
     return true;
 }
 
-bool Project::moveStackRows(NodeId compositor, const StackMove& move)
+bool Workspace::moveStackRows(NodeId compositor, const StackMove& move)
 {
-    auto* c = dynamic_cast<CompositorNode*>(find(compositor));
-    if (!c || ((!move.groups.empty() || move.into != kNoArtboard) && !isMaster(compositor))) return false;   // only the master has artboards
+    Node* c = find(compositor);
+    if (!c || c->ports().inputs != InputShape::Stack) return false;
+    if ((!move.groups.empty() || move.into != kNoArtboard) && !isMaster(compositor)) return false;   // only the master has artboards
     StackRows now;
-    for (const NodePtr& l : c->layers()) now.layers.push_back(l->id());
-    now.groups = c->stack().groups;
+    for (const NodePtr& l : c->links().layers) now.layers.push_back(l->id());
+    now.groups = stackSettings(*c).groups;
     const std::optional<StackRows> next = moveRows(now, move);
     if (!next || *next == now) return false;
 
     // The layers into their new order, one move at a time (each tells exactly the tiles it changes),
     // then the groups as they now are.
     for (size_t i = 0; i < next->layers.size(); ++i) {
-        const auto& layers = c->layers();
+        const auto& layers = c->links().layers;
         const auto it = std::find_if(layers.begin() + std::ptrdiff_t(i), layers.end(), [&](const NodePtr& l) { return l->id() == next->layers[i]; });
         const size_t from = size_t(it - layers.begin());
         if (from != i) c->moveLayer(key(), from, i);
     }
-    CompositorSettings s = c->stack();
+    CompositorSettings s = stackSettings(*c);
     s.groups = next->groups;
     c->setSettings(key(), s);
-    emit(ProjectEventType::LayersChanged, compositor);
+    emit(WorkspaceEventType::LayersChanged, compositor);
     return true;
 }
 
-bool Project::addLayer(NodeId source, NodeId compositor, ArtboardId into, size_t at)
+bool Workspace::addLayer(NodeId source, NodeId compositor, ArtboardId into, size_t at)
 {
     const Node* c = find(compositor);
     if (!c || c->ports().inputs != InputShape::Stack || !find(source)) return false;
@@ -60,7 +60,7 @@ bool Project::addLayer(NodeId source, NodeId compositor, ArtboardId into, size_t
     return linked || moved;
 }
 
-bool Project::removeStackRows(NodeId compositor, const std::vector<NodeId>& layers, const std::vector<ArtboardId>& artboards)
+bool Workspace::removeStackRows(NodeId compositor, const std::vector<NodeId>& layers, const std::vector<ArtboardId>& artboards)
 {
     const Node* c = find(compositor);
     if (!c || c->ports().inputs != InputShape::Stack) return false;
@@ -77,14 +77,14 @@ bool Project::removeStackRows(NodeId compositor, const std::vector<NodeId>& laye
 
 // ---------------------------------------------------------------- artboards
 
-const Artboard* Project::artboard(ArtboardId id) const
+const Artboard* Workspace::artboard(ArtboardId id) const
 {
     for (const Artboard& a : m_artboards)
         if (a.id == id) return &a;
     return nullptr;
 }
 
-ArtboardId Project::addArtboard(const BoundsI& rect)
+ArtboardId Workspace::addArtboard(const BoundsI& rect)
 {
     if (rect.empty() || !TileUtils::inWorld(rect.minX) || !TileUtils::inWorld(rect.minY) ||
         !TileUtils::inWorld(rect.maxX) || !TileUtils::inWorld(rect.maxY)) return kNoArtboard;
@@ -101,23 +101,23 @@ ArtboardId Project::addArtboard(const BoundsI& rect)
     groups.push_back({ a.id, top, top });
     setMasterGroups(std::move(groups));
     showArtboards();
-    emit(ProjectEventType::ArtboardsChanged, m_master->id());
-    emit(ProjectEventType::LayersChanged, m_master->id());
+    emit(WorkspaceEventType::ArtboardsChanged, m_master->id());
+    emit(WorkspaceEventType::LayersChanged, m_master->id());
     return a.id;
 }
 
-bool Project::setArtboard(const Artboard& a)
+bool Workspace::setArtboard(const Artboard& a)
 {
     const auto it = std::find_if(m_artboards.begin(), m_artboards.end(), [&](const Artboard& b) { return b.id == a.id; });
     if (it == m_artboards.end() || *it == a || a.name.empty() || a.rect.empty() || !TileUtils::inWorld(a.rect.minX) ||
         !TileUtils::inWorld(a.rect.minY) || !TileUtils::inWorld(a.rect.maxX) || !TileUtils::inWorld(a.rect.maxY)) return false;
     *it = a;
     showArtboards();
-    emit(ProjectEventType::ArtboardsChanged, m_master->id());
+    emit(WorkspaceEventType::ArtboardsChanged, m_master->id());
     return true;
 }
 
-bool Project::deleteArtboard(ArtboardId id)
+bool Workspace::deleteArtboard(ArtboardId id)
 {
     const auto it = std::find_if(m_artboards.begin(), m_artboards.end(), [&](const Artboard& b) { return b.id == id; });
     if (it == m_artboards.end()) return false;
@@ -126,12 +126,12 @@ bool Project::deleteArtboard(ArtboardId id)
     std::erase_if(groups, [&](const StackGroup& g) { return g.key == id; });
     setMasterGroups(std::move(groups));
     showArtboards();
-    emit(ProjectEventType::ArtboardsChanged, m_master->id());
-    emit(ProjectEventType::LayersChanged, m_master->id());
+    emit(WorkspaceEventType::ArtboardsChanged, m_master->id());
+    emit(WorkspaceEventType::LayersChanged, m_master->id());
     return true;
 }
 
-bool Project::setMasterGroups(std::vector<StackGroup> groups)
+bool Workspace::setMasterGroups(std::vector<StackGroup> groups)
 {
     CompositorSettings s = m_master->stack();
     if (s.groups == groups) return false;
@@ -140,7 +140,7 @@ bool Project::setMasterGroups(std::vector<StackGroup> groups)
     return true;
 }
 
-bool Project::artboardsMatchStack() const
+bool Workspace::artboardsMatchStack() const
 {
     const std::vector<StackGroup>& groups = m_master->stack().groups;
     if (groups.size() != m_artboards.size()) return false;
@@ -149,7 +149,7 @@ bool Project::artboardsMatchStack() const
     });
 }
 
-void Project::showArtboards()
+void Workspace::showArtboards()
 {
     assert(artboardsMatchStack() && "an artboard without its group, or a group without its artboard");
     std::vector<GroupLook> looks;

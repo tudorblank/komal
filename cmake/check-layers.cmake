@@ -9,7 +9,7 @@
 #   node       the node graph: signals, masks, the render path             + abseil
 #   command    the actions input and menus trigger (the one way in)        + abseil
 #   document   the Project: nodes, rasters, history, the document's actions + abseil, stb_image
-#   gfx        the GPU: device, objects, pages of slots                    + abseil, webgpu
+#   gpu        the GPU: device, objects, pages of slots                    + abseil, webgpu
 #   ui         the interface: its look, widgets, panels (the canvas and the graph among them), tools
 #                                                                          + webgpu, ImGui (and its internals), toml++
 #   app        the platform: the window, the loop, frames; main            anything (SDL lives here)
@@ -18,7 +18,7 @@
 #
 #   cmake -DSRC=<src dir> -DTESTS=<tests dir> -P check-layers.cmake
 
-set(LAYERS base input raster node command document gfx ui app)
+set(LAYERS base input raster node command document gpu ui app)
 
 # What each layer may include with <...>, as regexes; a standard header is a bare name.
 set(STD "^[a-z_0-9]+$")
@@ -28,15 +28,16 @@ set(LIBS_raster   "${STD}" "^absl/")
 set(LIBS_node     ${LIBS_raster})
 set(LIBS_command  ${LIBS_raster})
 set(LIBS_document ${LIBS_raster} "^stb_image\\.h$")
-set(LIBS_gfx      ${LIBS_raster} "^webgpu/")
-set(LIBS_ui       ${LIBS_gfx} "^imgui\\.h$" "^imgui_internal\\.h$" "^toml\\+\\+/")
+set(LIBS_gpu      ${LIBS_raster} "^webgpu/")
+set(LIBS_ui       ${LIBS_gpu} "^imgui\\.h$" "^imgui_internal\\.h$" "^toml\\+\\+/")
 set(LIBS_app      ".*")
 set(LIBS_tests    ${LIBS_raster} "^doctest/")
 set(LIBS_tests_ui ${LIBS_ui} "^doctest/")
 
 # Files that may use a library their layer may not: "path|regex".
 set(FILE_LIBS
-    "input/sdl-input.|^SDL3/")   # the one file of input/ that knows SDL
+    "input/sdl-input.|^SDL3/"         # the one file of input/ that knows SDL
+    "raster/tile-codec.|^zstd\\.h$")  # ... and the one that knows zstd
 
 # Headers private to a folder: only files inside it (and the header's own .cpp) may include them.
 # "header|folder/" (a folder, or any path prefix).

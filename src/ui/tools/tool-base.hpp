@@ -1,7 +1,7 @@
 #pragma once
 // Canvas tools (Photoshop style): the Toolbox picks one, Tool Properties shows its settings, the
 // canvas hands it the pointer. A tool draws nothing on the canvas itself; what it changes shows
-// through the project: a stroke, or the canvas camera (the hand). It changes the project and its
+// through the workspace: a stroke, or the canvas camera (the hand). It changes the workspace and its
 // own settings only through actions: the document's and the canvas's (document/document-actions)
 // and its own, which it registers itself (registerActions). Picking it is ToolManager's, by its
 // pickAction().
@@ -18,7 +18,7 @@
 #include <string>
 #include <utility>
 
-class Project;
+class Workspace;
 class ToolManager;
 
 // The colours tools share: the primary paints, the secondary waits; X swaps them.
@@ -40,7 +40,7 @@ struct CanvasPointer {
 
 // The pointer over the canvas, for one frame.
 struct CanvasInput {
-    const Project&  project;
+    const Workspace&  workspace;
     ActionRegistry& actions;
     Vec2 mouse;      // where the pointer is now, viewport-local points
     Vec2 world;      // ... in canvas pixels
@@ -53,7 +53,7 @@ struct CanvasInput {
 
 // What Tool Properties hands a tool.
 struct ToolContext {
-    const Project&  project;   // to read (the canvas camera too): changes go through actions
+    const Workspace&  workspace;   // to read (the canvas camera too): changes go through actions
     ActionRegistry& actions;
     ToolManager&    tools;
 };

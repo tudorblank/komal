@@ -1,7 +1,7 @@
 #pragma once
 // Every kind of node in one table: what it's called, how it shows, what can feed it (its class's
 // ports), how one is made. Everything that tells kinds apart (actions, the add menu, the graph's
-// ports, the Project making nodes) reads it: a new kind is its node class and one row.
+// ports, the Workspace making nodes) reads it: a new kind is its node class and one row.
 // What a kind owns besides (its settings) is the class's own: NodeSettings.
 
 #include "node/node-types.hpp"

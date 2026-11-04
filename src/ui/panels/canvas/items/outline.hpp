@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ui/style/ui-style.hpp"
-#include "ui/panels/canvas/item.hpp"
+#include "ui/panels/canvas/canvas-item.hpp"
 
 #include <cstdint>
 

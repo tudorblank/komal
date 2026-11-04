@@ -5,7 +5,7 @@
 // the frame it stops), so no frame shows both or neither. When the edit ends, the view holds its
 // last picture until the output has caught up.
 
-#include "ui/panels/canvas/item.hpp"
+#include "ui/panels/canvas/canvas-item.hpp"
 #include "ui/panels/canvas/items/raster.hpp"
 #include "ui/panels/canvas/preview/preview-renderer.hpp"
 

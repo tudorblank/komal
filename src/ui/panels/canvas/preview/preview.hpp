@@ -1,5 +1,5 @@
 #pragma once
-// The edit in progress (Project::preview()) as the GPU shows it: one for the whole app, in the
+// The edit in progress (Workspace::preview()) as the GPU shows it: one for the whole app, in the
 // canvas engine. It plans the edit as soon as it starts (its PreviewModel: the plan, and what a
 // reached node is under the edit, on the CPU) and holds the tiles of every leaf the plan reads:
 // node outputs and raw wets from the engine's TileCache, the stroke's coverage of its own. Its
@@ -21,19 +21,19 @@
 #include <optional>
 #include <vector>
 
-class Project;
+class Workspace;
 
 class Preview {
 public:
-    void init(const Project& project, TileCache& cache);
+    void init(const Workspace& workspace, TileCache& cache);
     void shutdown();
     void releaseGpu();   // its tiles go; the edit in progress is planned again
 
     // Once a frame, after the cache synced: the stroke's coverage tiles follow the stroke.
     void update();
 
-    bool active() const { return m_active; }   // planned, and the plan is the project's edit's
-    const Project&      project() const { return *m_project; }
+    bool active() const { return m_active; }   // planned, and the plan is the workspace's edit's
+    const Workspace&      workspace() const { return *m_workspace; }
     const PreviewModel& model() const { return *m_model; }   // the plan, and every node under the edit
     const PreviewPlan&  plan() const { return m_model->plan(); }
     const EditPreview&  edit() const;                 // while active
@@ -41,13 +41,13 @@ public:
     uint64_t planSerial() const { return m_serial; }   // bumps with every new plan: renderers start over
 
 private:
-    void follow();   // plans the project's edit, or lets go of the last one
+    void follow();   // plans the workspace's edit, or lets go of the last one
     void replan(const EditPreview& edit);
     void drop();
 
-    const Project* m_project = nullptr;
+    const Workspace* m_workspace = nullptr;
     TileCache*     m_cache   = nullptr;
-    Connection     m_events;              // project.changed: a new edit or a graph change replans
+    Connection     m_events;              // workspace.changed: a new edit or a graph change replans
     std::optional<PreviewModel> m_model;  // from init()
     std::vector<std::shared_ptr<RasterTiles>> m_leaves;   // per plan leaf
     bool     m_active = false;

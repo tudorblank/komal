@@ -1,11 +1,12 @@
 #include "canvas-panel.hpp"
 #include "ui/input-owner.hpp"
 #include "document/document-actions.hpp"
+#include "document/documents-actions.hpp"
 #include "ui/render/painter.hpp"
 #include "ui/style/ui-style.hpp"
 #include "ui/panels/canvas/canvas-engine.hpp"
 #include "ui/panels/canvas/imgui-texture.hpp"
-#include "document/project.hpp"
+#include "document/workspace.hpp"
 #include "ui/navigation.hpp"
 #include "ui/tools/tool-manager.hpp"
 #include "ui/widgets/widgets.hpp"
@@ -32,77 +33,108 @@ PanelInfo CanvasPanel::info() const { return { Actions::ViewCanvas, "Canvas", Do
 
 bool CanvasPanel::init()
 {
-    const Project& project = ui().project;
-    m_tiles   = &ui().canvas.tiles();
-    m_ready = ui().canvas.ready() && m_scene.init(ui().canvas.pipelines()) && m_view.init(m_scene);
-    if (!m_ready) return false;
-    m_view.camera() = project.canvasCamera();
-
-    // The scene: the project's output (unbounded), overlays on top.
-    m_scene.addItem<CheckerItem>()->setZ(kZBackground);   // transparency, wherever nothing covers it
-    m_output = m_scene.addItem<RasterItem>(ui().canvas.outputTiles());
-    m_output->setZ(kZOutput);
-    m_preview     = &ui().canvas.preview();
-    m_previewItem = m_scene.addItem<PreviewItem>(ui().canvas.preview(), *m_output);
-    m_previewItem->setZ(kZOutput);
-    m_scene.addItem<OriginItem>()->setZ(kZOrigin);
-    m_previewFrom = m_scene.addItem<OutlineItem>(OutlineItem::Kind::PreviewFrom);
-    m_previewFrom->setZ(kZBounds);
-    m_previewTo = m_scene.addItem<OutlineItem>(OutlineItem::Kind::PreviewTo);
-    m_previewTo->setZ(kZBounds);
-
-    m_projectEvents = project.changed.connect([this](const ProjectEvent& e) { onProjectEvent(e); });
-    updateOutlines();
-    return true;
+    show(ui().documents.active().id());
+    return m_canvas && m_canvas->ready;
 }
 
-void CanvasPanel::onProjectEvent(const ProjectEvent& e)
+CanvasPanel::Canvas* CanvasPanel::canvasOf(DocumentId id)
+{
+    for (const auto& c : m_canvases)
+        if (c->document == id) return c.get();
+    return nullptr;
+}
+
+void CanvasPanel::show(DocumentId id)
+{
+    m_canvas = canvasOf(id);
+    if (m_canvas) return;
+    // New: made from the engine's pictures of it (it's the active one now).
+    auto made = std::make_unique<Canvas>();
+    Canvas& c = *made;
+    c.document  = id;
+    c.workspace = &ui().workspace();
+    c.preview   = &ui().canvas.preview();
+    m_canvases.push_back(std::move(made));
+    m_canvas = &c;
+    if (!makeGpu(c)) return;
+
+    // The scene: the workspace's output (unbounded), overlays on top.
+    c.scene.addItem<CheckerItem>()->setZ(kZBackground);   // transparency, wherever nothing covers it
+    c.output = c.scene.addItem<RasterItem>(ui().canvas.outputTiles());
+    c.output->setZ(kZOutput);
+    c.previewItem = c.scene.addItem<PreviewItem>(*c.preview, *c.output);
+    c.previewItem->setZ(kZOutput);
+    c.scene.addItem<OriginItem>()->setZ(kZOrigin);
+    c.previewFrom = c.scene.addItem<OutlineItem>(OutlineItem::Kind::PreviewFrom);
+    c.previewFrom->setZ(kZBounds);
+    c.previewTo = c.scene.addItem<OutlineItem>(OutlineItem::Kind::PreviewTo);
+    c.previewTo->setZ(kZBounds);
+
+    c.events = c.workspace->changed.connect([this, &c](const WorkspaceEvent& e) { onWorkspaceEvent(c, e); });
+    updateOutlines(c);
+}
+
+bool CanvasPanel::makeGpu(Canvas& c)
+{
+    c.ready = ui().canvas.ready() && c.scene.init(ui().canvas.pipelines()) && c.view.init(c.scene);
+    if (c.ready) c.view.camera() = c.workspace->canvasCamera();
+    return c.ready;
+}
+
+void CanvasPanel::documentsChanged(const DocumentsEvent& e)
 {
     switch (e.type) {
-    case ProjectEventType::CanvasViewChanged:
-        m_view.camera() = ui().project.canvasCamera();
+    case DocumentsEvent::Type::Opened:
+        break;   // its canvas is made once it's shown
+    case DocumentsEvent::Type::Closing:
+        if (m_canvas && m_canvas->document == e.id) m_canvas = nullptr;
+        std::erase_if(m_canvases, [&](const auto& c) { return c->document == e.id; });
         break;
-    case ProjectEventType::PreviewChanged:
-        updateOutlines();
+    case DocumentsEvent::Type::Activated:
+        show(e.id);
         break;
-    case ProjectEventType::NodeAdded:
-    case ProjectEventType::NodeMoved:
+    }
+}
+
+void CanvasPanel::onWorkspaceEvent(Canvas& c, const WorkspaceEvent& e)
+{
+    switch (e.type) {
+    case WorkspaceEventType::CanvasViewChanged:
+        c.view.camera() = c.workspace->canvasCamera();
+        break;
+    case WorkspaceEventType::PreviewChanged:
+        updateOutlines(c);
+        break;
+    case WorkspaceEventType::NodeAdded:
+    case WorkspaceEventType::NodeMoved:
         break;
     default:
-        updateOutlines();
+        updateOutlines(c);
         break;
     }
 }
 
 void CanvasPanel::releaseGpu()
 {
-    m_view.shutdown();
-    m_scene.releaseGpu();
-    m_ready = false;
+    for (const auto& c : m_canvases) {
+        c->view.shutdown();
+        c->scene.releaseGpu();
+        c->ready = false;
+    }
 }
 
 void CanvasPanel::restoreGpu()
 {
-    if (!m_output) {   // never made (no GPU at start): made now
-        init();
-        return;
-    }
-    m_ready = ui().canvas.ready() && m_scene.init(ui().canvas.pipelines()) && m_view.init(m_scene);
-    if (m_ready) m_view.camera() = ui().project.canvasCamera();
+    m_canvas = nullptr;
+    std::erase_if(m_canvases, [](const auto& c) { return !c->output; });   // never made (no GPU then): made as they're shown
+    for (const auto& c : m_canvases) makeGpu(*c);
+    show(ui().documents.active().id());
 }
 
 void CanvasPanel::shutdown()
 {
-    m_projectEvents.disconnect();
-    m_view.shutdown();
-    m_scene.shutdown();
-    m_output = nullptr;
-    m_selectionBounds.clear();
-    m_artboards.clear();
-    m_previewItem  = nullptr;
-    m_previewFrom  = nullptr;
-    m_previewTo    = nullptr;
-    m_ready = false;
+    m_canvas = nullptr;
+    m_canvases.clear();   // each one's view, scene and items, its connection
 }
 
 void CanvasPanel::draw()
@@ -117,11 +149,13 @@ void CanvasPanel::draw()
 
     const Widgets::PanelWindow window(*this, ui().actions, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse,
                                       Widgets::PanelWindow::Padding::None);
-    if (window && m_ready) {
+    if (window) drawTabs();
+    if (window && m_canvas && m_canvas->ready) {
+        CanvasView& view = m_canvas->view;
         const ImVec2 origin = ImGui::GetCursorScreenPos();
         const ImVec2 avail  = ImGui::GetContentRegionAvail();
         const ImVec2 fb     = ImGui::GetIO().DisplayFramebufferScale;   // HiDPI: render at native pixels
-        if (avail.x >= 1.0f && avail.y >= 1.0f && m_view.resize(avail.x, avail.y, fb.x, fb.y)) {
+        if (avail.x >= 1.0f && avail.y >= 1.0f && view.resize(avail.x, avail.y, fb.x, fb.y)) {
             m_visible = true;
             m_surface.show(ImGui::GetCurrentWindowRead(), origin, avail);
             tellSize({ avail.x, avail.y });   // before input: what it frames is this frame's size
@@ -133,31 +167,63 @@ void CanvasPanel::draw()
             handleInput(origin);
 
             const Painter draw = Painter::window();
-            draw.image(imguiTexture(m_view.texture()), origin, ImVec2(origin.x + avail.x, origin.y + avail.y));
-            m_view.drawOverlays(draw, origin.x, origin.y);
+            draw.image(imguiTexture(view.texture()), origin, ImVec2(origin.x + avail.x, origin.y + avail.y));
+            view.drawOverlays(draw, origin.x, origin.y);
             drawHud(draw, origin);
         }
     }
     if (!m_visible) tellSize({});   // collapsed, tabbed away
 }
 
+void CanvasPanel::drawTabs()
+{
+    // ImGui shows a tab picked in code from the next frame on: until it does, what it shows isn't a pick.
+    const Documents& docs = ui().documents;
+    const DocumentId active = docs.active().id();
+    if (active != m_tabActive) m_tabAsked = active;   // switched elsewhere (a key, the menu): its tab follows
+    m_tabActive = active;
+    DocumentId shown = kNoDocument, closed = kNoDocument;
+    if (ImGui::BeginTabBar("##documents", ImGuiTabBarFlags_FittingPolicyScroll | ImGuiTabBarFlags_NoTooltip)) {
+        for (const auto& d : docs.all()) {
+            char label[160];
+            std::snprintf(label, sizeof label, "%s###document%u", d->name().c_str(), unsigned(d->id()));
+            ImGuiTabItemFlags flags = d->unsaved() ? ImGuiTabItemFlags_UnsavedDocument : ImGuiTabItemFlags_None;
+            if (d->id() == m_tabAsked) flags |= ImGuiTabItemFlags_SetSelected;
+            bool open = true;
+            if (ImGui::BeginTabItem(label, &open, flags)) {
+                shown = d->id();
+                ImGui::EndTabItem();
+            }
+            if (!open) closed = d->id();
+        }
+        ImGui::EndTabBar();
+    }
+    // After the bar, never in it: the documents (and the tabs) may change.
+    if (m_tabAsked != kNoDocument) {
+        if (shown == m_tabAsked) m_tabAsked = kNoDocument;
+    } else if (shown != kNoDocument && shown != active) {
+        ui().actions.run(Actions::DocActivate, { { DocArgs::kDocument, shown } });
+    }
+    if (closed != kNoDocument) ui().actions.run(Actions::FileClose, { { DocArgs::kDocument, closed } });
+}
+
 void CanvasPanel::tellSize(Vec2 size)
 {
-    if (size != ui().project.canvasViewport()) ui().actions.run(Actions::CanvasViewport, { { DocArgs::kWidth, size.x }, { DocArgs::kHeight, size.y } });
+    if (size != ui().workspace().canvasViewport()) ui().actions.run(Actions::CanvasViewport, { { DocArgs::kWidth, size.x }, { DocArgs::kHeight, size.y } });
 }
 
 bool CanvasPanel::dropTarget(const ImGuiWindow* window, ImVec2 screen, Vec2& world) const
 {
-    if (!m_surface.contains(window, screen)) return false;
+    if (!m_canvas || !m_surface.contains(window, screen)) return false;
     const ImVec2 p = m_surface.local(screen);
-    world = m_view.camera().screenToWorld({ p.x, p.y });
+    world = m_canvas->view.camera().screenToWorld({ p.x, p.y });
     return true;
 }
 
 void CanvasPanel::handleInput(const ImVec2& origin)
 {
     ImGuiIO& io = ImGui::GetIO();
-    const CanvasCamera& cam = m_view.camera();
+    const CanvasCamera& cam = m_canvas->view.camera();
     const Vec2 mouse = { io.MousePos.x - origin.x, io.MousePos.y - origin.y };
     const bool hovered = ImGui::IsItemHovered();
     const bool active  = ImGui::IsItemActive();
@@ -181,68 +247,69 @@ void CanvasPanel::handleInput(const ImVec2& origin)
     if (hovered || active || tool.busy())   // busy: a stroke still gets its release outside the canvas
         for (const PointerEvent& ev : ui().input.pointer)
             m_pointer.push_back({ ev, cam.screenToWorld({ ev.x - origin.x, ev.y - origin.y }) });
-    tool.canvasInput({ ui().project, ui().actions, mouse, cam.screenToWorld(mouse), m_pointer, ui().input, hovered, active });
+    tool.canvasInput({ ui().workspace(), ui().actions, mouse, cam.screenToWorld(mouse), m_pointer, ui().input, hovered, active });
 }
 
-void CanvasPanel::updateOutlines()
+void CanvasPanel::updateOutlines(Canvas& c)
 {
-    if (!m_ready) return;
+    if (!c.ready) return;
+    const Workspace& workspace = *c.workspace;
     // Bounds of the nodes selected in the graph; with none selected, of the raster being edited.
     // Under the edit in progress: they follow a drag or a stroke as it goes.
     std::vector<BoundsI> outlined;
-    const NodeSelection& selection = ui().project.selection();
-    for (NodeId id : selection.ids()) outlined.push_back(m_preview->model().bounds(id));
-    if (selection.empty() && ui().project.activeRaster()) outlined.push_back(m_preview->model().bounds(ui().project.activeRasterId()));
+    const NodeSelection& selection = workspace.selection();
+    for (NodeId id : selection.ids()) outlined.push_back(c.preview->model().bounds(id));
+    if (selection.empty() && workspace.activeRaster()) outlined.push_back(c.preview->model().bounds(workspace.activeRasterId()));
     std::erase_if(outlined, [](const BoundsI& b) { return b.empty(); });
-    while (m_selectionBounds.size() < outlined.size()) {
-        m_selectionBounds.push_back(m_scene.addItem<OutlineItem>());
-        m_selectionBounds.back()->setZ(kZBounds);
+    while (c.selectionBounds.size() < outlined.size()) {
+        c.selectionBounds.push_back(c.scene.addItem<OutlineItem>());
+        c.selectionBounds.back()->setZ(kZBounds);
     }
-    for (size_t i = 0; i < m_selectionBounds.size(); ++i) {
-        m_selectionBounds[i]->setVisible(i < outlined.size());
-        if (i < outlined.size()) m_selectionBounds[i]->setPixelBounds(outlined[i]);
+    for (size_t i = 0; i < c.selectionBounds.size(); ++i) {
+        c.selectionBounds[i]->setVisible(i < outlined.size());
+        if (i < outlined.size()) c.selectionBounds[i]->setPixelBounds(outlined[i]);
     }
 
     // The master's artboards: their frames, under the outlines.
-    const Artboards& boards = ui().project.artboards();
-    while (m_artboards.size() < boards.size()) {
-        m_artboards.push_back(m_scene.addItem<ArtboardFrameItem>());
-        m_artboards.back()->setZ(kZBounds - 1.0f);
+    const Artboards& boards = workspace.artboards();
+    while (c.artboards.size() < boards.size()) {
+        c.artboards.push_back(c.scene.addItem<ArtboardFrameItem>());
+        c.artboards.back()->setZ(kZBounds - 1.0f);
     }
-    for (size_t i = 0; i < m_artboards.size(); ++i) {
-        m_artboards[i]->setVisible(i < boards.size());
-        if (i < boards.size()) m_artboards[i]->set(boards[i]);
+    for (size_t i = 0; i < c.artboards.size(); ++i) {
+        c.artboards[i]->setVisible(i < boards.size());
+        if (i < boards.size()) c.artboards[i]->set(boards[i]);
     }
 
     // A drag that doesn't reach the master (nothing on the canvas changes): outline the area it
     // affects, and for a move where it was.
-    const EditPreview* pv = ui().project.preview();
-    const Node* edited = pv && !pv->stroke() ? ui().project.find(pv->pixelsNode()) : nullptr;
-    if (edited && (ui().project.isMaster(edited->id()) || ui().project.master().dependsOn(edited))) edited = nullptr;
+    const EditPreview* pv = workspace.preview();
+    const Node* edited = pv && !pv->stroke() ? workspace.find(pv->pixelsNode()) : nullptr;
+    if (edited && (workspace.isMaster(edited->id()) || workspace.master().dependsOn(edited))) edited = nullptr;
     BoundsI from, to;
     if (edited) {
-        to = m_preview->model().bounds(edited->id());
+        to = c.preview->model().bounds(edited->id());
         if (pv->offsetOf(edited->id())) from = edited->bounds();
     }
-    m_previewFrom->setVisible(!from.empty() && from != to);
-    if (!from.empty()) m_previewFrom->setPixelBounds(from);
-    m_previewTo->setVisible(!to.empty());
-    if (!to.empty()) m_previewTo->setPixelBounds(to);
+    c.previewFrom->setVisible(!from.empty() && from != to);
+    if (!from.empty()) c.previewFrom->setPixelBounds(from);
+    c.previewTo->setVisible(!to.empty());
+    if (!to.empty()) c.previewTo->setPixelBounds(to);
 }
 
 void CanvasPanel::drawHud(const Painter& draw, const ImVec2& origin)
 {
-    const RasterRootNode* active = ui().project.activeRaster();
-    const bool shown = active && ui().project.master().dependsOn(active);
+    const RasterRootNode* active = ui().workspace().activeRaster();
+    const bool shown = active && ui().workspace().master().dependsOn(active);
     char hud[256];
     std::snprintf(hud, sizeof hud, "%.0f%%   %s   painting: %s%s%s   level %d: %zu tiles / %zu atlas pages%s",
-                  m_view.camera().zoom * 100.0f, ui().tools.active().name(),
+                  m_canvas->view.camera().zoom * 100.0f, ui().tools.active().name(),
                   active ? active->label().c_str() : "nothing (click a raster node)",
                   active && active->locked() ? " (locked)" : "", active && !shown ? " (not in Master)" : "",
-                  m_output->drawLevel(), m_tiles->tileCount(), m_tiles->pageCount(), m_output->syncPending() ? " (syncing)" : "");
+                  m_canvas->output->drawLevel(), ui().canvas.tiles().tileCount(), ui().canvas.tiles().pageCount(), m_canvas->output->syncPending() ? " (syncing)" : "");
     const Style::HudStyle& style = Style::get().hud;
     const ImVec2 size = ImGui::CalcTextSize(hud);
-    const ImVec2 pos(origin.x + style.margin.x, origin.y + m_view.height() - size.y - style.margin.y * 2.0f);
+    const ImVec2 pos(origin.x + style.margin.x, origin.y + m_canvas->view.height() - size.y - style.margin.y * 2.0f);
     draw.fillRect(ImVec2(pos.x - style.padding.x, pos.y - style.padding.y), ImVec2(pos.x + size.x + style.padding.x, pos.y + size.y + style.padding.y),
                   style.back, style.rounding);
     draw.text(pos, style.text, hud);
@@ -250,6 +317,6 @@ void CanvasPanel::drawHud(const Painter& draw, const ImVec2& origin)
 
 void CanvasPanel::renderGpu(WGPUCommandEncoder enc)
 {
-    if (!m_ready || !m_visible) return;
-    m_view.render(enc, ui().canvas.budget(CanvasEngine::Work::Canvas));   // re-renders only when something changed
+    if (!m_canvas || !m_canvas->ready || !m_visible) return;
+    m_canvas->view.render(enc, ui().canvas.budget(CanvasEngine::Work::Canvas));   // re-renders only when something changed
 }

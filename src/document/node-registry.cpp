@@ -26,17 +26,36 @@ RasterRootNode& NodeRegistry::rasterNode(RasterId id) const
 
 NodeId NodeRegistry::create(GraphKey key, NodeType type, float x, float y)
 {
+    const NodePtr n = make(key, type, x, y, NodeId(m_nextId));
+    const NodeKind& kind = nodeKind(type);
+    n->setLabel(key, kind.ownsPixels ? std::string(kind.label) + " " + std::to_string(++m_numbered) : std::string(kind.label));
+    return n->id();
+}
+
+NodeId NodeRegistry::create(GraphKey key, NodeType type, float x, float y, NodeId id)
+{
+    if (uint32_t(id) < m_nextId) return kNoNodeId;
+    return make(key, type, x, y, id)->id();
+}
+
+NodePtr NodeRegistry::make(GraphKey key, NodeType type, float x, float y, NodeId id)
+{
     const NodeKind& kind = nodeKind(type);
     RasterData* pixels = kind.ownsPixels ? &m_rasters.emplace_back(RasterId(m_rasters.size())) : nullptr;
     NodePtr n = kind.make(pixels);
     if (pixels) m_rasterNodes.push_back(std::static_pointer_cast<RasterRootNode>(n));   // RasterId == index
-    const NodeId id = NodeId(m_nextId++);
+    m_nextId = uint32_t(id) + 1;
     n->setId(key, id);
     n->setPosition(key, x, y);
-    n->setLabel(key, kind.ownsPixels ? std::string(kind.label) + " " + std::to_string(++m_numbered) : std::string(kind.label));
     index(n);
-    m_order.push_back(std::move(n));
-    return id;
+    m_order.push_back(n);
+    return n;
+}
+
+void NodeRegistry::resume(uint32_t nextId, uint32_t numbered)
+{
+    m_nextId = std::max(m_nextId, nextId);
+    m_numbered = std::max(m_numbered, numbered);
 }
 
 void NodeRegistry::remove(NodeId id)

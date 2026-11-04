@@ -1,5 +1,5 @@
 #include "pipelines.hpp"
-#include "gfx/error-scope.hpp"
+#include "gpu/error-scope.hpp"
 #include "ui/panels/canvas/tiles/atlas.hpp"   // ChunkInstance layout
 #include "base/math.hpp"
 #include "ui/style/ui-style.hpp"

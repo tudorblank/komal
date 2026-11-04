@@ -1,5 +1,5 @@
-#include "gfx/render-pass.hpp"
-#include "gfx/handles.hpp"
+#include "gpu/render-pass.hpp"
+#include "gpu/handles.hpp"
 
 #include <vector>
 

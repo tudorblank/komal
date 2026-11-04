@@ -1,7 +1,7 @@
 #include "ui/panels/canvas/preview/preview-renderer.hpp"
 #include "ui/panels/canvas/preview/preview.hpp"
-#include "document/project.hpp"
-#include "gfx/render-pass.hpp"
+#include "document/workspace.hpp"
+#include "gpu/render-pass.hpp"
 #include "node/node-kinds.hpp"
 
 #include <algorithm>
@@ -341,7 +341,7 @@ bool PreviewRenderer::execute(const PreviewSpace& space, const CanvasPipelines& 
             drawLeaf(pass, op.leaf, op.offset, space, p);
             break;
         case Op::Kind::Stroke: {
-            const BrushParams& brush = m_preview->project().stroke().params();
+            const BrushParams& brush = m_preview->workspace().stroke().params();
             const RGBA c = premultiply(brush.color);   // as the CPU stroke does
             PreviewStrokeParams params{};
             params.color[0]  = float(c.r) / 255.0f;

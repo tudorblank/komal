@@ -1,5 +1,5 @@
 #pragma once
-#include "ui/panels/canvas/item.hpp"
+#include "ui/panels/canvas/canvas-item.hpp"
 #include "ui/panels/canvas/tiles/raster-tiles.hpp"
 
 // A node's output in one view, drawn at the level of detail that matches the zoom (a texel covers

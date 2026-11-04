@@ -17,7 +17,7 @@
 #include <variant>
 
 class ActionRegistry;
-class Project;
+class Workspace;
 
 class GraphMenus {
 public:
@@ -35,7 +35,7 @@ public:
     struct RenameArtboard { ArtboardId artboard; char text[128] = ""; };
     using Value = std::variant<Rename, ScaleValue, OffsetValue, RenameArtboard>;
 
-    void init(const Project& project, ActionRegistry& actions);
+    void init(const Workspace& workspace, ActionRegistry& actions);
 
     void openAdd(Wiring wiring, ImVec2 graphPos);   // shows the kinds that fit the wiring
     void openContext(NodeId node);
@@ -51,7 +51,7 @@ private:
     void drawColor();
     void drawValue();
 
-    const Project*  m_project = nullptr;
+    const Workspace*  m_workspace = nullptr;
     ActionRegistry* m_actions = nullptr;
 
     NodeMenu m_addMenu;

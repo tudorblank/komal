@@ -1,5 +1,6 @@
 #include "ui/panels/graph/graph-panel.hpp"
-#include "document/project.hpp"
+#include "ui/panels/canvas/canvas-engine.hpp"
+#include "document/workspace.hpp"
 #include "ui/panels/graph/internal/layout.hpp"
 #include "ui/style/graph-style.hpp"
 #include "ui/style/fonts.hpp"
@@ -55,7 +56,7 @@ void GraphPanel::paint(const GraphPaint& g, const GraphHit& hit, ImVec2 canvasMi
 
     // ---- links, under the nodes
     const int linkHovered = dragging() ? -1 : hit.link();
-    const std::vector<GraphLink>& links = m_scene.links();
+    const std::vector<GraphLink>& links = scene().links();
     for (size_t i = 0; i < links.size(); ++i) {
         const GraphLink& l = links[i];
         if (!l.shown) continue;
@@ -66,8 +67,8 @@ void GraphPanel::paint(const GraphPaint& g, const GraphHit& hit, ImVec2 canvasMi
 
     // ---- nodes, back to front; a selection outline belongs to its node's layer
     const auto paintOne = [&](const GraphPaint& pg, NodeId id) {
-        const Node* n = ui().project.find(id);
-        const NodeItem* s = m_scene.item(id);
+        const Node* n = ui().workspace().find(id);
+        const NodeItem* s = scene().item(id);
         if (!n || !s) return;
         NodeItemVisual v;
         v.selected      = selection().contains(id);
@@ -75,10 +76,10 @@ void GraphPanel::paint(const GraphPaint& g, const GraphHit& hit, ImVec2 canvasMi
         v.hoveredPort   = hit.port(id);
         v.hoveredWidget = dragging() ? -1 : hit.widget(id);
         v.activeWidget  = activeWidget(id);
-        v.active        = id == ui().project.activeRasterId();
-        paintNode(pg, ui().project, *n, *s, v, ui().thumbnails);
+        v.active        = id == ui().workspace().activeRasterId();
+        paintNode(pg, ui().workspace(), *n, *s, v, ui().canvas.thumbnails());
         paintNodeOutline(pg, *s, v);
-        paintNodePorts(pg, ui().project, *s, v);
+        paintNodePorts(pg, ui().workspace(), *s, v);
 
         // The rows being dragged float over their stack, top first from the pressed one's place,
         // each layer still linked to its node.
@@ -97,23 +98,22 @@ void GraphPanel::paint(const GraphPaint& g, const GraphHit& hit, ImVec2 canvasMi
             const ImRect row(s->header.Min.x + 6.0f, y, s->header.Max.x - 6.0f, y + h);
             y += h + kLayerGap;
             if (r.artboard != kNoArtboard) {
-                paintArtboardRow(ghost, ui().project.artboard(r.artboard), row, { .lifted = true, .selected = true });
+                paintArtboardRow(ghost, ui().workspace().artboard(r.artboard), row, { .lifted = true, .selected = true });
                 continue;
             }
-            const Node* layer = ui().project.find(r.layer);
+            const Node* layer = ui().workspace().find(r.layer);
             if (!layer) continue;
-            if (const NodeItem* from = m_scene.item(layer->id()); from && from->output()) {
+            if (const NodeItem* from = scene().item(layer->id()); from && from->output()) {
                 const ImVec2 a = cameraFor(layer->id()).toScreen(from->output()->pos);
                 const ImVec2 b = pg.at(ImVec2(row.Min.x - 6.0f, row.GetCenter().y));
-                if (m_scene.isMaster(id)) paintFadingLink(g, linkCurve(g, a, b), colors().imageLink, false);
+                if (scene().isMaster(id)) paintFadingLink(g, linkCurve(g, a, b), colors().imageLink, false);
                 else              paintLink(g, linkCurve(g, a, b), colors().imageLink, false);
             }
-            const auto* stack = dynamic_cast<const CompositorNode*>(n);
-            paintLayerRow(ghost, *layer, row, ui().thumbnails, { .lifted = true, .selected = true, .muted = stack && stack->muted(*layer) });
+            paintLayerRow(ghost, *layer, row, ui().canvas.thumbnails(), { .lifted = true, .selected = true, .muted = stackSettings(*n).mutes(layer->id()) });
         }
     };
-    const NodeId master = ui().project.master().id();
-    for (NodeId id : m_scene.zOrder())
+    const NodeId master = ui().workspace().master().id();
+    for (NodeId id : scene().zOrder())
         if (id != master) paintOne(g, id);
 
     // ---- the pinned master and the navigator, over the graph
@@ -124,18 +124,18 @@ void GraphPanel::paint(const GraphPaint& g, const GraphHit& hit, ImVec2 canvasMi
         for (size_t i = 0; i < links.size(); ++i)
             if (links[i].toMaster && links[i].shown)
                 paintFadingLink(g, m_curves[i], links[i].mask ? colors().maskLink : colors().imageLink, linkHovered == int(i));
-        if (const NodeItem* s = m_scene.item(master)) {   // its ports stay on top
+        if (const NodeItem* s = scene().item(master)) {   // its ports stay on top
             NodeItemVisual v;
             v.hoveredPort = hit.port(master);
-            paintNodePorts(pinned, ui().project, *s, v);
+            paintNodePorts(pinned, ui().workspace(), *s, v);
         }
     }
-    m_minimap.paint(draw, ui().project, m_minimapEdges, selection().ids(), m_camera, m_surface.size(), ImGui::GetIO().MousePos,
+    m_minimap.paint(draw, ui().workspace(), m_minimapEdges, selection().ids(), camera(), m_surface.size(), ImGui::GetIO().MousePos,
                     !dragging() || std::holds_alternative<MinimapDrag>(m_drag));
 
     // ---- the link being dragged, on top
     if (const auto* link = std::get_if<LinkDrag>(&m_drag)) {
-        const NodeItem* s = m_scene.item(link->node);
+        const NodeItem* s = scene().item(link->node);
         const NodeItemPort* fixed = s ? (link->fromOutput ? s->output() : s->input(link->slot)) : nullptr;
         if (fixed) {
             const LinkTarget t = linkTarget(*link, hit);

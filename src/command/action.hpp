@@ -27,11 +27,14 @@ enum class ActionKind : uint8_t {
 };
 const char* actionKindName(ActionKind kind);   // "edit", "gesture", "app", "interface"
 
-// What running an action did: done or refused, and what it made (a new node's id).
+// What running an action did: done or refused, what it made (a new node's id), and, refused, why
+// if it can say (a file that couldn't be opened): logged with it, for the caller to show.
 struct ActionResult {
     bool    done = false;
     int64_t made = 0;
+    std::string why{};
     explicit operator bool() const { return done; }
+    static ActionResult refused(std::string why) { return { false, 0, std::move(why) }; }
 };
 
 // A handler: takes the arguments (or none), returns an ActionResult, a bool (done), or nothing (done).

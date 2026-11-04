@@ -1,5 +1,5 @@
 #pragma once
-// The History Tree window: every step of the project's history as a small graph, one row per
+// The History Tree window: every step of the workspace's history as a small graph, one row per
 // step in the order they were made, each branch in its own lane. Click a step to go there
 // (history.goTo): undo, redo and every branch, in one place.
 //
@@ -23,6 +23,7 @@ class HistoryPanel : public Panel {
 public:
     PanelInfo info() const override;
     bool init() override;
+    void documentsChanged(const DocumentsEvent& e) override;   // another document's history: laid out anew
     void draw() override;
 
 private:

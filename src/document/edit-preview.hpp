@@ -3,13 +3,13 @@
 // lasts the document is untouched; the views show it (the pixels on the GPU, canvas/preview; the
 // graph's own items in the graph). Each kind holds everything it needs, its target included:
 //
-//   ScaleEdit       a signal's scale being dragged          applied: Project::applyPreview()
-//   OffsetEdit      a Move's offset being dragged           applied: Project::applyPreview()
-//   StrokeEdit      a brush stroke being painted            applied: Project::endStroke()
-//   NodesMoveEdit   nodes being dragged in the graph        applied: Project::applyPreview()
+//   ScaleEdit       a signal's scale being dragged          applied: Workspace::applyPreview()
+//   OffsetEdit      a Move's offset being dragged           applied: Workspace::applyPreview()
+//   StrokeEdit      a brush stroke being painted            applied: Workspace::endStroke()
+//   NodesMoveEdit   nodes being dragged in the graph        applied: Workspace::applyPreview()
 //   LinkMoveEdit    a link lifted off an input, carried     applied: by link.move, where it's dropped
 //
-// No edit in progress is no EditPreview (Project::preview() is null).
+// No edit in progress is no EditPreview (Workspace::preview() is null).
 
 #include "node/node.hpp"
 
@@ -33,7 +33,7 @@ struct OffsetEdit {
 };
 
 // The stroke being painted into `raster`: its coverage and brush are the stroke session's
-// (Project::stroke()); the revision tells them apart as it grows.
+// (Workspace::stroke()); the revision tells them apart as it grows.
 struct StrokeEdit {
     NodeId   raster;
     uint64_t revision;   // StrokeSession::revision() when it last stamped

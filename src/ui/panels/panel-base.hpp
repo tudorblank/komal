@@ -6,11 +6,12 @@
 //   class MyPanel : public Panel {
 //       PanelInfo info() const override { return { Actions::ViewMine, "Mine", DockSlot::RightLower }; }
 //       bool init() override;   // what it makes once (ui() is there)
-//       void draw() override;   // its window, through Widgets::PanelWindow; ui().project, ui().actions...
+//       void draw() override;   // its window, through Widgets::PanelWindow; ui().workspace(), ui().actions...
 //   };
 
 #include "base/frames.hpp"
 #include "command/action-ids.hpp"
+#include "document/documents.hpp"
 
 #include <webgpu/webgpu.h>
 
@@ -21,8 +22,7 @@ class ActionRegistry;
 class CanvasEngine;
 class GpuDevice;
 class InputOwner;
-class NodeThumbnails;
-class Project;
+class Workspace;
 class ToolManager;
 struct InputFrame;
 
@@ -38,10 +38,10 @@ enum class DockSlot : unsigned char {
     Floating,      // not docked by default
 };
 
-// When a panel draws in a frame. Edit panels may change the project (through actions); Show panels
-// draw after all of them, so what they show is the project as this frame left it (the canvas: its
+// When a panel draws in a frame. Edit panels may change the workspace (through actions); Show panels
+// draw after all of them, so what they show is the workspace as this frame left it (the canvas: its
 // outlines and its GPU picture always agree). Within a phase, order doesn't matter: panels never
-// touch each other, only the project.
+// touch each other, only the workspace.
 enum class DrawPhase : unsigned char { Edit, Show };
 
 struct PanelInfo {
@@ -58,21 +58,26 @@ struct HostInfo {
     float       uiScale = 1.0f;      // the window's content scale (the style is scaled by it too)
     std::string gpu;                 // the GPU and display, as text
     std::function<void()> showImportDialog;   // picks image files, which arrive as imports (UserInterface::openFile)
+    std::function<void()> showOpenDialog;     // picks .komal files, which arrive the same way (opened, not imported)
+    // Picks where a document is saved (starting from `suggested`): it arrives as UserInterface::saveTo
+    // (an empty path: cancelled).
+    std::function<void(DocumentId document, std::string suggested)> showSaveDialog;
 };
 
 // What every panel may use (Panel::ui()), from init() on. Everything lives as long as the panels.
-// What they may only read is const: the project (changed through actions), the canvas engine. The
-// thumbnails take requests (drawing one asks for it); the tools take the canvas's pointer.
+// What they may only read is const: the documents and their workspaces (changed through actions),
+// the canvas engine (its thumbnails take requests: drawing one asks for it); the tools take the
+// canvas's pointer. `actions` runs the app's own and the active document's (ActionRegistry::delegateTo).
 struct UiContext {
     GpuDevice&          gpu;
-    const Project&      project;
+    const Documents&    documents;
     ActionRegistry&     actions;
     ToolManager&        tools;
     const InputFrame&   input;
     InputOwner&         owner;   // who has the keyboard: panels claim it while they draw
     const CanvasEngine& canvas;
-    NodeThumbnails&     thumbnails;
     const HostInfo&     host;
+    const Workspace& workspace() const { return documents.active().workspace(); }   // the active document's
 };
 
 class Panel {
@@ -87,6 +92,9 @@ public:
     virtual void releaseGpu() {}                      // the GPU device is made again: its GPU objects go...
     virtual void restoreGpu() {}                      // ... and are made on the new one (the engine's first)
     virtual Clock::Seconds nextFrameIn() const { return kNoFrame; }   // base/frames.hpp; kNoFrame while closed
+    // The open documents changed (Documents::changed): what it keeps for one goes when it's
+    // Closing; it shows another once it's Activated.
+    virtual void documentsChanged(const DocumentsEvent&) {}
 
     bool isOpen() const { return m_open; }               // its View toggle (only) changes it
     const char* title() const { return m_title; }        // PanelInfo's

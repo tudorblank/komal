@@ -1,5 +1,5 @@
 #include "document/preview-plan.hpp"
-#include "document/project.hpp"
+#include "document/workspace.hpp"
 #include "node/node-kinds.hpp"
 
 #include <algorithm>
@@ -20,10 +20,10 @@ int PreviewPlan::indexOf(NodeId id) const
     return it == m_index.end() ? -1 : it->second;
 }
 
-bool PreviewPlan::build(const Project& project, const EditPreview& edit)
+bool PreviewPlan::build(const Workspace& workspace, const EditPreview& edit)
 {
     clear();
-    const NodePtr edited = project.findPtr(edit.pixelsNode());
+    const NodePtr edited = workspace.findPtr(edit.pixelsNode());
     if (!edited) return false;
     m_edited = edited->id();
     m_stroke = edit.stroke() != nullptr;
@@ -31,7 +31,7 @@ bool PreviewPlan::build(const Project& project, const EditPreview& edit)
     // Everything downstream of the edit, through inputs and masks.
     m_reached[edited.get()] = -1;
     for (const NodePtr& n : edited->downstream()) m_reached[n.get()] = -1;
-    for (const NodePtr& n : project.nodes())
+    for (const NodePtr& n : workspace.nodes())
         if (m_reached.contains(n.get())) planFor(n);
     return true;
 }

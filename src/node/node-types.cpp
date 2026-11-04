@@ -124,7 +124,7 @@ std::shared_ptr<CompositorNode> CompositorNode::create()
 
 bool CompositorNode::muted(const Node& layer) const
 {
-    return std::binary_search(m_settings.muted.begin(), m_settings.muted.end(), layer.id());
+    return m_settings.mutes(layer.id());
 }
 
 void CompositorNode::setSettings(GraphKey, const NodeSettings& s)

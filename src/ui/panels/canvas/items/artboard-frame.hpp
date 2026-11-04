@@ -3,7 +3,7 @@
 // (the master draws it); this shows where it is, even while it's transparent or hidden.
 
 #include "document/artboard.hpp"
-#include "ui/panels/canvas/item.hpp"
+#include "ui/panels/canvas/canvas-item.hpp"
 
 #include <string>
 

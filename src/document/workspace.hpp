@@ -19,7 +19,8 @@
 #include "document/links.hpp"
 #include "document/node-registry.hpp"
 #include "document/node-selection.hpp"
-#include "document/project-event.hpp"
+#include "document/workspace-event.hpp"
+#include "document/workspace-file.hpp"
 #include "document/stack-rows.hpp"
 #include "document/step-recorder.hpp"
 #include "document/stroke-session.hpp"
@@ -32,11 +33,17 @@
 #include <string>
 #include <vector>
 
-class Project {
+class Workspace {
 public:
-    // A blank project: the master alone. `seed`, if given, adds what the project opens with (a
+    // A blank workspace: the master alone. `seed`, if given, adds what it opens with (a
     // file's content, a test's starter graph) before the history starts: undo never goes past it.
-    void init(const std::function<void(Project&)>& seed = {});
+    void init(const std::function<void(Workspace&)>& seed = {});
+    // ---- files (document/workspace-saved.cpp; the format: document/workspace-file.hpp)
+    // In place of init(): a saved workspace, as it was saved (history starts there). False, with
+    // why, if it doesn't fit together (a link that can't be, settings not its kind's): what's
+    // built of it then is to be thrown away.
+    bool open(const WorkspaceFile& file, std::string& error);
+    WorkspaceFile saved() const;   // everything a file keeps (not history), pixels copied
 
     // ---- read
     const std::vector<NodePtr>& nodes() const { return m_nodes.nodes(); }   // creation order
@@ -85,8 +92,7 @@ public:
     // kNoNodeId) off. Checked first, on the graph without it (Links::canMove): all of it, or nothing.
     bool canMoveLink(NodeId source, NodeId from, const InputSlot& slot, NodeId to, const InputSlot& toSlot) const;
     bool moveLink(NodeId source, NodeId from, const InputSlot& slot, NodeId to, const InputSlot& toSlot);
-    bool moveLayer(NodeId compositor, size_t from, size_t to);
-    // ---- a stack's rows (document/project-stacks.cpp)
+    // ---- a stack's rows (document/workspace-stacks.cpp)
     // A layer left out of a compositor's composite, there only (it shows anywhere else it's used).
     bool setLayerMuted(NodeId compositor, NodeId layer, bool muted);
     // Layers, and the master's artboards whole, moved together to one place: see StackMove.
@@ -153,16 +159,16 @@ public:
     bool setCanvasCamera(const CanvasCamera& camera);
     bool setCanvasViewport(Vec2 size);
 
-    // ---- events: every change, told right after it's made (see ProjectEvent). Only Project emits.
-    Signal<Project, const ProjectEvent&> changed;
+    // ---- events: every change, told right after it's made (see WorkspaceEvent). Only Workspace emits.
+    Signal<Workspace, const WorkspaceEvent&> changed;
 
 private:
     static GraphKey key() { return {}; }   // lent to the blocks that edit the graph
     NodeId createNode(NodeType type, float x, float y);   // named after its kind; the first raster becomes the active one
     RasterRootNode* rasterAt(NodeId id) const;   // the raster node with that id (null: none, or not a raster)
-    void emit(ProjectEventType t, NodeId n = kNoNodeId) { emit(ProjectEvent{ t, n, kNoNodeId, {} }); }
-    void emit(const ProjectEvent& e);
-    EmitEvent emitter() { return [this](const ProjectEvent& e) { emit(e); }; }   // for the blocks that change the graph
+    void emit(WorkspaceEventType t, NodeId n = kNoNodeId) { emit(WorkspaceEvent{ t, n, kNoNodeId, {} }); }
+    void emit(const WorkspaceEvent& e);
+    EmitEvent emitter() { return [this](const WorkspaceEvent& e) { emit(e); }; }   // for the blocks that change the graph
     void emitInputChanges(NodeId to, const NodeLinks& before);   // ... against its links now
     bool previewTouches(const absl::flat_hash_set<NodeId>& nodes) const;   // the edit in progress names one of them
     void flipRasterCommit(const RasterCommitRef& c);

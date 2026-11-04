@@ -26,6 +26,7 @@
 #include "node/stack-groups.hpp"
 #include "raster/raster-data.hpp"
 
+#include <algorithm>
 #include <array>
 #include <functional>
 #include <memory>
@@ -37,7 +38,7 @@
 
 class Node;
 using NodePtr = std::shared_ptr<Node>;
-enum class NodeId : uint32_t {};   // assigned by the Project, never reused; its own type: never mixed up with another number
+enum class NodeId : uint32_t {};   // assigned by the Workspace, never reused; its own type: never mixed up with another number
 constexpr NodeId kNoNodeId{};
 
 enum class NodeType : uint8_t { Raster, Reference, Move, Compositor };
@@ -58,8 +59,9 @@ struct MoveSettings {
     bool operator==(const MoveSettings&) const = default;
 };
 struct CompositorSettings {
-    std::vector<NodeId>     muted;    // its layers left out of the composite, sorted
+    std::vector<NodeId>     muted;    // its layers left out of the composite, sorted (mutes())
     std::vector<StackGroup> groups;   // in stack order, none overlapping (StackGroups::normalized); kept right as rows come, go and move
+    bool mutes(NodeId layer) const { return std::binary_search(muted.begin(), muted.end(), layer); }
     bool operator==(const CompositorSettings&) const = default;
 };
 using NodeSettings = std::variant<NoSettings, RasterSettings, MoveSettings, CompositorSettings>;
@@ -162,12 +164,12 @@ private:
 enum class Bounds { Keep, Recompute };
 enum class Evict  { Output, All };
 
-// The right to change the graph: every call that edits a node takes one. Only the Project makes
+// The right to change the graph: every call that edits a node takes one. Only the Workspace makes
 // them, and lends one to the blocks it edits the graph through. Anyone may read a node; nobody
 // else can change one.
 class GraphKey {
     GraphKey() = default;
-    friend class Project;
+    friend class Workspace;
 };
 
 // ============================ NODE ============================
@@ -326,3 +328,8 @@ private:
 
 // The top-level fetch: resets the context, then renders tile (tx, ty) of `n`.
 inline const Tile* renderTile(Node& n, int tx, int ty, RenderCtx& ctx) { ctx.beginTile(); return n.fetch(tx, ty, ctx); }
+
+// A stack's own settings: what a node whose inputs are a stack (ports().inputs == InputShape::Stack)
+// holds, its mutes and its groups; any other node's: none. The one way to read a stack from outside
+// node/ (by its shape and settings, never by casting to its class); it changes through setSettings.
+CompositorSettings stackSettings(const Node& n);

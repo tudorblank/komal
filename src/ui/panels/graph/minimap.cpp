@@ -1,5 +1,5 @@
 #include "ui/panels/graph/minimap.hpp"
-#include "document/project.hpp"
+#include "document/workspace.hpp"
 #include "ui/panels/graph/internal/layout.hpp"
 #include "ui/style/graph-style.hpp"
 #include "ui/panels/graph/internal/painter.hpp"
@@ -76,7 +76,7 @@ void GraphMinimap::drag(ImVec2 mouse, GraphCamera& camera, ImVec2 canvasSize) co
     camera.centerOn(toGraph(mouse), canvasSize);
 }
 
-void GraphMinimap::paint(const Painter& draw, const Project& project, const std::vector<Edge>& edges,
+void GraphMinimap::paint(const Painter& draw, const Workspace& workspace, const std::vector<Edge>& edges,
                          const absl::flat_hash_set<NodeId>& selected, const GraphCamera& camera, ImVec2 canvasSize,
                          ImVec2 mouse, bool hoverable) const
 {
@@ -94,14 +94,14 @@ void GraphMinimap::paint(const Painter& draw, const Project& project, const std:
     const NodeId hovered = hoverable && m_rect.Contains(mouse) ? nodeAt(mouse) : kNoNodeId;
     for (const auto& [id, s] : *m_items) {
         if (id == m_skip) continue;
-        const Node* n = project.find(id);
+        const Node* n = workspace.find(id);
         if (!n) continue;
         const ImVec2 a = toMap(s.bounds.Min), b = toMap(s.bounds.Max);
         const float r = std::min(1.5f * m_uiScale, (b.x - a.x) * 0.25f);
         draw.fillRect(a, b, id == hovered ? colors().accent : colors().mapNode, r);
         const float headerH = std::max(1.0f, (s.header.GetHeight()) * m_k);
         if (b.y - a.y > headerH * 2.0f)
-            draw.fillRect(a, ImVec2(b.x, a.y + headerH), headerColor(project, *n), r, ImDrawFlags_RoundCornersTop);
+            draw.fillRect(a, ImVec2(b.x, a.y + headerH), headerColor(workspace, *n), r, ImDrawFlags_RoundCornersTop);
         if (selected.contains(id)) draw.strokeRect(a, b, colors().selection, r, 1.0f);
     }
 

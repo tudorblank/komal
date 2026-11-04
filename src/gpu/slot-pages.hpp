@@ -10,7 +10,7 @@
 //   pages.texture(s.page);  pages.originX(s);  pages.originY(s);   // where it is
 
 #include "base/clock.hpp"
-#include "gfx/texture.hpp"
+#include "gpu/texture.hpp"
 
 #include <cstdint>
 #include <vector>

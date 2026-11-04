@@ -1,5 +1,5 @@
 #pragma once
-// The project's nodes: by id and in creation order (ids only grow: that's id order), and each
+// The workspace's nodes: by id and in creation order (ids only grow: that's id order), and each
 // raster node by its pixel data. It owns every raster's data (RasterData), which outlives the
 // node: history may bring a deleted raster back, as itself, pixels and their undo included.
 //
@@ -27,6 +27,9 @@ public:
     // A new node of that kind (node-kinds.hpp) at (x, y) in the graph, named after its kind; a
     // kind that owns pixels gets its own data and a number ("Raster 3", never reused).
     NodeId create(GraphKey key, NodeType type, float x, float y);
+    // A saved workspace's node, with its own id (above every id so far: kNoNodeId if not); its
+    // name is the file's to give.
+    NodeId create(GraphKey key, NodeType type, float x, float y, NodeId id);
     void   remove(NodeId id);
     void   restore(NodePtr n);                 // a removed node back, with its id
 
@@ -34,8 +37,15 @@ public:
     struct PixelBytes { size_t pixels = 0, history = 0; };
     PixelBytes pixelBytes() const;
 
+    // What keeps ids and names from coming back: saved with a workspace, and picked up from there
+    // (never backwards).
+    uint32_t nextId() const   { return m_nextId; }
+    uint32_t numbered() const { return m_numbered; }
+    void resume(uint32_t nextId, uint32_t numbered);
+
 private:
     void index(const NodePtr& n);   // by id
+    NodePtr make(GraphKey key, NodeType type, float x, float y, NodeId id);   // made, placed, indexed
 
     std::deque<RasterData> m_rasters;   // first, destroyed last: raster nodes point into it. RasterId == index
     std::vector<std::shared_ptr<RasterRootNode>> m_rasterNodes;   // by RasterId, whether in the graph or not

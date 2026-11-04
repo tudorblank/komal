@@ -18,10 +18,10 @@
 // frame whose passes, values, leaves and space are all as last rendered renders nothing, and a
 // leaf pass whose texture already shows it is skipped.
 
-#include "ui/panels/canvas/item.hpp"
+#include "ui/panels/canvas/canvas-item.hpp"
 #include "document/preview-plan.hpp"
 #include "ui/panels/canvas/tiles/atlas.hpp"
-#include "gfx/texture.hpp"
+#include "gpu/texture.hpp"
 
 #include <absl/container/flat_hash_map.h>
 #include <memory>

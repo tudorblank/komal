@@ -26,7 +26,7 @@ uint64_t hashTile(uint64_t h, int tx, int ty, const Tile& t)
 std::string bounds(const BoundsI& b) { return b.empty() ? "empty" : std::to_string(b.minX) + "," + std::to_string(b.minY) + ".." + std::to_string(b.maxX) + "," + std::to_string(b.maxY); }
 
 // Everything history restores, written out (the active raster and the selection aren't history).
-std::string fingerprint(Project& p)
+std::string fingerprint(Workspace& p)
 {
     std::string out;
     for (const NodePtr& n : p.nodes()) {
@@ -66,7 +66,7 @@ std::string fingerprint(Project& p)
 
 class Fuzzer {
 public:
-    Fuzzer(Project& p, uint32_t seed) : m_p(p), m_rng(seed) {}
+    Fuzzer(Workspace& p, uint32_t seed) : m_p(p), m_rng(seed) {}
 
     int pick(int n) { return std::uniform_int_distribution<int>(0, n - 1)(m_rng); }
     float unit() { return std::uniform_real_distribution<float>(0.0f, 1.0f)(m_rng); }
@@ -75,7 +75,7 @@ public:
     // One random edit, as one step (it may change nothing: then there's no step).
     void edit()
     {
-        Project& p = m_p;
+        Workspace& p = m_p;
         switch (pick(14)) {
         case 0: {
             const NodeType type = NodeType(pick(4));
@@ -128,10 +128,13 @@ public:
             });
             break;
         }
-        case 7:
-            if (p.master().layers().size() >= 2)
-                step(p, "Move Layer", [&] { p.moveLayer(p.master().id(), size_t(pick(int(p.master().layers().size()))), size_t(pick(int(p.master().layers().size())))); });
+        case 7: {   // one of the master's layers to another place at the top level
+            const auto& layers = p.master().layers();
+            if (layers.size() < 2) break;
+            const StackMove m{ { layers[size_t(pick(int(layers.size())))]->id() }, {}, kNoArtboard, size_t(pick(int(layers.size()))) };
+            step(p, "Move Layer", [&] { p.moveStackRows(p.master().id(), m); });
             break;
+        }
         case 8: {   // a link lifted and dropped somewhere
             const NodeId from = anyNode();
             const auto into = p.find(from)->links().all();
@@ -195,7 +198,7 @@ public:
         }
     }
 
-    Project& m_p;
+    Workspace& m_p;
     std::mt19937 m_rng;
 };
 
@@ -205,8 +208,8 @@ TEST_CASE("history under random use: every step comes back exactly as it was")
 {
     for (const uint32_t seed : { 1u, 2u, 3u, 4u, 5u, 6u }) {
         CAPTURE(seed);
-        StarterProject s;
-        Project& p = s.project;
+        StarterWorkspace s;
+        Workspace& p = s.workspace;
         Fuzzer f(p, seed);
         std::map<StepId, std::string> seen;   // each step, as it was when made
         seen[p.history().current()] = fingerprint(p);

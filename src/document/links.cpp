@@ -2,21 +2,21 @@
 
 namespace {
 
-// The one input a node passes through, if it has exactly one.
-NodePtr singleInput(const Node& n)
-{
-    const std::span<const NodePtr> in = n.inputs();
-    return in.size() == 1 ? in[0] : nullptr;
-}
+    // The one input a node passes through, if it has exactly one.
+    NodePtr singleInput(const Node& n)
+    {
+        const std::span<const NodePtr> in = n.inputs();
+        return in.size() == 1 ? in[0] : nullptr;
+    }
 
-// What feeds what `old` fed once the `deleted` nodes go (null: nothing, or `old` stays).
-NodePtr bridge(const NodePtr& old, const absl::flat_hash_set<NodeId>& deleted)
-{
-    if (!old || !deleted.contains(old->id())) return nullptr;
-    NodePtr source = singleInput(*old);
-    while (source && deleted.contains(source->id())) source = singleInput(*source);   // the graph is acyclic
-    return source;
-}
+    // What feeds what `old` fed once the `deleted` nodes go (null: nothing, or `old` stays).
+    NodePtr bridge(const NodePtr& old, const absl::flat_hash_set<NodeId>& deleted)
+    {
+        if (!old || !deleted.contains(old->id())) return nullptr;
+        NodePtr source = singleInput(*old);
+        while (source && deleted.contains(source->id())) source = singleInput(*source);   // the graph is acyclic
+        return source;
+    }
 
 }
 
@@ -58,14 +58,14 @@ void emitChanges(NodeId to, const NodeLinks& before, const NodeLinks& now, const
 {
     const auto single = [&](const NodePtr& was, const NodePtr& is, const InputSlot& slot) {
         if (was == is) return;
-        if (was) emit({ ProjectEventType::LinkRemoved, to, was->id(), slot });
-        if (is)  emit({ ProjectEventType::LinkAdded,   to, is->id(),  slot });
+        if (was) emit({ WorkspaceEventType::LinkRemoved, to, was->id(), slot });
+        if (is)  emit({ WorkspaceEventType::LinkAdded,   to, is->id(),  slot });
     };
     single(before.input, now.input, InputSlot::input());
     for (int s = 0; s < kSignalCount; ++s)
         for (int ch = 0; ch < kChannelCount; ++ch)
             single(before.masks[s][ch], now.masks[s][ch], InputSlot::mask(NodeSignal(s), NodeChannel(ch)));
-    if (before.layers != now.layers) emit({ ProjectEventType::LayersChanged, to, kNoNodeId, {} });
+    if (before.layers != now.layers) emit({ WorkspaceEventType::LayersChanged, to, kNoNodeId, {} });
 }
 
 }

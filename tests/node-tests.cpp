@@ -1,4 +1,4 @@
-// The node graph's render path and change propagation, driven through the Project.
+// The node graph's render path and change propagation, driven through the Workspace.
 
 #include "helpers.hpp"
 
@@ -6,8 +6,8 @@
 
 TEST_CASE("signals: a channel's scale shapes the output")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const NodeId r = rasterWith(p, [](TileGrid& g) { fillPixel(g, 3, 3, RGBA{ 200, 100, 50, 255 }); });
     CHECK(rendered(p, r, 3, 3) == RGBA{ 200, 100, 50, 255 });
     REQUIRE(p.setSignalScale(r, NodeSignal::Main, NodeChannel::A, 0.5f));
@@ -20,8 +20,8 @@ TEST_CASE("signals: a channel's scale shapes the output")
 
 TEST_CASE("masks: black hides, white keeps, transparent leaves it alone")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const NodeId r = rasterWith(p, [](TileGrid& g) {
         for (int x = 0; x < 3; ++x) fillPixel(g, x, 0, RGBA{ 255, 0, 0, 255 });
     });
@@ -37,8 +37,8 @@ TEST_CASE("masks: black hides, white keeps, transparent leaves it alone")
 
 TEST_CASE("a Move shifts by whole tiles, by parts of one, and either way")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const NodeId r = rasterWith(p, [](TileGrid& g) { fillPixel(g, 5, 5, RGBA{ 1, 2, 3, 255 }); });
     const NodeId move = p.addNode(NodeType::Move, 0, 0, {});
     REQUIRE(p.connect(r, move, InputSlot::input()));
@@ -53,8 +53,8 @@ TEST_CASE("a Move shifts by whole tiles, by parts of one, and either way")
 
 TEST_CASE("dry and wet: the input where it was, under the moved one")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const NodeId r = rasterWith(p, [](TileGrid& g) { fillPixel(g, 0, 0, RGBA{ 0, 0, 255, 255 }); });
     const NodeId move = p.addNode(NodeType::Move, 0, 0, {});
     REQUIRE(p.connect(r, move, InputSlot::input()));
@@ -70,8 +70,8 @@ TEST_CASE("dry and wet: the input where it was, under the moved one")
 
 TEST_CASE("the master's cached composite follows every change under it")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const NodeId bottom = rasterWith(p, [](TileGrid& g) { fillPixel(g, 900, 900, RGBA{ 255, 0, 0, 255 }); });
     const NodeId top = rasterWith(p, [](TileGrid& g) { fillPixel(g, 900, 900, RGBA{ 0, 0, 128, 128 }); });
     REQUIRE(p.connect(bottom, s.master, InputSlot::newLayer(2)));
@@ -88,15 +88,15 @@ TEST_CASE("the master's cached composite follows every change under it")
     p.beginStroke(brush, { 2000.5f, 2000.5f, 1.0f });
     p.endStroke();
     CHECK(rendered(p, s.master, 2000, 2000).a == 255);
-    REQUIRE(p.moveLayer(s.master, 3, 0));   // the top to the bottom: red covers it again
+    REQUIRE(p.moveStackRows(s.master, { { p.master().layers()[3]->id() }, {}, kNoArtboard, 0 }));   // the top to the bottom: red covers it again
     REQUIRE(p.setSignalScale(top, NodeSignal::Main, NodeChannel::A, 1.0f));
     CHECK(rendered(p, s.master, 900, 900) == RGBA{ 255, 0, 0, 255 });
 }
 
 TEST_CASE("a reader of a node's output hears which tiles changed")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const std::shared_ptr<TileWatch> watch = p.master().watchOutput();
     TileSet changed;
     CHECK(watch->take(changed));   // a new reader reads everything once
@@ -113,8 +113,8 @@ TEST_CASE("a reader of a node's output hears which tiles changed")
 TEST_CASE("a change reaches everything downstream once, however many paths lead there")
 {
     // 24 diamonds: one walk per path would be 2^24 of them.
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const NodeId r = rasterWith(p, [](TileGrid& g) { fillPixel(g, 1, 1, RGBA{ 0, 0, 255, 255 }); });
     NodeId top = r;
     for (int d = 0; d < 24; ++d) {
@@ -139,8 +139,8 @@ TEST_CASE("a change reaches everything downstream once, however many paths lead 
 
 TEST_CASE("the order a change spreads in follows new links")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     const NodeId r = rasterWith(p, [](TileGrid& g) { fillPixel(g, 0, 0, RGBA{ 9, 9, 9, 255 }); });
     const NodeId a = p.addNode(NodeType::Reference, 0, 0, {}), b = p.addNode(NodeType::Reference, 0, 0, {});
     REQUIRE(p.connect(r, a, InputSlot::input()));

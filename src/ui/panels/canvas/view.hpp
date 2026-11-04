@@ -1,7 +1,7 @@
 #pragma once
 #include "base/clock.hpp"
 #include "ui/panels/canvas/scene.hpp"
-#include "gfx/render-target.hpp"
+#include "gpu/render-target.hpp"
 
 
 class CanvasView {
@@ -37,9 +37,7 @@ private:
 
     // what the target currently shows
     uint64_t m_renderedRevision = 0;   // never a valid scene revision
-    Vec2     m_renderedPan{};
-    float    m_renderedZoom = 0.0f;
-    float    m_renderedRotation = 0.0f;
+    CanvasCamera m_renderedCamera;
     float    m_renderedW = 0, m_renderedH = 0;
     bool     m_targetNew = true;
     bool     m_holding   = false;   // content changed, the last complete picture is still shown

@@ -1,6 +1,6 @@
 #pragma once
 // The graph as a scene of items, like QGraphicsScene: a NodeItem per node and a GraphLink per
-// link, in graph space, built once and then changed only by what Project says changed:
+// link, in graph space, built once and then changed only by what Workspace says changed:
 //
 //   NodeAdded      the item laid out, links into it added
 //   NodeRemoved    the item and its links dropped
@@ -20,7 +20,7 @@
 
 #include "base/signal.hpp"
 #include "document/edit-preview.hpp"
-#include "ui/panels/graph/internal/item.hpp"
+#include "ui/panels/graph/internal/node-item.hpp"
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
@@ -28,8 +28,8 @@
 #include <optional>
 #include <vector>
 
-class Project;
-struct ProjectEvent;
+class Workspace;
+struct WorkspaceEvent;
 
 struct GraphLink {
     NodeId    from, to;
@@ -44,7 +44,7 @@ class GraphScene {
 public:
     using Items = absl::flat_hash_map<NodeId, NodeItem>;
 
-    void init(const Project& project);   // items for what's there, then follows project.changed
+    void init(const Workspace& workspace);   // items for what's there, then follows workspace.changed
     void shutdown();
 
     const Items& items() const { return m_items; }
@@ -56,7 +56,7 @@ public:
     uint64_t linksRevision() const { return m_linksRevision; }   // ... whenever a link or one of its ends does
 
     // The graph's own view state: not the document's, never undone. (Which nodes are selected is
-    // the project's: the canvas shows it too.)
+    // the workspace's: the canvas shows it too.)
     void bringToFront(NodeId id);
     void toggleSection(NodeId id, NodeSignal signal);   // a signal's section opened or closed
     const NodeItemState* viewState(NodeId id) const;    // null: nothing kept for it yet
@@ -71,7 +71,7 @@ public:
     NodeItem layoutWith(NodeId node, const StackLayout& layout) const;
 
 private:
-    void onProjectEvent(const ProjectEvent& e);
+    void onWorkspaceEvent(const WorkspaceEvent& e);
     void followPreview();                 // the graph's part of the edit in progress
     ImVec2 position(NodeId id) const;     // where its item is: the node's place, or where it's being dragged
     bool lifted(const GraphLink& l) const { return m_lifted && l.to == m_lifted->from && l.slot == m_lifted->slot; }
@@ -81,20 +81,20 @@ private:
     void layoutItem(NodeId id);   // after anything its layout depends on changed
     void addLink(NodeId from, NodeId to, const InputSlot& slot);
     void removeLink(NodeId to, const InputSlot& slot);
-    void addLinksInto(NodeId to, bool layersOnly = false);   // what the project wires into it
+    void addLinksInto(NodeId to, bool layersOnly = false);   // what the workspace wires into it
     void placeLinkEnds(GraphLink& l) const;
     void placeLinkEndsOf(NodeId id);   // its ports moved
     StackLayout stackLayout(NodeId id) const;   // the gap, if it's in that stack
 
-    const Project* m_project = nullptr;
-    Connection     m_projectEvents;   // project.changed
+    const Workspace* m_workspace = nullptr;
+    Connection     m_workspaceEvents;   // workspace.changed
     absl::flat_hash_map<NodeId, NodeItemState> m_viewStates;
     Items                  m_items;
     std::vector<NodeId>    m_zOrder;   // back to front
     std::vector<GraphLink> m_links;
     NodeId      m_gapNode = kNoNodeId;
     StackLayout m_gap;
-    absl::flat_hash_set<NodeId> m_moving;   // being dragged (Project::preview()) ...
+    absl::flat_hash_set<NodeId> m_moving;   // being dragged (Workspace::preview()) ...
     ImVec2      m_movedBy;                  // ... this far
     std::optional<LinkMoveEdit> m_lifted;   // a link being carried
     uint64_t    m_itemsRevision = 1;

@@ -39,10 +39,10 @@ struct GraphState {
 
     static GraphState capture(const NodeRegistry& registry, const Artboards& artboards);   // every node anew
     // Every node anew but those `previous` holds and `changed` doesn't name: theirs are shared.
-    // `previous` must be the graph as it was before exactly those nodes changed (Project tracks them).
+    // `previous` must be the graph as it was before exactly those nodes changed (Workspace tracks them).
     static GraphState capture(const NodeRegistry& registry, const Artboards& artboards, const GraphState& previous,
                               const absl::flat_hash_set<NodeId>& changed);
-    // Makes the registry's graph this one (the artboards are the Project's to take). Nodes that come back do so as themselves, told right
+    // Makes the registry's graph this one (the artboards are the Workspace's to take). Nodes that come back do so as themselves, told right
     // away (unlinked); links, settings and the nodes that go are told once it's all done. Links
     // are all let go of before any is taken, so the graph never passes through a cycle on the way.
     void restore(GraphKey key, NodeRegistry& registry, const EmitEvent& emit) const;

@@ -1,4 +1,4 @@
-#include "gfx/slot-pages.hpp"
+#include "gpu/slot-pages.hpp"
 
 #include <algorithm>
 #include <cassert>

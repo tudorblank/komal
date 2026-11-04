@@ -1,12 +1,12 @@
 #include "ui/panels/canvas/preview/preview-item.hpp"
 #include "ui/panels/canvas/preview/preview.hpp"
-#include "document/project.hpp"
-#include "gfx/render-pass.hpp"
+#include "document/workspace.hpp"
+#include "gpu/render-pass.hpp"
 
 bool PreviewItem::prepare(CanvasFrame& frame)
 {
     const bool wasShowing = m_showing;
-    m_planned = m_preview->active() && m_renderer.plan(*m_preview, m_preview->project().master().id());
+    m_planned = m_preview->active() && m_renderer.plan(*m_preview, m_preview->workspace().master().id());
     bool changed = false;
     if (m_planned)
         changed = m_renderer.render(*m_preview, PreviewSpace::ofView(frame), frame.pipelines, frame.target.encoder, frame.budget());

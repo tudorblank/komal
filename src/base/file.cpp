@@ -56,6 +56,28 @@ namespace File {
         return write(path, std::span(reinterpret_cast<const uint8_t*>(text.data()), text.size()), error);
     }
 
+    bool replace(const std::string& path, std::span<const uint8_t> bytes, std::string& error)
+    {
+        const std::string partial = path + ".partial";
+        {
+            std::ofstream out(pathOf(partial), std::ios::binary | std::ios::trunc);
+            if (!out || !out.write(reinterpret_cast<const char*>(bytes.data()), std::streamsize(bytes.size())) || !out.flush()) {
+                error = "can't be written";
+                std::error_code ignored;
+                std::filesystem::remove(pathOf(partial), ignored);
+                return false;
+            }
+        }
+        std::error_code ec;
+        std::filesystem::rename(pathOf(partial), pathOf(path), ec);   // replaces it (on Windows too)
+        if (ec) {
+            error = ec.message();
+            std::filesystem::remove(pathOf(partial), ec);
+            return false;
+        }
+        return true;
+    }
+
     std::string name(const std::string& path) { return utf8Of(pathOf(path).filename().u8string()); }
     std::string stem(const std::string& path) { return utf8Of(pathOf(path).stem().u8string()); }
 

@@ -8,7 +8,7 @@
 // Draws the panel's own node items and links, scaled down: it can't disagree with the graph.
 
 #include "ui/panels/graph/internal/camera.hpp"
-#include "ui/panels/graph/internal/item.hpp"
+#include "ui/panels/graph/internal/node-item.hpp"
 #include "ui/render/painter.hpp"
 
 #include <absl/container/flat_hash_map.h>
@@ -30,7 +30,7 @@ public:
     void press(ImVec2 mouse, GraphCamera& camera, ImVec2 canvasSize) const;
     void drag(ImVec2 mouse, GraphCamera& camera, ImVec2 canvasSize) const;   // button held: follow
 
-    void paint(const Painter& draw, const Project& project, const std::vector<Edge>& edges,
+    void paint(const Painter& draw, const Workspace& workspace, const std::vector<Edge>& edges,
                const absl::flat_hash_set<NodeId>& selected, const GraphCamera& camera, ImVec2 canvasSize,
                ImVec2 mouse, bool hoverable) const;
 

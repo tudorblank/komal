@@ -1,8 +1,18 @@
 #pragma once
 // The app's interface: the menu bar, the dock layout and every panel, and where a dropped file
-// goes (the panel under it). Panels never reach each other: they share the project. Panels are
-// one list (ui/panels/panel-base.hpp): their View toggles, close buttons, default layout, draw
-// order, GPU work and frames all come from it.
+// goes (the panel under it). Panels never reach each other: they share the active document's
+// workspace. Panels are one list (ui/panels/panel-base.hpp): their View toggles, close buttons,
+// default layout, draw order, GPU work and frames all come from it.
+//
+// It's a shell over the open documents (Documents): it holds the app's own actions (the app's,
+// the panels', the tools', the colours': none of them a document's) and hands the rest to the
+// active document's registry. Switching documents switches everything to that one: the canvas
+// (one per document, tabs), the graph, the navigator, the history. The colours and the tools
+// stay: they're the app's. Closing an unsaved document, or quitting with one, asks first.
+//
+// The open documents change between frames, never while one is drawn: what a frame drew with (a
+// canvas's picture, a thumbnail) must last until it's shown. The doc.* actions the interface runs
+// ask for the change; the documents' own actions make it at the start of the next frame.
 //
 // The ui folder, by job:
 //
@@ -19,7 +29,9 @@
 // Only style/ reads the palette; only render/ touches ImGui's draw lists.
 
 #include "ui/panels/canvas/canvas-engine.hpp"
+#include "base/signal.hpp"
 #include "command/actions.hpp"
+#include "document/documents.hpp"
 #include "ui/dockspace.hpp"
 #include "ui/input-owner.hpp"
 #include "ui/image-importer.hpp"
@@ -30,6 +42,7 @@
 #include <imgui.h>
 #include <webgpu/webgpu.h>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <utility>
@@ -38,14 +51,15 @@
 class CanvasPanel;
 class GraphPanel;
 class GpuDevice;
-class Project;
+class Workspace;
 struct InputFrame;
 
 class UserInterface {
 public:
-    explicit UserInterface(ActionRegistry& actions);   // the editor's; every panel, as each starts (open or not)
+    UserInterface();   // every panel, as each starts (open or not)
 
-    bool init(GpuDevice& gpu, Project& project, const InputFrame& input, const HostInfo& host);   // call after ImGui + wgpu are up
+    // After ImGui + wgpu are up. It follows `documents` from then on (they outlive it).
+    bool init(GpuDevice& gpu, Documents& documents, const InputFrame& input, const HostInfo& host);
     void shutdown();              // call before they go down
 
     // The GPU device is made again (it was lost): everything the interface made on it goes, then
@@ -58,11 +72,16 @@ public:
     void renderGpu(WGPUCommandEncoder enc);   // wgpu side (offscreen passes)
 
     bool quitRequested() const { return m_quit; }
+    void requestQuit();   // the window's close button, the OS: app.quit (which asks if anything is unsaved)
     // When the UI next needs a frame without new input (base/frames.hpp): tiles still
     // syncing, a throttled picture or thumbnail, a hold turning into a gesture.
     Clock::Seconds nextFrameIn() const;
-    void openFile(std::string path) { m_importer.open(std::move(path)); }   // any thread: File > Import, command line
-    // A file dropped at window (x, y): imported if it lands on the canvas or the graph.
+    // Any thread (a dialog's, the command line): a .komal file opens as a document, anything else
+    // is imported as an image.
+    void openFile(std::string path);
+    void saveTo(DocumentId document, std::string path);   // any thread: the save dialog's answer (empty: cancelled)
+    // A file dropped at window (x, y): a .komal file opens wherever it lands; an image is imported
+    // if it lands on the canvas or the graph.
     void dropFile(std::string path, float x, float y) { m_drops.push_back({ std::move(path), ImVec2(x, y) }); }
 
 private:
@@ -75,8 +94,22 @@ private:
     void drawMenuBar();
     void registerAppActions();   // ui/app-actions.cpp: every app-state action
     void dispatchDrops();
+    void documentsChanged(const DocumentsEvent& e);   // the engine and every panel follow
+    void registerDocumentRequests();   // doc.* here: each asks for its change, made between frames
+    void applyDocumentRequests();      // ... the changes asked for, before anything is drawn
+    void takeInbox();                  // the files that came from other threads, as document requests
+    void drawConfirm();          // closing or quitting with unsaved changes: asked first
 
-    ActionRegistry& m_actions;  // the editor's (document/editor.hpp): the app's, panels' and tools' actions join the document's
+    ActionRegistry m_actions;   // the app's own; the active document's through it (delegateTo)
+    Documents*     m_documents = nullptr;
+    Connection     m_documentsEvents;
+    ActionRegistry m_documentActions;   // the documents' own (document/documents-actions): logged as they run
+    std::vector<std::pair<ActionId, ActionArgs>> m_documentRequests;   // asked for this frame, in order
+    // Files that came from another thread (a dialog, the command line), for the next frame.
+    std::mutex m_inboxLock;
+    std::vector<std::string> m_toOpen;
+    std::vector<std::pair<DocumentId, std::string>> m_toSave;
+    DocumentId m_closeAfterSave = kNoDocument;   // the unsaved-changes question answered "Save": closed once it is
     ToolManager    m_tools;     // before the panels that use it
     InputOwner     m_owner;     // who has the keyboard this frame
     CanvasEngine   m_canvas;    // ... and what canvas views draw with
@@ -95,6 +128,10 @@ private:
 
     const InputFrame*   m_input = nullptr;
     const HostInfo*     m_host  = nullptr;
+
+    // What waits for the user's yes: a document closed, or the app quit, with unsaved changes.
+    struct Confirm { bool quit = false; DocumentId document = kNoDocument; };
+    std::optional<Confirm> m_confirm;
 
     bool m_initialized = false;
     bool m_quit = false;

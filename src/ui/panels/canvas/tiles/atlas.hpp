@@ -5,7 +5,7 @@
 // which tiles go in; views decide where they're drawn.
 
 #include "ui/panels/canvas/pipelines.hpp"
-#include "gfx/slot-pages.hpp"
+#include "gpu/slot-pages.hpp"
 #include "raster/tile.hpp"
 
 #include <absl/container/flat_hash_map.h>

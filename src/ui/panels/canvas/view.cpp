@@ -1,7 +1,7 @@
 #include "view.hpp"
 #include "ui/style/ui-style.hpp"
 #include "base/perf.hpp"
-#include "gfx/render-pass.hpp"
+#include "gpu/render-pass.hpp"
 
 #include <cmath>
 
@@ -42,8 +42,7 @@ void CanvasView::render(WGPUCommandEncoder enc, const Deadline& budget)
     CanvasFrame frame(m_scene->pipelines(), m_camera, m_cameraUniform.group, visibleWorld(),
                       { enc, m_width, m_height, m_target.width(), m_target.height() }, budget);
     const bool itemsChanged = m_scene->prepare(frame);
-    const bool viewChanged  = m_targetNew || m_camera.pan.x != m_renderedPan.x || m_camera.pan.y != m_renderedPan.y ||
-                              m_camera.zoom != m_renderedZoom || m_camera.rotation != m_renderedRotation || m_width != m_renderedW || m_height != m_renderedH;
+    const bool viewChanged  = m_targetNew || m_camera != m_renderedCamera || m_width != m_renderedW || m_height != m_renderedH;
     const bool contentChanged = itemsChanged || m_scene->revision() != m_renderedRevision;
     if (!viewChanged && !contentChanged && !m_holding) return;
 
@@ -64,9 +63,7 @@ void CanvasView::render(WGPUCommandEncoder enc, const Deadline& budget)
     }
 
     m_renderedRevision = m_scene->revision();
-    m_renderedPan  = m_camera.pan;
-    m_renderedZoom = m_camera.zoom;
-    m_renderedRotation = m_camera.rotation;
+    m_renderedCamera = m_camera;
     m_renderedW    = m_width;
     m_renderedH    = m_height;
     m_targetNew    = false;

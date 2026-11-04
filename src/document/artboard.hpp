@@ -1,10 +1,10 @@
 #pragma once
 // An artboard: a rect of the canvas to work in and export from, with a colour behind it. Only the
-// master has them. The Project keeps the list; which of the master's layers each holds, and where
+// master has them. The Workspace keeps the list; which of the master's layers each holds, and where
 // it sits in the master's stack, is a group of that stack (CompositorSettings::groups), so it
 // follows the layers through every link edit. Its id is that group's key: one name for both, never
 // converted. Each artboard has exactly one group and each group is an artboard
-// (Project::artboardsMatchStack).
+// (Workspace::artboardsMatchStack).
 //
 // Drawn as a fill: its colour over its rect, behind its layers (which still show past its edges).
 
@@ -16,7 +16,7 @@
 #include <string>
 #include <vector>
 
-using ArtboardId = GroupKey;   // assigned by the Project, never reused
+using ArtboardId = GroupKey;   // assigned by the Workspace, never reused
 constexpr ArtboardId kNoArtboard = kNoGroup;
 
 struct Artboard {

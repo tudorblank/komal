@@ -1,13 +1,13 @@
 #pragma once
-// What changed, told to every listener right after the change is made (the project's state is
+// What changed, told to every listener right after the change is made (the workspace's state is
 // final by then). Views keep their own items and update them from these; nothing re-reads the
-// whole project. Pixels travel separately, as dirty tiles through the node graph.
+// whole workspace. Pixels travel separately, as dirty tiles through the node graph.
 
 #include "node/node.hpp"
 
 #include <functional>
 
-enum class ProjectEventType : uint8_t {
+enum class WorkspaceEventType : uint8_t {
     NodeAdded,             // node
     NodeRemoved,           // node (its links are removed first)
     NodeMoved,             // node: its editor position
@@ -20,32 +20,32 @@ enum class ProjectEventType : uint8_t {
     ActiveRasterChanged,
     RasterEdited,          // pixels of `node` changed (edit, undo, redo)
     HistoryChanged,
-    SelectionChanged,      // which nodes are selected (Project::selection())
-    CanvasViewChanged,     // where the canvas looks, or its size (Project::canvasCamera(), canvasViewport())
+    SelectionChanged,      // which nodes are selected (Workspace::selection())
+    CanvasViewChanged,     // where the canvas looks, or its size (Workspace::canvasCamera(), canvasViewport())
 };
 
-struct ProjectEvent {
-    ProjectEventType type;
+struct WorkspaceEvent {
+    WorkspaceEventType type;
     NodeId    node   = kNoNodeId;
     NodeId    source = kNoNodeId;   // Link*
     InputSlot slot;                 // Link*
 };
 
-// How a block that changes the graph tells (Project hands it its own).
-using EmitEvent = std::function<void(const ProjectEvent&)>;
+// How a block that changes the graph tells (Workspace hands it its own).
+using EmitEvent = std::function<void(const WorkspaceEvent&)>;
 
 // Whether it changes the graph as history keeps it (GraphState): the nodes, their settings, their links.
-constexpr bool changesGraph(ProjectEventType t)
+constexpr bool changesGraph(WorkspaceEventType t)
 {
     switch (t) {
-    case ProjectEventType::NodeAdded:
-    case ProjectEventType::NodeRemoved:
-    case ProjectEventType::NodeMoved:
-    case ProjectEventType::NodeChanged:
-    case ProjectEventType::LinkAdded:
-    case ProjectEventType::LinkRemoved:
-    case ProjectEventType::LayersChanged:
-    case ProjectEventType::ArtboardsChanged:
+    case WorkspaceEventType::NodeAdded:
+    case WorkspaceEventType::NodeRemoved:
+    case WorkspaceEventType::NodeMoved:
+    case WorkspaceEventType::NodeChanged:
+    case WorkspaceEventType::LinkAdded:
+    case WorkspaceEventType::LinkRemoved:
+    case WorkspaceEventType::LayersChanged:
+    case WorkspaceEventType::ArtboardsChanged:
         return true;
     default:
         return false;

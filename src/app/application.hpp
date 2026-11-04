@@ -3,8 +3,8 @@
 #include "app/window-surface.hpp"
 #include "base/clock.hpp"
 #include "base/frames.hpp"
-#include "document/workspace.hpp"
-#include "gfx/device.hpp"
+#include "document/documents.hpp"
+#include "gpu/device.hpp"
 #include "input/sdl-input.hpp"
 #include "ui/ui-main.hpp"
 
@@ -35,7 +35,7 @@ private:
     int m_normalW = 0, m_normalH = 0;   // non-maximized size
     std::string m_prefDir;  // settings
 
-    Workspace m_workspace;  // project + actions
+    Documents m_documents;   // the open projects (each its workspace + actions); one active
 
     // input / events (from SDL)
     SdlInput    m_input;   // every event, into the InputFrame the UI reads (input/sdl-input.hpp)
@@ -51,9 +51,11 @@ private:
     int  m_gpuResetAt = 0;  // (KOMAL_GPU_RESET_AT=n) device lost at frame n (for rebuild)
 
     // ui
-    UserInterface m_userInterface{ m_workspace.actions() };
-    HostInfo m_host{ .uiScale = 0.0f, .gpu = {}, .showImportDialog = {} };   // what the interface reads about the window; scale 0: not styled yet
+    UserInterface m_userInterface;   // a shell over the documents
+    HostInfo m_host{ .uiScale = 0.0f, .gpu = {}, .showImportDialog = {}, .showOpenDialog = {}, .showSaveDialog = {} };   // what the interface reads about the window; scale 0: not styled yet
     void showImportDialog();
+    void showOpenDialog();
+    void showSaveDialog(DocumentId document, const std::string& suggested);
     void applyContentScale();
     
     // render

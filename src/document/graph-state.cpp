@@ -77,7 +77,7 @@ void GraphState::restore(GraphKey key, NodeRegistry& registry, const EmitEvent& 
             for (int ch = 0; ch < kChannelCount; ++ch) in.masks[sig][ch] = nodeOf(s.mask[sig][ch]);
         return in;
     };
-    const auto tell = [&](ProjectEventType type, NodeId id) { emit({ type, id, kNoNodeId, {} }); };
+    const auto tell = [&](WorkspaceEventType type, NodeId id) { emit({ type, id, kNoNodeId, {} }); };
 
     // What fed every node before, for the events at the end.
     absl::flat_hash_map<NodeId, NodeLinks> before;
@@ -89,7 +89,7 @@ void GraphState::restore(GraphKey key, NodeRegistry& registry, const EmitEvent& 
         if (registry.contains(id)) continue;
         registry.restore(s->node);
         before.emplace(id, NodeLinks{});
-        tell(ProjectEventType::NodeAdded, id);
+        tell(WorkspaceEventType::NodeAdded, id);
     }
 
     // Links: every node whose inputs differ lets go of all of them first, then takes the wanted
@@ -144,7 +144,7 @@ void GraphState::restore(GraphKey key, NodeRegistry& registry, const EmitEvent& 
         was.layers.clear();   // a stack goes with its node
         Links::emitChanges(id, was, NodeLinks{}, emit);
     }
-    for (NodeId id : moved)   tell(ProjectEventType::NodeMoved, id);
-    for (NodeId id : changed) tell(ProjectEventType::NodeChanged, id);
-    for (NodeId id : removed) tell(ProjectEventType::NodeRemoved, id);
+    for (NodeId id : moved)   tell(WorkspaceEventType::NodeMoved, id);
+    for (NodeId id : changed) tell(WorkspaceEventType::NodeChanged, id);
+    for (NodeId id : removed) tell(WorkspaceEventType::NodeRemoved, id);
 }

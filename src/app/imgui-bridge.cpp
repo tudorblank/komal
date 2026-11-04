@@ -1,6 +1,6 @@
 #include "app/imgui-bridge.hpp"
 #include "base/frames.hpp"
-#include "gfx/device.hpp"
+#include "gpu/device.hpp"
 #include "input/input-frame.hpp"
 #include "ui/style/fonts.hpp"
 

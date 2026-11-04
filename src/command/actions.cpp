@@ -2,6 +2,7 @@
 #include "base/clock.hpp"
 #include "base/log.hpp"
 
+#include <algorithm>
 #include <cassert>
 
 namespace {
@@ -30,7 +31,7 @@ ActionRegistry::ActionRegistry() = default;
 
 std::string ActionRegistry::whyNot(const Action& action) const
 {
-    if (action.id.name().empty() || find(action.id)) return "its id is empty or taken";
+    if (action.id.name().empty() || own(action.id)) return "its id is empty or taken";
     if (action.kind == ActionKind::Unset) return "it doesn't say its kind";
     const bool gesture = action.kind == ActionKind::Gesture;
     if (gesture ? (!action.begin || action.run) : (!action.run || action.begin || action.update || action.end || action.cancel))
@@ -53,36 +54,59 @@ void ActionRegistry::add(Action action)
 
 bool ActionRegistry::bind(ActionId id, Shortcut shortcut)
 {
-    const auto it = m_index.find(id.name());
+    const Action* a = find(id);
     std::string why;
-    if (it == m_index.end()) why = "no such action";
+    if (!a) why = "no such action";
     else if (shortcut.key == Key::Unknown) why = "no key";
-    else if (!m_actions[it->second].run) why = "a gesture isn't started by a key";
+    else if (!a->run) why = "a gesture isn't started by a key";
     else {
         // Panel scopes are never live together, but the global scope is live with either.
-        const ActionScope scope = m_actions[it->second].scope;
+        const ActionScope scope = a->scope;
+        const auto clash = [&](ActionScope other) { return other == scope || other == ActionScope::Global || scope == ActionScope::Global; };
         for (const Action& other : m_actions)
-            if (other.scope == scope || other.scope == ActionScope::Global || scope == ActionScope::Global)
+            if (clash(other.scope))
                 for (const Shortcut& o : other.shortcuts)
                     if (shortcut == o) why = "the key is " + std::string(other.id.name()) + "'s";
+        for (const DelegatedKey& k : m_delegatedKeys)
+            if (const Action* other = find(k.id); other && k.shortcut == shortcut && clash(other->scope))
+                why = "the key is " + std::string(k.id.name()) + "'s";
     }
     if (!why.empty()) {
         Log::error("action", "%.*s: key %s not bound: %s", int(id.name().size()), id.name().data(), ::shortcutLabel(shortcut).c_str(), why.c_str());
         assert(false && "a keymap mistake");
         return false;
     }
-    m_actions[it->second].shortcuts.push_back(shortcut);
+    if (own(id)) m_actions[m_index.find(id.name())->second].shortcuts.push_back(shortcut);
+    else         m_delegatedKeys.push_back({ id, shortcut });
     return true;
 }
 
-const Action* ActionRegistry::find(ActionId id) const
+const Action* ActionRegistry::own(ActionId id) const
 {
     const auto it = m_index.find(id.name());
     return it == m_index.end() ? nullptr : &m_actions[it->second];
 }
 
+const Action* ActionRegistry::find(ActionId id) const
+{
+    if (const Action* a = own(id)) return a;
+    return m_delegate ? m_delegate->find(id) : nullptr;
+}
+
+ActionRegistry* ActionRegistry::handler(ActionId id)
+{
+    if (own(id)) return this;
+    return m_delegate && m_delegate->find(id) ? m_delegate : nullptr;
+}
+
+bool ActionRegistry::anyGesture() const
+{
+    return !m_gestures.empty() || (m_delegate && m_delegate->anyGesture());
+}
+
 ActionResult ActionRegistry::run(ActionId id, ActionArgs args)
 {
+    if (ActionRegistry* h = handler(id); h && h != this) return h->run(id, std::move(args));
     const Action* a = find(id);
     assert(a && "unknown action");
     if (!a || !a->run) return {};
@@ -96,12 +120,13 @@ ActionResult ActionRegistry::run(ActionId id, ActionArgs args)
     closeStep(*a);
     args.payload.reset();   // never logged
     if (r.made) args.add({ kMade, r.made });
-    record(*a, args, r ? ActionLogEntry::Status::Done : ActionLogEntry::Status::Refused);
+    record(*a, args, r ? ActionLogEntry::Status::Done : ActionLogEntry::Status::Refused, r.why);
     return r;
 }
 
 bool ActionRegistry::beginGesture(ActionId id, ActionArgs args)
 {
+    if (ActionRegistry* h = handler(id); h && h != this) return h->beginGesture(id, std::move(args));
     const Action* a = find(id);
     assert(a && a->begin && "unknown gesture");
     if (!a || !a->begin) return false;
@@ -124,6 +149,7 @@ bool ActionRegistry::beginGesture(ActionId id, ActionArgs args)
 
 void ActionRegistry::updateGesture(ActionId id, const ActionArgs& args)
 {
+    if (ActionRegistry* h = handler(id); h && h != this) return h->updateGesture(id, args);
     if (!inGesture(id)) return;
     const Action* a = find(id);
     if (!a || !a->update || !argsFit(*a, a->updateArgs, a->updatePayload, args)) return;   // a mistaken update is refused (logged), the gesture goes on
@@ -132,6 +158,7 @@ void ActionRegistry::updateGesture(ActionId id, const ActionArgs& args)
 
 ActionResult ActionRegistry::endGesture(ActionId id, ActionArgs args)
 {
+    if (ActionRegistry* h = handler(id); h && h != this) return h->endGesture(id, std::move(args));
     auto it = m_gestures.find(id.name());
     if (it == m_gestures.end()) return {};
     ActionArgs logged = std::move(it->second.args);
@@ -156,6 +183,7 @@ ActionResult ActionRegistry::endGesture(ActionId id, ActionArgs args)
 
 void ActionRegistry::cancelGesture(ActionId id)
 {
+    if (ActionRegistry* h = handler(id); h && h != this) return h->cancelGesture(id);
     auto it = m_gestures.find(id.name());
     if (it == m_gestures.end()) return;
     const ActionArgs logged = std::move(it->second.args);
@@ -168,6 +196,7 @@ void ActionRegistry::cancelGesture(ActionId id)
 
 bool ActionRegistry::inGesture(ActionId id) const
 {
+    if (!own(id) && m_delegate) return m_delegate->inGesture(id);
     return m_gestures.contains(id.name());
 }
 
@@ -208,8 +237,8 @@ void ActionRegistry::flushPending()
 void ActionRegistry::write(ActionLogEntry e)
 {
     static constexpr const char* kStatus[] = { "", " (refused)", " (disabled)", " (cancelled)" };
-    Log::info("action", "%8.2fs %-7s %.*s%s%s%s", e.at.count(), actionKindName(e.kind), int(e.id.name().size()), e.id.name().data(),
-              e.args.empty() ? "" : " ", e.args.c_str(), kStatus[int(e.status)]);
+    Log::info("action", "%8.2fs %-7s %.*s%s%s%s%s%s", e.at.count(), actionKindName(e.kind), int(e.id.name().size()), e.id.name().data(),
+              e.args.empty() ? "" : " ", e.args.c_str(), kStatus[int(e.status)], e.why.empty() ? "" : ": ", e.why.c_str());
     m_log.push_back(std::move(e));
     if (m_log.size() > kLogCapacity) m_log.pop_front();
 }
@@ -223,6 +252,7 @@ void ActionRegistry::endFrame(bool interacting)
     std::vector<ActionId> stuck;
     for (const auto& [name, open] : m_gestures) stuck.push_back(open.id);
     for (const ActionId id : stuck) cancelGesture(id);
+    if (m_delegate) m_delegate->endFrame(interacting);
 }
 
 void ActionRegistry::setUndoSteps(std::function<void(const Action&)> open, std::function<void()> close)
@@ -251,6 +281,12 @@ void ActionRegistry::dispatch(const InputFrame& input, ActionScope panel)
                 break;
             }
     }
+    for (const DelegatedKey& k : m_delegatedKeys) {   // the delegate's, as it is now
+        const Action* a = find(k.id);
+        if (a && (a->scope == ActionScope::Global || a->scope == panel) && input.pressed(k.shortcut, a->repeats) &&
+            std::find(fired.begin(), fired.end(), k.id) == fired.end())
+            fired.push_back(k.id);
+    }
     for (const ActionId id : fired) run(id);
 }
 
@@ -258,6 +294,9 @@ std::string ActionRegistry::shortcutLabel(ActionId id) const
 {
     const Action* a = find(id);
     if (!a) return {};
+    if (!own(id))
+        for (const DelegatedKey& k : m_delegatedKeys)
+            if (k.id == id) return ::shortcutLabel(k.shortcut);
     return a->shortcuts.empty() ? a->mouse : ::shortcutLabel(a->shortcuts.front());
 }
 

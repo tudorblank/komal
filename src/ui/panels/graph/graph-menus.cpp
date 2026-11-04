@@ -1,7 +1,7 @@
 #include "ui/panels/graph/graph-menus.hpp"
 #include "ui/style/ui-style.hpp"
 #include "document/document-actions.hpp"
-#include "document/project.hpp"
+#include "document/workspace.hpp"
 #include "ui/panels/graph/internal/layout.hpp"
 #include "ui/style/graph-style.hpp"
 #include "ui/widgets/widgets.hpp"
@@ -22,9 +22,9 @@ constexpr const char* kValuePopup = "##value-edit";
 
 }
 
-void GraphMenus::init(const Project& project, ActionRegistry& actions)
+void GraphMenus::init(const Workspace& workspace, ActionRegistry& actions)
 {
-    m_project = &project;
+    m_workspace = &workspace;
     m_actions = &actions;
 }
 
@@ -52,7 +52,7 @@ void GraphMenus::openArtboard(ArtboardId id)
 
 void GraphMenus::openColor(ArtboardId id)
 {
-    const Artboard* a = m_project->artboard(id);
+    const Artboard* a = m_workspace->artboard(id);
     if (!a) return;
     m_artboard = id;
     m_colorPick.open(a->color);
@@ -64,12 +64,12 @@ bool GraphMenus::openValue(Value value)
     const bool known = std::visit([&](auto& v) {
         using T = std::decay_t<decltype(v)>;
         if constexpr (std::is_same_v<T, RenameArtboard>) {
-            const Artboard* a = m_project->artboard(v.artboard);
+            const Artboard* a = m_workspace->artboard(v.artboard);
             if (a) std::snprintf(v.text, sizeof v.text, "%s", a->name.c_str());
             return a != nullptr;
         }
         else {
-        const Node* n = m_project->find(v.node);
+        const Node* n = m_workspace->find(v.node);
         if (!n) return false;
         if constexpr (std::is_same_v<T, Rename>) {
             std::snprintf(v.text, sizeof v.text, "%s", n->label().c_str());
@@ -129,7 +129,7 @@ void GraphMenus::add(NodeType type)
 void GraphMenus::drawContext()
 {
     if (!ImGui::BeginPopup(kContext)) return;
-    const Node* n = m_project->find(m_contextNode);
+    const Node* n = m_workspace->find(m_contextNode);
     if (!n) {
         ImGui::CloseCurrentPopup();
     } else {
@@ -137,27 +137,27 @@ void GraphMenus::drawContext()
         using Widgets::actionMenuItem;
         ActionRegistry& actions = *m_actions;
         const NodeId id = n->id();
-        const bool master = m_project->isMaster(id);
+        const bool master = m_workspace->isMaster(id);
         const NodeSettings settings = n->settings();
         ImGui::TextDisabled("%s", n->label().c_str());
         ImGui::Separator();
         if (const auto* raster = std::get_if<RasterSettings>(&settings)) {
-            const bool active = m_project->activeRasterId() == id;
+            const bool active = m_workspace->activeRasterId() == id;
             actionMenuItem(actions, Actions::RasterActivate, { { kNode, id } }, { .checked = active, .enabled = !active });
             actionMenuItem(actions, Actions::RasterLock, { { kNode, id }, { kOn, !raster->locked } }, { .checked = raster->locked });
             actionMenuItem(actions, Actions::RasterLockAlpha, { { kNode, id }, { kOn, !raster->alphaLocked } }, { .checked = raster->alphaLocked });
         }
         if (!master) {
-            const NodeId out = m_project->master().id();
-            const InputSlot top = InputSlot::newLayer(uint32_t(m_project->master().layers().size()));
+            const NodeId out = m_workspace->master().id();
+            const InputSlot top = InputSlot::newLayer(uint32_t(m_workspace->master().layers().size()));
             actionMenuItem(actions, Actions::LinkConnect, { { kFrom, id }, { kTo, out }, { kSlot, top } },
-                           { .label = "Add to Master", .enabled = m_project->canConnect(id, out, top) });
+                           { .label = "Add to Master", .enabled = m_workspace->canConnect(id, out, top) });
             if (const ActionResult ref = actionMenuItem(actions, Actions::NodeReference, { { kNode, id }, { kX, n->x() + 30.0f }, { kY, n->y() + 30.0f } },
                                                         { .label = "Reference it" }))
                 actions.run(Actions::SelectionSet, selectionArgs(NodeSelection::only(NodeId(ref.made))));
         }
         // A right click selects the node unless it's already in the selection: then it's all of it.
-        const NodeSelection& selection = m_project->selection();
+        const NodeSelection& selection = m_workspace->selection();
         const bool many = selection.contains(id) && selection.size() > 1;
         const std::vector<NodeId> shown = many ? selection.list() : std::vector<NodeId>{ id };
         actionMenuItem(actions, Actions::GraphShowInCanvas, { { kNodes, shown } }, { .label = many ? "Show selected in Canvas" : "Show in Canvas" });
@@ -170,10 +170,10 @@ void GraphMenus::drawContext()
         }
         if (master) {
             // A new one over what the canvas shows (or a 1920 x 1080 from the origin while it's hidden).
-            const Vec2 view = m_project->canvasViewport();
+            const Vec2 view = m_workspace->canvasViewport();
             BoundsI rect{ 0, 0, 1919, 1079 };
             if (view.x > 0.0f && view.y > 0.0f) {
-                const ViewRect v = m_project->canvasCamera().visibleWorld(view.x, view.y);
+                const ViewRect v = m_workspace->canvasCamera().visibleWorld(view.x, view.y);
                 rect = { int(std::floor(v.minX)), int(std::floor(v.minY)), int(std::ceil(v.maxX)) - 1, int(std::ceil(v.maxY)) - 1 };
             }
             actionMenuItem(actions, Actions::ArtboardAdd, { { kMinX, rect.minX }, { kMinY, rect.minY }, { kMaxX, rect.maxX }, { kMaxY, rect.maxY } });
@@ -191,7 +191,7 @@ void GraphMenus::drawContext()
 void GraphMenus::drawArtboard()
 {
     if (!ImGui::BeginPopup(kArtboardMenu)) return;
-    if (const Artboard* a = m_project->artboard(m_artboard)) {
+    if (const Artboard* a = m_workspace->artboard(m_artboard)) {
         using Widgets::actionMenuItem;
         ImGui::TextDisabled("%s", a->name.c_str());
         ImGui::Separator();
@@ -211,7 +211,7 @@ void GraphMenus::drawColor()
 {
     // Shown as it's picked; the artboard takes it once a change is finished (one undo step each).
     const FloatColorPick::Result r = m_colorPick.draw(kColorPopup);
-    const Artboard* a = m_project->artboard(m_artboard);
+    const Artboard* a = m_workspace->artboard(m_artboard);
     if (r.done && a && r.color != a->color) m_actions->run(Actions::ArtboardSet, { { kArtboard, a->id }, { kColor, r.color } });
 }
 
@@ -235,7 +235,7 @@ void GraphMenus::drawValue()
             if (Widgets::numberField(kField, v.percent, 0.0f, 100.0f, "%.1f%%", width))
                 m_actions->run(Actions::SignalSet, { { kNode, v.node }, { kSignal, v.signal }, { kChannel, v.channel }, { kValue, v.percent / 100.0f } });
         } else {
-            const Node* n = m_project->find(v.node);
+            const Node* n = m_workspace->find(v.node);
             const NodeSettings settings = n ? n->settings() : NodeSettings{};
             const auto* move = std::get_if<MoveSettings>(&settings);
             if (move && Widgets::numberField(kField, v.pixels, -1e9f, 1e9f, "%.0f px", width)) {

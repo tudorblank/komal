@@ -1,12 +1,12 @@
 #pragma once
-// Every way the project can change, as actions: the one list. Panels and tools run these;
-// only these call the Project's editing API. Each document edit is one undo step, but moving
+// Every way the workspace can change, as actions: the one list. Panels and tools run these;
+// only these call the Workspace's editing API. Each document edit is one undo step, but moving
 // through history (undo, redo, history.goTo) and picking the raster to paint into (raster.activate).
 //
 //   document edits   edit.undo  edit.redo  history.goTo
 //                    node.add  node.reference  node.delete  node.rename
 //                    raster.activate  raster.lock  raster.lockAlpha
-//                    link.connect  link.disconnect  layer.move  layers.move  layer.add  layers.remove  layer.mute
+//                    link.connect  link.disconnect  layers.move  layer.add  layers.remove  layer.mute
 //                    artboard.add  artboard.set  artboard.delete
 //                    signal.set  move.set  image.import
 //   gestures         brush.stroke  node.drag  signal.scrub  move.scrub  link.move
@@ -30,7 +30,7 @@
 #include <string>
 #include <vector>
 
-class Project;
+class Workspace;
 
 namespace DocArgs {
 
@@ -54,7 +54,6 @@ inline constexpr ArgKey<float> kY{ "y" };
 
 // History, layers, values.
 inline constexpr ArgKey<StepId>      kStep{ "step" };
-inline constexpr ArgKey<size_t>      kLayerFrom{ "from" };   // layer.move: a layer's index (0 = bottom)
 inline constexpr ArgKey<size_t>      kLayerTo{ "to" };       // ... where it goes; layers.move: a place among the rows left
 inline constexpr ArgKey<NodeId>      kLayer{ "layer" };      // layer.mute: one of the compositor's layers
 inline constexpr ArgKey<std::vector<NodeId>>     kLayers{ "layers" };        // layers.move: the layers moved ...
@@ -105,7 +104,7 @@ inline constexpr ArgKey<int>         kPoints{ "points" };   // end: how many poi
 
 }
 
-void registerDocumentActions(ActionRegistry& actions, Project& project);
+void registerDocumentActions(ActionRegistry& actions, Workspace& workspace);
 
 ActionArgs selectionArgs(const NodeSelection& selection);   // selection.set's, for that selection
 // brush.stroke's begin, for a stroke made of these (keepAlpha comes from the raster's lock).

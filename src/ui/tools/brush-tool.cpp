@@ -1,6 +1,6 @@
 #include "brush-tool.hpp"
 #include "document/document-actions.hpp"
-#include "document/project.hpp"
+#include "document/workspace.hpp"
 #include "ui/panels/canvas/scene.hpp"
 #include "ui/style/ui-style.hpp"
 #include "ui/tools/tool-manager.hpp"
@@ -146,7 +146,7 @@ void BrushTool::canvasInput(const CanvasInput& in)
             brush.color = Color8::fromUnit(m_colors.foreground);
             const bool erase = m_erase || ev.button == PointerButton::Secondary || ev.device == PointerDevice::Eraser;
             brush.mode = erase ? CompositeMode::Erase : CompositeMode::Over;
-            if (!in.actions.beginGesture(Actions::BrushStroke, strokeArgs(in.project.activeRasterId(), brush, at, m_stroke.pen())))
+            if (!in.actions.beginGesture(Actions::BrushStroke, strokeArgs(in.workspace.activeRasterId(), brush, at, m_stroke.pen())))
                 m_stroke.release();   // refused (a locked raster): nothing to follow
             m_strokePoints = 1;
             break;

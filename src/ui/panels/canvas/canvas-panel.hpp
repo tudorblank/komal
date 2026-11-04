@@ -13,68 +13,84 @@
 
 #include <imgui.h>
 
+#include <memory>
 #include <vector>
 
-class Project;
-class TileCache;
-struct ProjectEvent;
+class Workspace;
+struct WorkspaceEvent;
 class ToolManager;
 class Painter;
 struct ImGuiWindow;
 
-// The canvas window: a CanvasScene seen through a CanvasView (an offscreen target shown as an
-// ImGui image). The scene holds the master output under overlays (selected nodes' bounds); an
-// edit in progress (a drag in the graph, a stroke) shows in its place on the GPU (PreviewItem).
-// The panel navigates (MMB / wheel / Space) and hands the mouse to the active tool.
+// The canvas window: one canvas per open document, as tabs; the active document's shows. A canvas
+// is a CanvasScene seen through a CanvasView (an offscreen target shown as an ImGui image). The
+// scene holds the master output under overlays (selected nodes' bounds); an edit in progress (a
+// drag in the graph, a stroke) shows in its place on the GPU (PreviewItem). The panel navigates
+// (MMB / wheel / Space) and hands the mouse to the active tool. Picking a tab is doc.activate;
+// closing one is file.close (asked first if it's unsaved).
 //
-// It changes only with the project, like the graph: the output picture through the master's dirty
-// tiles, everything else through Project events, which update its items:
+// A canvas changes only with its workspace, like the graph: the output picture through the master's
+// dirty tiles, everything else through Workspace events, which update its items:
 //
-//   CanvasViewChanged   the view follows the project's camera (Project::canvasCamera())
+//   CanvasViewChanged   the view follows the workspace's camera (Workspace::canvasCamera())
 //   PreviewChanged      outlines follow the edit (where the canvas can't show it)
 //   NodeAdded / Moved   nothing (the graph editor's business)
 //   anything else       outlines: the selection, or a node's bounds, may have changed
 // Its own navigation (wheel, middle drag) and the tools' go through the canvas.* actions too, and it
-// tells the project its size (canvas.viewport).
+// tells the workspace its size (canvas.viewport).
 class CanvasPanel : public Panel {
 public:
     PanelInfo info() const override;
-    bool init() override;   // draws the engine's output tiles with its pipelines
+    bool init() override;   // the active document's canvas, drawing the engine's tiles with its pipelines
     void shutdown() override;
     void releaseGpu() override;
     void restoreGpu() override;
+    void documentsChanged(const DocumentsEvent& e) override;   // a canvas made as one is shown, gone as it closes
 
-    void draw() override;   // window, input, image, overlays
+    void draw() override;   // window, tabs, input, image, overlays
     // The view renders if anything changed (the engine synced the tiles before).
     void renderGpu(WGPUCommandEncoder enc) override;
     Clock::Seconds nextFrameIn() const override { return busy() ? kFrameNow : kNoFrame; }
     // A file dropped at `screen` (`window` topmost): true if it lands on the canvas, with its world point.
     bool dropTarget(const ImGuiWindow* window, ImVec2 screen, Vec2& world) const;
-    bool busy() const { return m_visible && m_view.busy(); }   // still catching up: needs more frames
+    bool busy() const { return m_visible && m_canvas && m_canvas->view.busy(); }   // still catching up: needs more frames
 
 private:
-    void onProjectEvent(const ProjectEvent& e);
-    void tellSize(Vec2 size);   // the project hears its size when it changes ({0, 0}: not shown)
+    // One document's canvas: made from the engine's pictures of it while it's active.
+    struct Canvas {
+        DocumentId       document = kNoDocument;
+        const Workspace* workspace = nullptr;
+        CanvasScene  scene;
+        CanvasView   view;
+        RasterItem*      output       = nullptr;   // owned by scene
+        std::vector<OutlineItem*> selectionBounds;   // one per outlined node, spares hidden
+        std::vector<ArtboardFrameItem*> artboards;   // one per artboard, spares hidden
+        const Preview*   preview      = nullptr;   // the edit in progress (the engine's): bounds under it
+        PreviewItem*     previewItem  = nullptr;   // ... live on the GPU, in the scene
+        OutlineItem*     previewFrom  = nullptr;   // ... or, a drag that doesn't reach the master: where it was
+        OutlineItem*     previewTo    = nullptr;   //     and where it will land
+        Connection       events;                   // its workspace's changed
+        bool             ready = false;
+    };
+
+    Canvas* canvasOf(DocumentId id);
+    void show(DocumentId id);    // the active one: its canvas, made if it's new
+    bool makeGpu(Canvas& c);     // its scene and view on the engine's pipelines
+    void onWorkspaceEvent(Canvas& c, const WorkspaceEvent& e);
+    void drawTabs();             // the documents: picking one, closing one
+    void tellSize(Vec2 size);    // the workspace hears its size when it changes ({0, 0}: not shown)
     void handleInput(const ImVec2& origin);
-    void updateOutlines();       // the selected nodes' bounds and the edit's
+    void updateOutlines(Canvas& c);   // the selected nodes' bounds and the edit's
     void drawHud(const Painter& draw, const ImVec2& origin);
 
-    Connection     m_projectEvents;   // project.changed
-    const TileCache* m_tiles = nullptr;   // the engine's: every view's GPU tiles, for the HUD
-    CanvasScene  m_scene;
-    CanvasView   m_view;
-    RasterItem*      m_output       = nullptr;   // owned by m_scene
-    std::vector<OutlineItem*> m_selectionBounds;   // one per outlined node, spares hidden
-    std::vector<ArtboardFrameItem*> m_artboards;   // one per artboard, spares hidden
-    const Preview*   m_preview      = nullptr;   // the edit in progress (the engine's): bounds under it
-    PreviewItem*     m_previewItem  = nullptr;   // ... live on the GPU, in the scene
-    OutlineItem*     m_previewFrom  = nullptr;   // ... or, a drag that doesn't reach the master: where it was
-    OutlineItem*     m_previewTo    = nullptr;   //     and where it will land
+    std::vector<std::unique_ptr<Canvas>> m_canvases;   // the documents shown so far
+    Canvas* m_canvas = nullptr;                        // the active one's
+    DocumentId m_tabAsked = kNoDocument;   // the tab told to show (the active one changed elsewhere), until it does
+    DocumentId m_tabActive = kNoDocument;  // the active document as the tabs last saw it
 
     std::vector<CanvasPointer> m_pointer;  // ... the part the canvas gets, in world space
 
     PanelSurface m_surface;   // the picture, this frame
     bool m_visible = false;   // false when closed, collapsed or tabbed away
     bool m_hasPointer = false;
-    bool m_ready   = false;
 };

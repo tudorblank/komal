@@ -1,6 +1,6 @@
 #include "command/actions.hpp"
 #include "document/document-actions.hpp"
-#include "document/workspace.hpp"
+#include "document/document.hpp"
 #include "helpers.hpp"
 
 #include <doctest/doctest.h>
@@ -146,8 +146,8 @@ TEST_CASE("a parsed argument must read back as its type")
 
 TEST_CASE("a cancelled stroke leaves the raster as it was, and no step")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     ActionRegistry actions;
     registerDocumentActions(actions, p);
     REQUIRE(actions.beginGesture(Actions::BrushStroke, strokeArgs(p.activeRasterId(), BrushParams{}, { 500.0f, 500.0f, 1.0f }, false)));
@@ -162,8 +162,8 @@ TEST_CASE("a cancelled stroke leaves the raster as it was, and no step")
 
 TEST_CASE("a stroke is made from its arguments alone: what the log keeps")
 {
-    StarterProject s;
-    Project& p = s.project;
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
     ActionRegistry actions;
     registerDocumentActions(actions, p);
     BrushParams brush;
@@ -197,22 +197,65 @@ TEST_CASE("a stroke is made from its arguments alone: what the log keeps")
 
 TEST_CASE("a workspace is driven by its actions alone, no interface")
 {
-    Workspace workspace;
-    workspace.project().init([](Project& seeded) {   // one raster to start from
+    Document document;
+    document.workspace().init([](Workspace& seeded) {   // one raster to start from
         TileGrid tiles;
         fillPixel(tiles, 0, 0, { 255, 0, 0, 255 });
         seeded.importTiles(tiles, "", {});
     });
-    const Project& p = workspace.project();
-    const ActionResult made = workspace.actions().run(Actions::NodeAdd, { { DocArgs::kType, "move" }, { DocArgs::kX, 10.0f }, { DocArgs::kY, 20.0f },
+    const Workspace& p = document.workspace();
+    const ActionResult made = document.actions().run(Actions::NodeAdd, { { DocArgs::kType, "move" }, { DocArgs::kX, 10.0f }, { DocArgs::kY, 20.0f },
                                                                         { DocArgs::kFrom, p.activeRasterId() } });
     REQUIRE(made);
     const NodeId id = NodeId(made.made);
     REQUIRE(p.find(id));
     CHECK(p.find(id)->x() == 10.0f);
-    CHECK(workspace.actions().run(Actions::MoveSet, { { DocArgs::kNode, id }, { DocArgs::kOffsetX, 5 }, { DocArgs::kOffsetY, -3 } }));
-    CHECK(workspace.actions().run(Actions::EditUndo));
-    CHECK(workspace.actions().run(Actions::EditUndo));
+    CHECK(document.actions().run(Actions::MoveSet, { { DocArgs::kNode, id }, { DocArgs::kOffsetX, 5 }, { DocArgs::kOffsetY, -3 } }));
+    CHECK(document.actions().run(Actions::EditUndo));
+    CHECK(document.actions().run(Actions::EditUndo));
     CHECK_FALSE(p.find(id));   // both steps undone
-    CHECK(workspace.actions().log().size() >= 4);
+    CHECK(document.actions().log().size() >= 4);
+}
+
+TEST_CASE("a registry hands on what it doesn't have: the active document's actions, keys kept")
+{
+    Document one, two;
+    one.workspace().init();
+    two.workspace().init();
+    ActionRegistry app;   // the interface's: its own actions, the document's through the delegate
+    int quits = 0;
+    app.add({ .id = Actions::AppQuit, .title = "Quit", .kind = ActionKind::AppState, .run = [&] { ++quits; } });
+    app.delegateTo(&one.actions());
+    REQUIRE(app.bind(Actions::EditUndo, { Key::Z, ModPrimary }));   // the document's: kept here, by id
+    REQUIRE(app.bind(Actions::AppQuit, { Key::Q, ModPrimary }));
+    CHECK(app.shortcutLabel(Actions::EditUndo) == shortcutLabel({ Key::Z, ModPrimary }));
+
+    const auto add = [&] { return app.run(Actions::NodeAdd, { { DocArgs::kType, "move" }, { DocArgs::kX, 0.0f }, { DocArgs::kY, 0.0f } }); };
+    REQUIRE(add());                                    // into the delegate: its step, its log
+    CHECK(one.workspace().history().size() == 2);
+    CHECK(one.actions().log().back().id == Actions::NodeAdd);
+    CHECK(app.log().empty());                          // app.quit not run yet: nothing of its own
+
+    app.delegateTo(&two.actions());                    // another document active
+    REQUIRE(add());
+    CHECK(two.workspace().history().size() == 2);
+    CHECK(one.workspace().history().size() == 2);
+
+    InputFrame input;
+    input.keys.push_back({ Key::Z, ModPrimary });
+    app.dispatch(input, ActionScope::Global);          // the key still undoes: in the one active now
+    CHECK(two.workspace().history().current() == kStartStep);
+    CHECK(one.workspace().history().current() != kStartStep);
+    input.keys = { { Key::Q, ModPrimary } };
+    app.dispatch(input, ActionScope::Global);
+    CHECK(quits == 1);
+
+    CHECK_FALSE(app.anyGesture());
+    REQUIRE(app.beginGesture(Actions::NodeDrag, { { DocArgs::kNodes, std::vector<NodeId>{ two.workspace().master().id() } } }));
+    CHECK(app.anyGesture());                           // open in the delegate
+    CHECK(app.inGesture(Actions::NodeDrag));
+    app.cancelGesture(Actions::NodeDrag);
+    CHECK_FALSE(two.actions().inGesture(Actions::NodeDrag));
+    app.delegateTo(nullptr);
+    CHECK_FALSE(app.find(Actions::NodeAdd));
 }

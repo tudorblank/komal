@@ -7,7 +7,7 @@
 //       wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
 //   }                                          // ended
 
-#include "gfx/gpu-object.hpp"
+#include "gpu/gpu-object.hpp"
 
 #include <cstdint>
 #include <span>

@@ -10,8 +10,8 @@ struct ViewRect {
     bool overlaps(float x0, float y0, float x1, float y1) const { return x1 >= minX && x0 <= maxX && y1 >= minY && y0 <= maxY; }
 };
 
-// Where a canvas looks: world (pixel) space -> viewport. Plain math. The project keeps the canvas's
-// (Project::canvasCamera(), changed by the canvas.* actions); a view renders through a copy of it
+// Where a canvas looks: world (pixel) space -> viewport. Plain math. The workspace keeps the canvas's
+// (Workspace::canvasCamera(), changed by the canvas.* actions); a view renders through a copy of it
 // and hands viewProj() to the shaders (CanvasView, bind group 0 of every canvas pipeline).
 //
 //   screen = R(rotation) * world * zoom + pan        (viewport points, origin top-left)
@@ -26,6 +26,8 @@ public:
 
     static constexpr float kMinZoom = 0.05f;
     static constexpr float kMaxZoom = 64.0f;
+
+    bool operator==(const CanvasCamera&) const = default;   // the same view: pan, zoom and rotation
 
     // World -> clip space for a viewW x viewH viewport; `worldOffset` shifts the content first.
     Mat4 viewProj(float viewW, float viewH, Vec2 worldOffset = {}) const

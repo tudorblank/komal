@@ -1,6 +1,6 @@
 #pragma once
 // Where things sit in the graph, in graph units: a node's width, its rows and boxes, the grid.
-// Laying nodes out (item.cpp), hitting them (hit.cpp) and painting them read these; how they look
+// Laying nodes out (node-item.cpp), hitting them (hit.cpp) and painting them read these; how they look
 // is ui/style/graph-style.hpp.
 
 namespace GraphLayout {

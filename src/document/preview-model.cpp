@@ -1,12 +1,12 @@
 #include "document/preview-model.hpp"
-#include "document/project.hpp"
+#include "document/workspace.hpp"
 #include "node/node-kinds.hpp"
 
 // ---------------------------------------------------------------- a node under the edit
 
 float PreviewModel::scale(const Node& n, NodeSignal s, NodeChannel c) const
 {
-    if (const EditPreview* e = m_project->preview())
+    if (const EditPreview* e = m_workspace->preview())
         if (const std::optional<float> v = e->scaleOf(n.id(), s, c)) return *v;
     return n.signal(s).scale[int(c)];
 }
@@ -16,7 +16,7 @@ std::optional<Vec2> PreviewModel::moveOffset(const Node& n) const
     const NodeSettings settings = n.settings();
     const auto* move = std::get_if<MoveSettings>(&settings);
     if (!move) return std::nullopt;
-    const EditPreview* e = m_project->preview();
+    const EditPreview* e = m_workspace->preview();
     if (const OffsetEdit* o = e ? e->offsetOf(n.id()) : nullptr) return Vec2{ float(o->x), float(o->y) };
     return Vec2{ float(move->x), float(move->y) };
 }
@@ -35,7 +35,7 @@ BoundsI PreviewModel::bounds(NodeId id) const
 {
     const int i = m_plan.indexOf(id);
     if (i >= 0) return boundsOf(i, {});
-    const Node* n = m_project->find(id);
+    const Node* n = m_workspace->find(id);
     return n ? n->bounds() : BoundsI{};
 }
 
@@ -55,7 +55,7 @@ BoundsI PreviewModel::boundsOf(int node, Vec2 offset) const
             for (const PreviewPlan::Fill& f : s.fills) b.expand(f.rect.offsetBy(int(offset.x), int(offset.y)));
         } else if (s.wet >= 0) {
             b = leafBounds(s.wet, offset);
-            const BrushParams& brush = m_project->stroke().params();
+            const BrushParams& brush = m_workspace->stroke().params();
             if (s.stroke >= 0 && !brush.keepAlpha && brush.mode != CompositeMode::Erase) b.expand(leafBounds(s.stroke, offset));
         }
     }
@@ -76,7 +76,7 @@ BoundsI PreviewModel::leafBounds(int leaf, Vec2 offset) const
     switch (l.kind) {
     case PreviewLeaf::Kind::Output: b = l.node->bounds(); break;
     case PreviewLeaf::Kind::Wet:    b = l.node->wetBounds(); break;
-    case PreviewLeaf::Kind::Stroke: b = m_project->stroke().bounds(); break;
+    case PreviewLeaf::Kind::Stroke: b = m_workspace->stroke().bounds(); break;
     }
     return b.offsetBy(int(offset.x), int(offset.y));
 }

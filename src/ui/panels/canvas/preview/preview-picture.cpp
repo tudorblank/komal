@@ -1,6 +1,6 @@
 #include "ui/panels/canvas/preview/preview-picture.hpp"
 #include "ui/panels/canvas/preview/preview.hpp"
-#include "gfx/render-pass.hpp"
+#include "gpu/render-pass.hpp"
 
 #include <algorithm>
 #include <cmath>

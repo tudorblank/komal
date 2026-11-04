@@ -19,7 +19,7 @@ void ToolPropertiesPanel::draw()
     if (!window) return;
     Tool& tool = tools.selected();
     ImGui::SeparatorText(tool.name());
-    ToolContext ctx{ ui().project, ui().actions, tools };
+    ToolContext ctx{ ui().workspace(), ui().actions, tools };
     ImGui::PushID(&tool);
     tool.drawProperties(ctx);
     ImGui::PopID();

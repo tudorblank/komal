@@ -17,7 +17,12 @@ const std::initializer_list<Binding> kDefaultKeys = {
     { Actions::EditRedo,           { Key::Z, ModPrimary | ModShift } },
     { Actions::EditRedo,           { Key::Y, ModPrimary } },
     // the app
-    { Actions::FileImport,         { Key::O, ModPrimary } },
+    { Actions::DocNew,             { Key::N, ModPrimary } },
+    { Actions::FileOpen,           { Key::O, ModPrimary } },
+    { Actions::FileSave,           { Key::S, ModPrimary } },
+    { Actions::FileSaveAs,         { Key::S, ModPrimary | ModShift } },
+    { Actions::FileClose,          { Key::W, ModPrimary } },
+    { Actions::FileImport,         { Key::O, ModPrimary | ModShift } },
     // tools and colours
     { Actions::ToolBrush,          { Key::B } },
     { Actions::ToolHand,           { Key::H } },

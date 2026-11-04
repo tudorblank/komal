@@ -1,5 +1,5 @@
-#include "ui/panels/graph/internal/item.hpp"
-#include "document/project.hpp"
+#include "ui/panels/graph/internal/node-item.hpp"
+#include "document/workspace.hpp"
 #include "ui/panels/graph/internal/layout.hpp"
 #include "ui/style/graph-style.hpp"
 
@@ -52,8 +52,8 @@ namespace {
 
 class Builder {
 public:
-    Builder(const Project& p, const Node& n, const NodeItemState& v, StackLayout stack, NodeItem& s)
-        : m_project(p), m_node(n), m_view(v), m_stack(stack), m_item(s), m_x0(n.x()), m_x1(n.x() + kNodeWidth), m_y(n.y()) {}
+    Builder(const Workspace& p, const Node& n, const NodeItemState& v, StackLayout stack, NodeItem& s)
+        : m_workspace(p), m_node(n), m_view(v), m_stack(stack), m_item(s), m_x0(n.x()), m_x1(n.x() + kNodeWidth), m_y(n.y()) {}
 
     void build()
     {
@@ -72,7 +72,7 @@ public:
         m_item.stackArea.reset();
         m_item.origin.reset();
         m_item.ends.clear();
-        const bool master = m_project.isMaster(m_item.id);
+        const bool master = m_workspace.isMaster(m_item.id);
         const bool stack  = m_node.ports().inputs == InputShape::Stack;
         const NodeSettings settings = m_node.settings();
 
@@ -153,10 +153,8 @@ private:
     {
         // The stack's rows (the master's in groups, its artboards). The ones a drag carries keep
         // their spot, as a placeholder: nothing closes up while it goes on.
-        const auto* stack = dynamic_cast<const CompositorNode*>(&m_node);
         const std::vector<NodePtr>& rows = m_node.links().layers;
-        const std::vector<StackGroup> none;
-        const std::vector<StackGroup>& groups = stack ? stack->stack().groups : none;
+        const std::vector<StackGroup> groups = stackSettings(m_node).groups;
         const auto has = [](const std::vector<StackRowRef>& v, StackRowRef r) { return std::find(v.begin(), v.end(), r) != v.end(); };
 
         // The top level, bottom first (StackGroups::entries, what moves rows too); carried ones marked.
@@ -307,7 +305,7 @@ private:
         }
     }
 
-    const Project&       m_project;
+    const Workspace&       m_workspace;
     const Node&          m_node;
     const NodeItemState& m_view;
     const StackLayout    m_stack;
@@ -349,7 +347,7 @@ ImRect artboardColorRect(const ImRect& r)
     return ImRect(eye.Max.x + 6.0f, eye.Min.y, eye.Max.x + 6.0f + kIconSize, eye.Max.y);
 }
 
-void buildNodeItem(const Project& project, const Node& n, const NodeItemState& view, StackLayout stack, NodeItem& out)
+void buildNodeItem(const Workspace& workspace, const Node& n, const NodeItemState& view, StackLayout stack, NodeItem& out)
 {
-    Builder(project, n, view, n.ports().inputs == InputShape::Stack ? stack : StackLayout{}, out).build();
+    Builder(workspace, n, view, n.ports().inputs == InputShape::Stack ? stack : StackLayout{}, out).build();
 }

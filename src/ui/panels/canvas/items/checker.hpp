@@ -5,7 +5,7 @@
 // style's, read as it draws: a theme change shows at once.
 
 #include "ui/style/ui-style.hpp"
-#include "ui/panels/canvas/item.hpp"
+#include "ui/panels/canvas/canvas-item.hpp"
 
 class CheckerItem : public CanvasItem {
 public:

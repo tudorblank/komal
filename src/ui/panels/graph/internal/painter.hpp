@@ -3,7 +3,7 @@
 // antialiases at the real size: crisp at any zoom.
 
 #include "ui/panels/graph/internal/camera.hpp"
-#include "ui/panels/graph/internal/item.hpp"
+#include "ui/panels/graph/internal/node-item.hpp"
 #include "document/artboard.hpp"
 #include "ui/render/painter.hpp"
 
@@ -42,10 +42,10 @@ std::string elide(const GraphPaint& g, const std::string& text, float size, floa
 
 // A node paints in three layers: boxes and controls, state rings (active, selected, hovered),
 // then ports, so they sit on top of every edge.
-void paintNode(const GraphPaint& g, const Project& project, const Node& n, const NodeItem& item,
+void paintNode(const GraphPaint& g, const Workspace& workspace, const Node& n, const NodeItem& item,
                const NodeItemVisual& visual, NodeThumbnails& thumbs);
 void paintNodeOutline(const GraphPaint& g, const NodeItem& item, const NodeItemVisual& visual);
-void paintNodePorts(const GraphPaint& g, const Project& project, const NodeItem& item, const NodeItemVisual& visual);
+void paintNodePorts(const GraphPaint& g, const Workspace& workspace, const NodeItem& item, const NodeItemVisual& visual);
 // How a stack's row shows: under the mouse, carried by a drag (floating over the stack), picked;
 // a layer muted there; the part of it under the mouse.
 struct RowLook {
@@ -69,4 +69,4 @@ void      paintFadingLink(const GraphPaint& g, const LinkCurve& c, ImU32 color, 
 void      paintPort(const GraphPaint& g, ImVec2 graphPos, ImU32 color, bool connected, bool hovered, bool placeholder);
 void      paintInsertButton(const GraphPaint& g, ImVec2 screenPos, bool hovered);
 
-ImU32 headerColor(const Project& project, const Node& n);
+ImU32 headerColor(const Workspace& workspace, const Node& n);

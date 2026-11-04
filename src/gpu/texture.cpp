@@ -1,6 +1,6 @@
-#include "gfx/texture.hpp"
-#include "gfx/error-scope.hpp"
-#include "gfx/handles.hpp"
+#include "gpu/texture.hpp"
+#include "gpu/error-scope.hpp"
+#include "gpu/handles.hpp"
 
 #include <string>
 

@@ -2,7 +2,7 @@
 // A texture and its default view: what a page of tiles, a render target or a picture lives in.
 // Owned like every GPU object (GpuObject): released when it goes, or when created again.
 
-#include "gfx/gpu-object.hpp"
+#include "gpu/gpu-object.hpp"
 
 #include <cstdint>
 

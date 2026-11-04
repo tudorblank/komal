@@ -1,5 +1,5 @@
 #include "ui/panels/canvas/tiles/atlas.hpp"
-#include "gfx/error-scope.hpp"
+#include "gpu/error-scope.hpp"
 
 #include <algorithm>
 #include <cstring>

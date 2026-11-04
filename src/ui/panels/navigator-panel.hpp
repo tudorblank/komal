@@ -15,6 +15,7 @@ public:
     void shutdown() override;
     void releaseGpu() override;
     void restoreGpu() override;
+    void documentsChanged(const DocumentsEvent& e) override;   // shows the active document's picture
 
     void draw() override;
     void renderGpu(WGPUCommandEncoder enc) override;

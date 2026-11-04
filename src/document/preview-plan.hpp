@@ -1,5 +1,5 @@
 #pragma once
-// What an edit in progress (Project::preview()) reaches, worked out once when it starts: the
+// What an edit in progress (Workspace::preview()) reaches, worked out once when it starts: the
 // edited node and every node downstream of it (through inputs and masks), each rebuilt on the GPU
 // every frame from the values being dragged; and the leaves they read, which the edit can't
 // change, frozen as tiles:
@@ -15,7 +15,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <vector>
 
-class Project;
+class Workspace;
 
 struct PreviewLeaf {
     enum class Kind : uint8_t { Output, Wet, Stroke };
@@ -47,7 +47,7 @@ public:
     };
 
     // False when the edited node is gone (the plan is then empty).
-    bool build(const Project& project, const EditPreview& edit);
+    bool build(const Workspace& workspace, const EditPreview& edit);
     void clear();
 
     NodeId edited() const { return m_edited; }

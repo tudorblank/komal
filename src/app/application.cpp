@@ -4,7 +4,7 @@
 #include "base/dev-switches.hpp"
 #include "base/log.hpp"
 #include "base/perf.hpp"
-#include "gfx/render-pass.hpp"
+#include "gpu/render-pass.hpp"
 #include "ui/style/fonts.hpp"
 #include "ui/style/ui-style.hpp"
 
@@ -97,9 +97,6 @@ bool Application::init(const char* title, int width, int height, std::string_vie
     }
     setWindowIcon(m_window);
 
-    // ---- project (CPU)
-    m_workspace.project().init();
-
     // ---- GPU init (wgpu)
     if (!initGpu()) return false;
 
@@ -110,7 +107,9 @@ bool Application::init(const char* title, int width, int height, std::string_vie
 
     // ---- user interface
     m_host.showImportDialog = [this] { showImportDialog(); };
-    if (!m_userInterface.init(m_gpu, m_workspace.project(), m_input.frame(), m_host))
+    m_host.showOpenDialog   = [this] { showOpenDialog(); };
+    m_host.showSaveDialog   = [this](DocumentId document, std::string suggested) { showSaveDialog(document, suggested); };
+    if (!m_userInterface.init(m_gpu, m_documents, m_input.frame(), m_host))
         Log::error("ui", "init failed (canvas viewport disabled)");
     applyContentScale();
     
@@ -212,11 +211,11 @@ bool Application::processEvents()
 
 void Application::handleEvent(const SDL_Event& e)
 {
-    if (e.type == SDL_EVENT_QUIT)
-        m_running = false;
+    if (e.type == SDL_EVENT_QUIT)   // asked first if anything is unsaved
+        m_userInterface.requestQuit();
     if (e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
         e.window.windowID == SDL_GetWindowID(m_window))
-        m_running = false;
+        m_userInterface.requestQuit();
     if (e.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED)
         applyContentScale();
     if (e.type == SDL_EVENT_WINDOW_RESIZED &&
@@ -243,6 +242,29 @@ void Application::showImportDialog()
         if (!files) return;   // an error, or cancelled
         for (; *files; ++files) static_cast<Application*>(self)->m_userInterface.openFile(*files);
     }, this, m_window, kFilters, 2, nullptr, true);
+}
+
+namespace {
+const SDL_DialogFileFilter kProjectFilters[] = { { "Komal projects", "komal" } };
+}
+
+void Application::showOpenDialog()
+{
+    // answers on its own thread: openFile() is safe from any
+    SDL_ShowOpenFileDialog([](void* self, const char* const* files, int) {
+        if (!files) return;   // an error, or cancelled
+        for (; *files; ++files) static_cast<Application*>(self)->m_userInterface.openFile(*files);
+    }, this, m_window, kProjectFilters, 1, nullptr, true);
+}
+
+void Application::showSaveDialog(DocumentId document, const std::string& suggested)
+{
+    struct Asked { Application* app; DocumentId document; };
+    SDL_ShowSaveFileDialog([](void* data, const char* const* files, int) {   // its own thread too: saveTo() is safe from any
+        const Asked asked = *static_cast<Asked*>(data);
+        delete static_cast<Asked*>(data);
+        asked.app->m_userInterface.saveTo(asked.document, files && *files ? std::string(*files) : std::string());
+    }, new Asked{ this, document }, m_window, kProjectFilters, 1, suggested.c_str());
 }
 
 void Application::applyContentScale()

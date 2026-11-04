@@ -2,7 +2,7 @@
 // What several test files share: a project with a starter graph, and reading its pixels.
 
 #include "base/log.hpp"
-#include "document/project.hpp"
+#include "document/workspace.hpp"
 
 #include <doctest/doctest.h>
 #include <string>
@@ -20,7 +20,7 @@ struct LogCapture {
     }
 };
 
-inline RGBA pixelOf(const Project& p, NodeId raster, int x, int y)
+inline RGBA pixelOf(const Workspace& p, NodeId raster, int x, int y)
 {
     const auto* r = dynamic_cast<const RasterRootNode*>(p.find(raster));
     REQUIRE(r);
@@ -36,13 +36,13 @@ inline void fillPixel(TileGrid& g, int x, int y, RGBA c)
 // The tests' starter project: a master over two rasters, seeded (no undo steps). "Raster 1" the
 // background (a gradient and a half-transparent checkerboard), "Raster 2" a disc across negative
 // tile coordinates, active.
-struct StarterProject {
-    Project project;
+struct StarterWorkspace {
+    Workspace workspace;
     NodeId  master, background, paint;
 
-    StarterProject()
+    StarterWorkspace()
     {
-        project.init([&](Project& p) {
+        workspace.init([&](Workspace& p) {
             TileGrid bg, disc;
             for (int y = 0; y < 192; ++y)
                 for (int x = 0; x < 256; ++x) fillPixel(bg, x, y, { uint8_t(x), uint8_t(y * 255 / 191), 160, 255 });
@@ -57,12 +57,12 @@ struct StarterProject {
             background = p.importTiles(bg,   "", { .addToMaster = true, .makeActive = false, .placeNode = true, .nodeX = 40.0f, .nodeY = 0.0f });
             paint      = p.importTiles(disc, "", { .addToMaster = true, .makeActive = true,  .placeNode = true, .nodeX = 40.0f, .nodeY = 370.0f });
         });
-        master = project.master().id();
+        master = workspace.master().id();
     }
 };
 
 // A whole action-like edit: one undo step.
-template <class F> void step(Project& p, const char* label, F&& f)
+template <class F> void step(Workspace& p, const char* label, F&& f)
 {
     p.beginStep(label);
     f();
@@ -70,7 +70,7 @@ template <class F> void step(Project& p, const char* label, F&& f)
 }
 
 // A new raster holding what `paint` puts in a tile grid (one undo step).
-template <class F> NodeId rasterWith(Project& p, F&& paint)
+template <class F> NodeId rasterWith(Workspace& p, F&& paint)
 {
     TileGrid tiles;
     paint(tiles);
@@ -80,7 +80,7 @@ template <class F> NodeId rasterWith(Project& p, F&& paint)
 }
 
 // What a node outputs at world pixel (x, y), rendered as the canvas would.
-inline RGBA rendered(const Project& p, NodeId id, int x, int y)
+inline RGBA rendered(const Workspace& p, NodeId id, int x, int y)
 {
     Node* n = p.find(id);
     REQUIRE(n);
