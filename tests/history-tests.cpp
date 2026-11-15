@@ -59,3 +59,17 @@ TEST_CASE("steps removed for good: their children take their place, the rest num
     CHECK(h.children(kStartStep) == std::vector<StepId>{ StepId(1), StepId(2) });
     CHECK(h.step(h.current()).label == "E");
 }
+
+TEST_CASE("a step's serial stays its own: never renumbered, never reused")
+{
+    History h;
+    h.push({ "A", nullptr, {} });
+    h.push({ "B", nullptr, {} });
+    const StepSerial b = h.serial(h.current());
+    h.remove({ StepId(1) });   // A goes: B is renumbered ...
+    CHECK(h.current() == StepId(1));
+    CHECK(h.serial(h.current()) == b);   // ... its serial isn't
+    h.push({ "C", nullptr, {} });
+    CHECK(h.serial(h.current()) != b);   // and a new step never gets an old one's
+    CHECK(h.serial(kStartStep) != b);
+}

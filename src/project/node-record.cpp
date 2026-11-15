@@ -17,3 +17,24 @@ NodeRecord NodeRecord::of(const Node& n)
     r.settings = n.settings();
     return r;
 }
+
+NodeRecord::Applied NodeRecord::applyTo(GraphKey key, Node& n) const
+{
+    Applied a;
+    if (n.x() != x || n.y() != y) {
+        n.setPosition(key, x, y);
+        a.moved = true;
+    }
+    if (n.label() != label) { n.setLabel(key, label); a.changed = true; }
+    for (int sig = 0; sig < kSignalCount; ++sig)
+        for (int ch = 0; ch < kChannelCount; ++ch)
+            if (n.hasSignal(NodeSignal(sig)) && n.signal(NodeSignal(sig)).scale[ch] != scale[sig][ch]) {
+                n.setScale(key, NodeSignal(sig), NodeChannel(ch), scale[sig][ch]);
+                a.changed = true;
+            }
+    if (n.settings() != settings) {
+        n.setSettings(key, settings);
+        a.changed = true;
+    }
+    return a;
+}

@@ -290,3 +290,32 @@ TEST_CASE("a registry hands on what it doesn't have: the active project's action
     app.delegateTo(nullptr);
     CHECK_FALSE(app.find(Actions::NodeAdd));
 }
+
+TEST_CASE("switching the delegate cancels a gesture still open in the one it leaves")
+{
+    Project one, two;
+    one.workspace().init();
+    two.workspace().init();
+    ActionRegistry app;
+    app.delegateTo(&one.actions());
+    // A scrub has begun (its undo step open) but not moved yet: no preview.
+    REQUIRE(app.beginGesture(Actions::SignalScrub, { { ProjectArgs::kNode, one.workspace().master().id() },
+                                                     { ProjectArgs::kSignal, NodeSignal::Main }, { ProjectArgs::kChannel, NodeChannel::A } }));
+    REQUIRE(one.actions().anyGesture());
+    app.delegateTo(&two.actions());
+    CHECK_FALSE(one.actions().anyGesture());                  // cancelled: nothing can end it now
+    CHECK(one.actions().log().back().status == ActionLogEntry::Status::Cancelled);
+    CHECK(one.workspace().history().size() == 1);             // its step closed, nothing kept
+    REQUIRE(one.actions().run(Actions::NodeAdd, { { ProjectArgs::kType, "move" }, { ProjectArgs::kX, 0.0f }, { ProjectArgs::kY, 0.0f } }));
+    CHECK(one.workspace().history().size() == 2);             // and the next edit is a step of its own
+}
+
+TEST_CASE("a queued result is done, and says it's queued")
+{
+    ActionRegistry app;
+    app.add({ .id = Actions::AppQuit, .title = "Quit", .kind = ActionKind::Interface, .run = [] { return ActionResult::later(); } });
+    const ActionResult r = app.run(Actions::AppQuit);
+    CHECK(r.done);
+    CHECK(r.queued);
+    CHECK(r.error.empty());
+}

@@ -64,8 +64,10 @@ bool GpuDevice::init(const SurfaceMaker& makeSurface, int pixelW, int pixelH)
         m_instance = wgpuCreateInstance(&desc);
         if (!m_instance) { Log::error("gpu", "wgpuCreateInstance failed"); return false; }
 
-        m_surface = makeSurface(m_instance);
-        if (!m_surface) { Log::error("gpu", "surface creation failed"); return false; }
+        if (makeSurface) {   // none: headless
+            m_surface = makeSurface(m_instance);
+            if (!m_surface) { Log::error("gpu", "surface creation failed"); return false; }
+        }
 
         // ---- adapter (wgpu-native completes this synchronously with AllowSpontaneous)
         AdapterRequest areq;
@@ -81,7 +83,7 @@ bool GpuDevice::init(const SurfaceMaker& makeSurface, int pixelW, int pixelH)
         if (m_adapter) break;
 
         if (backends == WGPUInstanceBackend_Primary) Log::error("gpu", "no adapter with the native APIs: trying all of them");
-        wgpuSurfaceRelease(m_surface);
+        if (m_surface) wgpuSurfaceRelease(m_surface);
         wgpuInstanceRelease(m_instance);
         m_surface  = nullptr;
         m_instance = nullptr;
@@ -129,6 +131,11 @@ bool GpuDevice::init(const SurfaceMaker& makeSurface, int pixelW, int pixelH)
 
     m_queue = wgpuDeviceGetQueue(m_device); // ---- queue
 
+    if (!m_surface) {   // headless: nothing to present to
+        m_format = WGPUTextureFormat_BGRA8Unorm;
+        return true;
+    }
+
     // ---- format, present mode, frame latency
     WGPUSurfaceCapabilities caps{};
     wgpuSurfaceGetCapabilities(m_surface, m_adapter, &caps);
@@ -160,7 +167,7 @@ bool GpuDevice::init(const SurfaceMaker& makeSurface, int pixelW, int pixelH)
 void GpuDevice::configureSurface()
 {
     m_surfaceStale = false;
-    if (m_width <= 0 || m_height <= 0) return;
+    if (!m_surface || m_width <= 0 || m_height <= 0) return;
 
     WGPUSurfaceConfigurationExtras extras{};
     extras.chain.sType = static_cast<WGPUSType>(WGPUSType_SurfaceConfigurationExtras);
@@ -199,7 +206,7 @@ void GpuDevice::resize(int w, int h)
 
 bool GpuDevice::acquire(GpuFrame& f)
 {
-    if (m_width <= 0 || m_height <= 0) return false;
+    if (!m_surface || m_width <= 0 || m_height <= 0) return false;
 
     wgpuSurfaceGetCurrentTexture(m_surface, &f.surfaceTexture);
     switch (f.surfaceTexture.status) {

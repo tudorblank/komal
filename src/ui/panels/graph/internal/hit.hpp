@@ -74,15 +74,6 @@ GraphHit hitTest(const HitView& view, ImVec2 mouse);
 // its ends. Screen.
 ImVec2   insertPoint(const LinkCurve& curve, ImVec2 mouse);
 
-// Where on a node a link dropped lands (graph space), as zones of its own: its stack's rows (a
-// little past them), a channel's row (its slider, its value), its first box (title, picture).
-struct LinkZone {
-    enum class Kind : uint8_t { None, Stack, Channel, Body };
-    Kind kind = Kind::None;
-    const NodeItemChannelRow* channel = nullptr;   // Channel's
-};
-LinkZone linkZoneAt(const NodeItem& item, ImVec2 graphPoint);
-
 // What a hit is on, in the scene it was tested against (null: not there any more).
 const NodeItemPort*   portOf(const GraphScene& scene, const PortHit& hit);
 const NodeItemWidget* widgetOf(const GraphScene& scene, const WidgetHit& hit);

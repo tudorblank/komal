@@ -3,6 +3,7 @@
 // random edits.
 
 #include "base/log.hpp"
+#include "node/node-kinds.hpp"
 #include "project/workspace.hpp"
 
 #include <doctest/doctest.h>
@@ -121,7 +122,7 @@ public:
     // A node of any kind at (x, y), fed from any node `fed` of the time.
     void addNode(Workspace& p, float x, float y, float fed)
     {
-        const NodeType type = NodeType(pick(4));
+        const NodeType type = nodeKinds()[size_t(pick(int(nodeKinds().size())))].type;   // every kind, a new one too
         step(p, "Add", [&] { p.addNode(type, x, y, { .from = unit() < fed ? anyNode(p) : kNoNodeId, .into = kNoNodeId, .slot = {} }); });
     }
 

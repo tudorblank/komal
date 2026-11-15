@@ -87,28 +87,12 @@ void GraphState::restore(GraphKey key, NodeRegistry& registry, const EmitEvent& 
     }
     for (auto& [n, in] : relink) n->setLinks(key, in);
 
-    // Settings, each node type its own.
+    // Each node's own fields (after the links: a stack's settings name its layers).
     std::vector<NodeId> moved, changed;
     for (const NodeStatePtr& state : nodes) {
-        const NodeRecord& s = state->record;
-        Node& n = *state->node;
-        if (n.x() != s.x || n.y() != s.y) {
-            n.setPosition(key, s.x, s.y);
-            moved.push_back(n.id());
-        }
-        bool c = false;
-        if (n.label() != s.label) { n.setLabel(key, s.label); c = true; }
-        for (int sig = 0; sig < kSignalCount; ++sig)
-            for (int ch = 0; ch < kChannelCount; ++ch)
-                if (n.hasSignal(NodeSignal(sig)) && n.signal(NodeSignal(sig)).scale[ch] != s.scale[sig][ch]) {
-                    n.setScale(key, NodeSignal(sig), NodeChannel(ch), s.scale[sig][ch]);
-                    c = true;
-                }
-        if (n.settings() != s.settings) {
-            n.setSettings(key, s.settings);
-            c = true;
-        }
-        if (c) changed.push_back(n.id());
+        const NodeRecord::Applied a = state->record.applyTo(key, *state->node);
+        if (a.moved)   moved.push_back(state->node->id());
+        if (a.changed) changed.push_back(state->node->id());
     }
 
     // Nodes that go: unlinked above, and nothing uses them any more. History keeps them.

@@ -20,15 +20,14 @@
 #include "ui/widgets/widgets.hpp"
 
 #include <imgui.h>
-#include <imgui_internal.h>   // FindHoveredWindowEx
 #include <algorithm>
-#include <cstdio>
 
 UserInterface::UserInterface()
 {
     // Every panel, in View menu order. Where each docks and when it draws are its own (PanelInfo).
-    m_canvasPanel = addPanel<CanvasPanel>();
-    m_graphPanel  = addPanel<GraphPanel>();
+    const CanvasPanel* canvas = addPanel<CanvasPanel>();
+    const GraphPanel*  graph  = addPanel<GraphPanel>();
+    m_intake.init(*canvas, *graph);   // the ones a drop can land on
     addPanel<ToolboxPanel>();
     addPanel<ProjectTabsPanel>();   // under the Toolbox: bars stack in this order
     addPanel<NavigatorPanel>();
@@ -61,6 +60,7 @@ bool UserInterface::init(GpuDevice& gpu, ProjectsManager& projects, const InputF
     m_projects = &projects;
     // What a user can do to the app and the open projects; the active project's own come
     // through it. Panels add their own interface actions (framing, selecting, opening menus) as they init.
+    m_unsaved.init(projects, m_actions, input);
     registerAppActions();
     registerProjectsManagerActions(m_projectActions, projects);
     registerProjectRequests();
@@ -78,6 +78,7 @@ bool UserInterface::init(GpuDevice& gpu, ProjectsManager& projects, const InputF
         Project keys;
         m_actions.delegateTo(&keys.actions());
         bindDefaultKeys(m_actions);
+        m_actions.delegateTo(nullptr);   // before the stand-in goes
     }
     m_actions.delegateTo(projects.empty() ? nullptr : &projects.active().actions());
     m_canvas.activate(projects.activeId());
@@ -96,11 +97,7 @@ void UserInterface::projectsChanged(const ProjectsEvent& e)
         if (e.id == m_projects->active().id()) m_actions.delegateTo(nullptr);
         for (auto p = m_panels.rbegin(); p != m_panels.rend(); ++p) (*p)->projectsChanged(e);
         m_canvas.close(e.id);
-        if (m_saving && m_saving->project == e.id) m_saving.reset();
-        if (m_confirm && m_confirm->project == e.id) {   // gone without an answer: on to the next
-            m_confirm.reset();
-            if (m_quitting) askNextBeforeQuit();
-        }
+        m_unsaved.closing(e.id);
         break;
     case ProjectsEvent::Type::Activated:
         m_actions.delegateTo(&m_projects->find(e.id)->actions());
@@ -118,7 +115,7 @@ void UserInterface::registerProjectRequests()
                         .enabled = [this, id] { return m_projectActions.find(id)->isEnabled(); },
                         .run = [this, id](const ActionArgs& args) {
             m_projectRequests.push_back({ id, args });
-            return true;
+            return ActionResult::later();   // applyProjectRequests runs it and reports how it went
         } });
     }
 }
@@ -132,45 +129,10 @@ void UserInterface::applyProjectRequests()
         const ProjectId project = target ? target->id() : kNoProject;
         const std::string file = File::name(args.get(ProjectArgs::kPath, std::string()));
         const ActionResult r = m_projectActions.run(id, std::move(args));
-        if (id == Actions::ProjectSave && m_saving && m_saving->project == project) answered(bool(r));   // the question's "Yes"
+        if (id == Actions::ProjectSave) m_unsaved.saved(project, bool(r));   // a question's "Yes", maybe
         if (r || r.error.empty()) continue;
         if (id == Actions::ProjectOpen) m_notices.post("Couldn't open " + file + ": " + r.error);
         if (id == Actions::ProjectSave) m_notices.post("Couldn't save: " + r.error);
-    }
-}
-
-void UserInterface::openFile(std::string path)
-{
-    if (!Project::isFileName(path)) {
-        m_importer.open(std::move(path));
-        return;
-    }
-    const std::lock_guard lock(m_inboxLock);
-    m_toOpen.push_back(std::move(path));
-}
-
-void UserInterface::saveTo(ProjectId project, std::string path)
-{
-    const std::lock_guard lock(m_inboxLock);
-    m_toSave.push_back({ project, std::move(path) });
-}
-
-void UserInterface::takeInbox()
-{
-    std::vector<std::string> open;
-    std::vector<std::pair<ProjectId, std::string>> save;
-    {
-        const std::lock_guard lock(m_inboxLock);
-        open.swap(m_toOpen);
-        save.swap(m_toSave);
-    }
-    for (std::string& path : open) m_actions.run(Actions::ProjectOpen, { { ProjectArgs::kPath, std::move(path) } });
-    for (auto& [project, path] : save) {
-        if (path.empty()) {   // the dialog was cancelled: not saved, so nothing closes
-            if (m_saving && m_saving->project == project) answered(false);
-            continue;
-        }
-        m_actions.run(Actions::ProjectSave, { { ProjectArgs::kProject, project }, { ProjectArgs::kPath, std::move(path) } });
     }
 }
 
@@ -233,10 +195,10 @@ void UserInterface::renderGpu(WGPUCommandEncoder enc)
 
 void UserInterface::draw()
 {
-    takeInbox();
+    for (const ProjectId cancelled : m_intake.takeInbox(m_actions)) m_unsaved.saved(cancelled, false);   // not saved: nothing closes
     applyProjectRequests();   // last frame's (its pictures are shown now): before anything draws
-    if (m_projects->empty() && m_importer.ready()) m_projectActions.run(Actions::ProjectNew);   // an image lands in a new one
-    const ImageImporter::Polled polled = m_importer.poll(m_actions);
+    if (m_projects->empty() && m_intake.importReady()) m_projectActions.run(Actions::ProjectNew);   // an image lands in a new one
+    const ImageImporter::Polled polled = m_intake.poll(m_actions);
     for (const ImageImporter::Imported& i : polled.imported)
         if (std::holds_alternative<ImageImporter::InGraph>(i.placement))
             m_actions.run(Actions::SelectionSet, selectionArgs(NodeSelection::only(i.node)));
@@ -257,8 +219,8 @@ void UserInterface::draw()
     for (Panel* p : m_drawOrder)
         if (p->m_info.slot != DockSlot::Toolbar && drawn(*p)) p->draw();
 
-    dispatchDrops();   // after the panels: their windows and rects are this frame's
-    drawConfirm();
+    m_intake.dispatchDrops(m_actions);   // after the panels: their windows and rects are this frame's
+    m_unsaved.draw();
     m_notices.draw();
     // A control held or a key down: a coalescing setting (a slider drag, a held [ ) is still going.
     m_actions.endFrame(ImGui::IsAnyItemActive() || m_input->anyButtonHeld() || !m_input->held.empty());
@@ -307,106 +269,4 @@ void UserInterface::drawMenuBar()
         ImGui::EndMenu();
     }
     ImGui::EndMainMenuBar();
-}
-
-void UserInterface::dispatchDrops()
-{
-    for (Drop& d : m_drops) {
-        ImGuiWindow* top = nullptr;
-        ImGuiWindow* underMoving = nullptr;
-        ImGui::FindHoveredWindowEx(d.pos, false, &top, &underMoving);   // the window in front at that point
-        Vec2 world;
-        ImVec2 nodePos;
-        if (Project::isFileName(d.path))   // a project: opened, wherever it lands
-            m_actions.run(Actions::ProjectOpen, { { ProjectArgs::kPath, std::move(d.path) } });
-        else if (m_canvasPanel->dropTarget(top, d.pos, world))
-            m_importer.open(std::move(d.path), ImageImporter::OnCanvas{ world.x, world.y });
-        else if (m_graphPanel->dropTarget(top, d.pos, nodePos))
-            m_importer.open(std::move(d.path), ImageImporter::InGraph{ nodePos.x, nodePos.y });
-        else
-            Log::info("drop", "ignored (not on the canvas or the graph): %s", d.path.c_str());
-    }
-    m_drops.clear();
-}
-
-void UserInterface::ask(ProjectId project, bool quitting)
-{
-    m_confirm = Confirm{ .quitting = quitting, .project = project };
-}
-
-void UserInterface::askNextBeforeQuit()
-{
-    for (const auto& d : m_projects->all())
-        if (d->unsaved() && std::find(m_keptUnsaved.begin(), m_keptUnsaved.end(), d->id()) == m_keptUnsaved.end()) {
-            ask(d->id(), true);
-            return;
-        }
-    m_quitting = false;
-    m_quit = true;
-}
-
-void UserInterface::answered(bool saved)
-{
-    const Confirm was = *m_saving;
-    m_saving.reset();
-    if (!saved) stopAsking();   // the error is told (a notice), or the dialog was cancelled
-    else if (was.quitting) askNextBeforeQuit();
-    else m_actions.run(Actions::ProjectClose, { { ProjectArgs::kProject, was.project } });
-}
-
-void UserInterface::stopAsking()
-{
-    m_confirm.reset();
-    m_saving.reset();
-    m_quitting = false;
-    m_keptUnsaved.clear();
-}
-
-void UserInterface::drawConfirm()
-{
-    constexpr const char* kPopup = "Unsaved changes##confirm";
-    if (!m_confirm) return;
-    const Project* d = m_projects->find(m_confirm->project);
-    if (!d) {
-        stopAsking();
-        return;
-    }
-    if (!ImGui::IsPopupOpen(kPopup)) ImGui::OpenPopup(kPopup);
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));   // the window's middle, as its text changes too
-    if (!ImGui::BeginPopupModal(kPopup, nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) return;
-    ImGui::GetCurrentContext()->DimBgRatio = 1.0f;   // the dim behind it at once (ImGui fades it in over a sixth of a second)
-    char text[256];
-    std::snprintf(text, sizeof text, "Save changes to %s before %s?", d->name().c_str(), m_confirm->quitting ? "quitting" : "closing");
-    ImGui::TextUnformatted(text);
-    Widgets::sectionGap();
-
-    int answer = Widgets::buttonRow({ "Yes", "No", "Cancel" });   // alike, centred under the text
-    if (m_actions.pressed(Actions::DialogCancel, *m_input)) answer = 2;
-
-    const Confirm confirm = *m_confirm;
-    switch (answer) {
-    case 0:   // saved first (asked where, if it has no file yet): answered() goes on once it is
-        m_confirm.reset();
-        m_saving = confirm;
-        if (!m_actions.run(Actions::FileSave, { { ProjectArgs::kProject, confirm.project } })) answered(false);   // can't now (an edit going on)
-        break;
-    case 1:
-        m_confirm.reset();
-        if (!confirm.quitting) {
-            m_actions.run(Actions::ProjectClose, { { ProjectArgs::kProject, confirm.project }, { ProjectArgs::kDiscard, true } });
-        } else {
-            m_keptUnsaved.push_back(confirm.project);
-            askNextBeforeQuit();   // the next one's question in this one's place
-        }
-        break;
-    case 2:
-        stopAsking();
-        break;
-    default: break;
-    }
-    if (!m_confirm) {
-        ImGui::CloseCurrentPopup();
-        ImGui::GetCurrentContext()->DimBgRatio = 0.0f;   // ... and gone at once
-    }
-    ImGui::EndPopup();
 }

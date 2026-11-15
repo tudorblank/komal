@@ -16,12 +16,7 @@ void UserInterface::registerAppActions()
 
     // ---------------------------------------------------------------- app
     // Each unsaved project asked about first, in turn (drawConfirm).
-    m_actions.add({ .id = Actions::AppQuit, .title = "Quit", .kind = K::AppState, .run = [this] {
-        if (m_quitting || m_saving) return;   // asking already
-        m_quitting = true;
-        m_keptUnsaved.clear();
-        askNextBeforeQuit();
-    } });
+    m_actions.add({ .id = Actions::AppQuit, .title = "Quit", .kind = K::AppState, .run = [this] { m_unsaved.askToQuit(); } });
     // Open / Save / Save As: the OS's dialogs pick the file, project.open and project.save use it.
     const auto settled = [this] { return m_projectActions.find(Actions::ProjectSave)->isEnabled(); };
     m_actions.add({ .id = Actions::FileOpen, .title = "Open...", .kind = K::Interface,
@@ -35,22 +30,22 @@ void UserInterface::registerAppActions()
     } });
     // Its own file if it has one, else asked where (Save As).
     m_actions.add({ .id = Actions::FileSave, .title = "Save", .kind = K::Interface, .args = { Arg::id(ProjectArgs::kProject).optional() },
-                    .enabled = settled, .run = [this](const ActionArgs& a) {
+                    .enabled = settled, .run = [this](const ActionArgs& a) -> ActionResult {
         const Project* d = projectOf(a);
-        if (!d) return false;
-        if (d->path().empty()) return bool(m_actions.run(Actions::FileSaveAs, { { ProjectArgs::kProject, d->id() } }));
-        return bool(m_actions.run(Actions::ProjectSave, { { ProjectArgs::kProject, d->id() } }));
+        if (!d) return {};
+        if (d->path().empty()) return m_actions.run(Actions::FileSaveAs, { { ProjectArgs::kProject, d->id() } });
+        return m_actions.run(Actions::ProjectSave, { { ProjectArgs::kProject, d->id() } });   // queued: how it went is a notice
     } });
     // Closes a project (the active one if none is given), asking first if it's unsaved; project.close does it.
     m_actions.add({ .id = Actions::FileClose, .title = "Close", .kind = K::Interface, .args = { Arg::id(ProjectArgs::kProject).optional() },
-                    .run = [this](const ActionArgs& a) {
+                    .run = [this](const ActionArgs& a) -> ActionResult {
         const Project* d = projectOf(a);
-        if (!d) return false;
+        if (!d) return {};
         if (d->unsaved()) {
-            if (!m_confirm && !m_saving) ask(d->id(), false);
-            return true;
+            m_unsaved.askToClose(d->id());
+            return ActionResult::later();   // asked first: closed (or not) once answered
         }
-        return bool(m_actions.run(Actions::ProjectClose, { { ProjectArgs::kProject, d->id() } }));
+        return m_actions.run(Actions::ProjectClose, { { ProjectArgs::kProject, d->id() } });   // queued
     } });
     // Opens the dialog; the import itself is logged when it lands (image.import).
     m_actions.add({ .id = Actions::FileImport, .title = "Import Image...", .kind = K::Interface,

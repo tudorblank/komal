@@ -138,6 +138,12 @@ StackGap settleDrop(StackGap drop, const std::function<NodeItem(const StackGap&)
     return drop;
 }
 
+StackGap stackPlace(const NodeItem& item, float y, StackGap::Kind kind, bool carriesArtboard,
+                    const std::vector<StackRowRef>& carried, const std::function<NodeItem(const StackGap&)>& layoutOf)
+{
+    return settleDrop(stackDrop(item, y, kind, carriesArtboard, carried), layoutOf, y, kind, carriesArtboard, carried);
+}
+
 StackPlace landing(const NodeItem& item, const StackGap& gap)
 {
     if (gap.target() == StackGap::Target::Home && item.origin) return *item.origin;   // where it was: nothing changes

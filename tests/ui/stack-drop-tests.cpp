@@ -58,11 +58,10 @@ const NodeItemLayerRow& rowOf(const Workspace& p, const NodeItem& item, NodeId l
     return item.layers.front();
 }
 
-// The drop at y as the panel works it out: on the layout the drag shows now, then settled.
+// The drop at y as the panel works it out (stackPlace): on the layout the drag shows now, then settled.
 StackGap settled(const Stack& s, const StackGap& now, float y, const std::vector<StackRowRef>& carried = {}, StackGap::Kind kind = StackGap::Kind::Rows)
 {
-    const StackGap drop = stackDrop(s.layout(now, carried), y, kind, false, carried);
-    return settleDrop(drop, [&](const StackGap& g) { return s.layout(g, carried); }, y, kind, false, carried);
+    return stackPlace(s.layout(now, carried), y, kind, false, carried, [&](const StackGap& g) { return s.layout(g, carried); });
 }
 
 const NodeItemLayerRow& boardRow(const Stack& s, const NodeItem& item, ArtboardId a) { return rowOf(s.p, item, kNoNodeId, a); }

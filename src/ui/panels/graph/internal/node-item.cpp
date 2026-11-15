@@ -1,4 +1,5 @@
 #include "ui/panels/graph/internal/node-item.hpp"
+#include "project/stack-rows.hpp"
 #include "project/workspace.hpp"
 #include "ui/panels/graph/internal/layout.hpp"
 
@@ -168,9 +169,13 @@ private:
             for (uint32_t r = e.begin; r < e.end; ++r) g.members.push_back({ r, has(m_stack.lifted, { rows[r]->id(), kNoArtboard }) });
             entries.push_back(std::move(g));
         }
-        const auto left = [](const auto& v) {   // what isn't carried
-            return size_t(std::count_if(v.begin(), v.end(), [](const auto& x) { return !x.carried; }));
-        };
+        // Places are counted among the rows left, as moveRows counts them (rowsLeft).
+        StackMove carried;
+        for (const StackRowRef& r : m_stack.lifted)
+            if (r.layer != kNoNodeId) carried.layers.push_back(r.layer);
+            else carried.groups.push_back(r.artboard);
+        const StackRows now = stackRowsOf(m_node);
+        const auto left = [&](ArtboardId inside) { return rowsLeft(now, carried, inside); };
 
         // A drag over it: the room (a container and a position among the rows left; none: SIZE_MAX),
         // or the artboard whose row it's on.
@@ -218,7 +223,7 @@ private:
         } else {
             // Top first. `below`: the rows left under what comes next, so the room goes in where as
             // many are under it as its position says.
-            size_t below = left(entries);
+            size_t below = left(kNoArtboard);
             bool roomDone = false;
             for (size_t i = entries.size(); i-- > 0;) {
                 if (gapInto == kNoArtboard && !roomDone && below == gapAt) { gapRow(kNoArtboard); roomDone = true; }
@@ -240,7 +245,7 @@ private:
                 }
                 const bool folded = std::find(m_view.folded.begin(), m_view.folded.end(), e.key) != m_view.folded.end();
                 const ImRect head = place(kArtboardRowH, kNoArtboard);
-                m_item.layers.push_back({ head, NodeItemLayerRow::Artboard{ e.key, folded, uint32_t(left(e.members)) }, kNoArtboard,
+                m_item.layers.push_back({ head, NodeItemLayerRow::Artboard{ e.key, folded, uint32_t(left(e.key)) }, kNoArtboard,
                                           selected({ kNoNodeId, e.key }) });
                 widget(ArtboardFoldControl{ e.key }, artboardFoldRect(head));
                 widget(ArtboardMuteControl{ e.key }, artboardEyeRect(head));
@@ -255,7 +260,7 @@ private:
                         if (!m.carried) m_item.ends.push_back({ InputSlot::stackLayer(m.row), ImVec2(m_x0, head.GetCenter().y) });
                     if (gapInto == e.key) gapRow(e.key);   // folded while the room was in it
                 } else {
-                    size_t in = left(e.members);
+                    size_t in = left(e.key);
                     bool done = false;
                     for (size_t m = e.members.size(); m-- > 0;) {
                         if (gapInto == e.key && !done && in == gapAt) { gapRow(e.key); done = true; }

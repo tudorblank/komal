@@ -1,4 +1,5 @@
 #include "ui/panels/graph/graph-panel.hpp"
+#include "ui/panels/panel-window.hpp"
 #include "ui/input-owner.hpp"
 #include "command/actions.hpp"
 #include "base/perf.hpp"

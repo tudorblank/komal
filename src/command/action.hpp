@@ -34,10 +34,14 @@ struct ActionResult {
     bool    done = false;
     int64_t made = 0;
     std::string error{};
+    // Taken, to run later (between frames, by its owner): done is true, but its outcome (made,
+    // error) isn't known yet; its owner reports that when it runs.
+    bool    queued = false;
     explicit operator bool() const { return done; }
     template<class Id> requires std::is_enum_v<Id>
     Id madeAs() const { return Id(made); }   // `made` as the id type it is
     static ActionResult refused(std::string error) { return { false, 0, std::move(error) }; }
+    static ActionResult later() { return { true, 0, {}, true }; }
 };
 
 // A handler: takes the arguments (or none), returns an ActionResult, a bool (done), or nothing (done).

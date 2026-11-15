@@ -17,6 +17,47 @@ bool hasGroup(const std::vector<StackGroup>& groups, GroupKey key)
     return std::any_of(groups.begin(), groups.end(), [&](const StackGroup& g) { return g.key == key; });
 }
 
+// The top level split: what `move` takes out, in stack order (a group whole; a layer from wherever
+// it is: a group moving takes its layers along), and what's left (a group keeps its place, with
+// the layers it keeps).
+struct Split { std::vector<Entry> moved, left; };
+Split split(const StackRows& now, const StackMove& move)
+{
+    Split out;
+    for (const StackGroups::Entry& g : StackGroups::entries(now.groups, now.layers.size())) {
+        Entry e{ g.group, { now.layers.begin() + g.begin, now.layers.begin() + g.end } };
+        if (e.group != kNoGroup && has(move.groups, e.group)) { out.moved.push_back(std::move(e)); continue; }
+        if (e.group == kNoGroup) {
+            (has(move.layers, e.layers[0]) ? out.moved : out.left).push_back(std::move(e));
+            continue;
+        }
+        Entry kept{ e.group, {} };
+        for (NodeId id : e.layers) {
+            if (has(move.layers, id)) out.moved.push_back({ kNoGroup, { id } });
+            else kept.layers.push_back(id);
+        }
+        out.left.push_back(std::move(kept));
+    }
+    return out;
+}
+
+}
+
+StackRows stackRowsOf(const Node& stack)
+{
+    StackRows rows;
+    for (const NodePtr& l : stack.links().layers) rows.layers.push_back(l->id());
+    rows.groups = stackSettings(stack).groups;
+    return rows;
+}
+
+size_t rowsLeft(const StackRows& now, const StackMove& carried, GroupKey into)
+{
+    const Split s = split(now, carried);
+    if (into == kNoGroup) return s.left.size();
+    for (const Entry& e : s.left)
+        if (e.group == into) return e.layers.size();
+    return 0;
 }
 
 std::optional<StackRows> moveRows(const StackRows& now, const StackMove& move)
@@ -27,26 +68,7 @@ std::optional<StackRows> moveRows(const StackRows& now, const StackMove& move)
         if (key == kNoGroup || !hasGroup(now.groups, key)) return std::nullopt;
     if (move.into != kNoGroup && (!move.groups.empty() || !hasGroup(now.groups, move.into))) return std::nullopt;   // groups don't nest
 
-    std::vector<Entry> entries;
-    for (const StackGroups::Entry& e : StackGroups::entries(now.groups, now.layers.size()))
-        entries.push_back({ e.group, { now.layers.begin() + e.begin, now.layers.begin() + e.end } });
-
-    // Take out what moves, in stack order: a group whole; a layer from wherever it is (a group
-    // moving takes its layers along).
-    std::vector<Entry> moved, left;
-    for (Entry& e : entries) {
-        if (e.group != kNoGroup && has(move.groups, e.group)) { moved.push_back(std::move(e)); continue; }
-        if (e.group == kNoGroup) {
-            (has(move.layers, e.layers[0]) ? moved : left).push_back(std::move(e));
-            continue;
-        }
-        Entry kept{ e.group, {} };
-        for (NodeId id : e.layers) {
-            if (has(move.layers, id)) moved.push_back({ kNoGroup, { id } });
-            else kept.layers.push_back(id);
-        }
-        left.push_back(std::move(kept));
-    }
+    auto [moved, left] = split(now, move);
     if (moved.empty()) return std::nullopt;
 
     // Put them back at the place.

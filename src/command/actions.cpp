@@ -212,6 +212,16 @@ void ActionRegistry::cancelGesture(ActionId id)
     record(*a, logged, ActionLogEntry::Status::Cancelled);
 }
 
+void ActionRegistry::delegateTo(ActionRegistry* other)
+{
+    if (m_delegate && m_delegate != other) {
+        std::vector<ActionId> open;
+        for (const auto& [name, g] : m_delegate->m_gestures) open.push_back(g.id);
+        for (const ActionId id : open) m_delegate->cancelGesture(id);
+    }
+    m_delegate = other;
+}
+
 bool ActionRegistry::inGesture(ActionId id) const
 {
     if (!own(id) && m_delegate) return m_delegate->inGesture(id);

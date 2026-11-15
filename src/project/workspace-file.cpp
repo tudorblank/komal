@@ -1,4 +1,5 @@
 #include "project/workspace-file.hpp"
+#include "base/overloaded.hpp"
 #include "base/bytes.hpp"
 #include "project/fits.hpp"
 #include "node/node-kinds.hpp"
@@ -17,8 +18,12 @@ constexpr size_t  kTileBytes = sizeof(RGBA) * Tile::kPixels;
 
 // A node's settings: a tag, then its kind's fields. A kind with new settings adds a tag here.
 enum class SettingsTag : uint8_t { None = 0, Raster = 1, Move = 2, Compositor = 3 };
-
-template <class... F> struct Overloaded : F... { using F::operator()...; };
+// Each tag is its NodeSettings alternative's index, and every alternative has one: new settings
+// don't compile until they have a tag, and then readSettings' switch needs its case.
+template <SettingsTag T, class S> constexpr bool kTagIs = std::is_same_v<std::variant_alternative_t<size_t(T), NodeSettings>, S>;
+static_assert(kTagIs<SettingsTag::None, NoSettings> && kTagIs<SettingsTag::Raster, RasterSettings> &&
+              kTagIs<SettingsTag::Move, MoveSettings> && kTagIs<SettingsTag::Compositor, CompositorSettings> &&
+              std::variant_size_v<NodeSettings> == size_t(SettingsTag::Compositor) + 1, "a tag for every kind of settings");
 
 void writeSettings(ByteWriter& w, const NodeSettings& s)
 {

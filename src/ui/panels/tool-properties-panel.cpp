@@ -1,4 +1,5 @@
 #include "ui/panels/tool-properties-panel.hpp"
+#include "ui/panels/panel-window.hpp"
 #include "ui/tools/tool-manager.hpp"
 #include "ui/widgets/widgets.hpp"
 

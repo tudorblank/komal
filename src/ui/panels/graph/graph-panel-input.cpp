@@ -5,6 +5,9 @@
 #include "project/workspace.hpp"
 #include "ui/panels/graph/internal/layout.hpp"
 #include "ui/navigation.hpp"
+#include "base/overloaded.hpp"
+#include "ui/panels/graph/internal/link-drop.hpp"
+#include "ui/panels/graph/internal/row-pick.hpp"
 
 #include <imgui.h>
 #include <algorithm>
@@ -99,32 +102,37 @@ void GraphPanel::handleMouse(const GraphHit& hit, bool hovered)
 void GraphPanel::endDrag(const GraphHit& hit)
 {
     const Drag drag = std::exchange(m_drag, std::monostate{});
-    if (const auto* press = std::get_if<PressNode>(&drag)) {   // a click (no drag) on a node of a bigger selection switches to it
-        if (press->wasSelected) select(selection().only(m_press.hit.node()));
-    } else if (std::holds_alternative<PressEmpty>(drag)) {   // a click on nothing
-        if (!m_press.ctrl && !m_press.shift) {
-            select({});
-            scene().pickRows(kNoNodeId, {}, {});
-        }
-    } else if (const auto* move = std::get_if<MoveNodes>(&drag)) {
-        ui().actions.endGesture(Actions::NodeDrag, { { kDx, move->delta.x }, { kDy, move->delta.y } });
-    } else if (const auto* link = std::get_if<LinkDrag>(&drag)) {
-        finishLink(*link, hit);
-    } else if (const auto* scale = std::get_if<ScaleDrag>(&drag)) {   // the drag is over: now the graph changes, once
-        ui().actions.endGesture(Actions::SignalScrub, scale->args);
-    } else if (const auto* offset = std::get_if<OffsetDrag>(&drag)) {
-        ui().actions.endGesture(Actions::MoveScrub, offset->args);
-    } else if (const auto* rows = std::get_if<LayerDrag>(&drag)) {
-        if (!rows->lifted) {   // a click: on a row of a bigger pick, just that row
-            if (rows->wasPicked) scene().pickRows(rows->node, { rows->pressed }, rows->pressed);
-        } else if (const NodeItem* s = scene().item(rows->node); s && rows->at.kind() == StackGap::Kind::Rows && rows->at.target() != StackGap::Target::Home) {   // once, where it lands
-            const StackPlace place = landing(*s, rows->at);
-            ActionArgs args = rowArgs(rows->node, rows->rows);
+    std::visit(Overloaded{   // every kind of drag ends here: a new one won't compile without its end
+        [](std::monostate) {},
+        [&](const PressNode& press) {   // a click (no drag) on a node of a bigger selection switches to it
+            if (press.wasSelected) select(selection().only(m_press.hit.node()));
+        },
+        [&](const PressEmpty&) {   // a click on nothing
+            if (!m_press.ctrl && !m_press.shift) {
+                select({});
+                scene().pickRows(kNoNodeId, {}, {});
+            }
+        },
+        [&](const MoveNodes& move) { ui().actions.endGesture(Actions::NodeDrag, { { kDx, move.delta.x }, { kDy, move.delta.y } }); },
+        [](const RubberBand&) {},   // its selection is made as it goes
+        [&](const LinkDrag& link) { finishLink(link, hit); },
+        [&](const ScaleDrag& scale) { ui().actions.endGesture(Actions::SignalScrub, scale.args); },   // the drag is over: now the graph changes, once
+        [&](const OffsetDrag& offset) { ui().actions.endGesture(Actions::MoveScrub, offset.args); },
+        [&](const LayerDrag& rows) {
+            if (!rows.lifted) {   // a click: on a row of a bigger pick, just that row
+                if (rows.wasPicked) scene().pickRows(rows.node, { rows.pressed }, rows.pressed);
+                return;
+            }
+            const NodeItem* s = scene().item(rows.node);
+            if (!s || rows.at.kind() != StackGap::Kind::Rows || rows.at.target() == StackGap::Target::Home) return;
+            const StackPlace place = landing(*s, rows.at);   // once, where it lands
+            ActionArgs args = rowArgs(rows.node, rows.rows);
             args.add({ kPlaceAt, place.at });
             if (place.into != kNoArtboard) args.add({ kIntoArtboard, place.into });
-            if (ui().actions.run(Actions::LayersMove, args)) dropped(rows->node, place);
-        }
-    }
+            if (ui().actions.run(Actions::LayersMove, args)) dropped(rows.node, place);
+        },
+        [](const MinimapDrag&) {},
+    }, drag);
 }
 
 void GraphPanel::pressNode(NodeId id)
@@ -161,47 +169,56 @@ void GraphPanel::pressWidget(const WidgetHit& hit, bool doubleClick)
     const NodeSettings settings = n->settings();
     scene().bringToFront(hit.node);
 
-    if (w.as<TitleControl>()) {
-        if (doubleClick) ui().actions.run(Actions::GraphRename, { { kNode, hit.node } });
-        else             pressNode(hit.node);
-    } else if (const auto* raster = std::get_if<RasterSettings>(&settings); raster && w.as<LockControl>()) {
-        ui().actions.run(Actions::RasterLock, { { kNode, hit.node }, { kOn, !raster->locked } });
-    } else if (raster && w.as<LockAlphaControl>()) {
-        ui().actions.run(Actions::RasterLockAlpha, { { kNode, hit.node }, { kOn, !raster->alphaLocked } });
-    } else if (const auto* section = w.as<SectionControl>()) {
-        scene().toggleSection(hit.node, section->signal);
-    } else if (const auto* scale = w.as<ScaleControl>()) {   // the track drags
-        if (doubleClick) m_menus.openValue(GraphMenus::ScaleValue{ hit.node, scale->signal, scale->channel });
-        else if (ui().actions.beginGesture(Actions::SignalScrub, { { kNode, hit.node }, { kSignal, scale->signal }, { kChannel, scale->channel } }))
-            m_drag = ScaleDrag{ *scale, {} };
-    } else if (const auto* value = w.as<ScaleValueControl>()) {   // the value types
-        if (doubleClick) m_menus.openValue(GraphMenus::ScaleValue{ hit.node, value->signal, value->channel });
-    } else if (const auto* offset = w.as<OffsetControl>()) {
-        const auto* move = std::get_if<MoveSettings>(&settings);
-        if (!move) return;
-        if (doubleClick) {
-            m_menus.openValue(GraphMenus::OffsetValue{ hit.node, offset->axis });
-            return;
-        }
-        if (ui().actions.beginGesture(Actions::MoveScrub, { { kNode, hit.node } }))
-            m_drag = OffsetDrag{ *offset, offset->axis == 0 ? move->x : move->y, {} };
-    } else if (const auto* layer = w.as<LayerControl>()) {
-        if (const NodePtr l = ui().workspace().inputAt(hit.node, InputSlot::stackLayer(layer->layer)))
-            pressRow(hit.node, { l->id(), kNoArtboard }, m_press.graph.y - w.rect.Min.y);
-    } else if (const auto* mute = w.as<LayerMuteControl>()) {
-        if (const NodePtr l = ui().workspace().inputAt(hit.node, InputSlot::stackLayer(mute->layer)); n && l)
-            ui().actions.run(Actions::LayerMute, { { kNode, hit.node }, { kLayer, l->id() }, { kOn, !stackSettings(*n).mutes(l->id()) } });
-    } else if (const auto* board = w.as<ArtboardControl>()) {
-        if (doubleClick) ui().actions.run(Actions::GraphArtboardRename, { { kArtboard, board->artboard } });
-        else             pressRow(hit.node, { kNoNodeId, board->artboard }, m_press.graph.y - w.rect.Min.y);
-    } else if (const auto* fold = w.as<ArtboardFoldControl>()) {
-        scene().toggleArtboard(hit.node, fold->artboard);
-    } else if (const auto* eye = w.as<ArtboardMuteControl>()) {
-        if (const Artboard* a = ui().workspace().artboard(eye->artboard))
-            ui().actions.run(Actions::ArtboardSet, { { kArtboard, a->id }, { kVisible, !a->visible } });
-    } else if (const auto* color = w.as<ArtboardColorControl>()) {
-        ui().actions.run(Actions::GraphArtboardColor, { { kArtboard, color->artboard } });
-    }
+    const auto* raster = std::get_if<RasterSettings>(&settings);
+    std::visit(Overloaded{   // every control does something here: a new one won't compile without it
+        [&](const TitleControl&) {
+            if (doubleClick) ui().actions.run(Actions::GraphRename, { { kNode, hit.node } });
+            else             pressNode(hit.node);
+        },
+        [&](const LockControl&) {
+            if (raster) ui().actions.run(Actions::RasterLock, { { kNode, hit.node }, { kOn, !raster->locked } });
+        },
+        [&](const LockAlphaControl&) {
+            if (raster) ui().actions.run(Actions::RasterLockAlpha, { { kNode, hit.node }, { kOn, !raster->alphaLocked } });
+        },
+        [&](const SectionControl& section) { scene().toggleSection(hit.node, section.signal); },
+        [&](const ScaleControl& scale) {   // the track drags
+            if (doubleClick) m_menus.openValue(GraphMenus::ScaleValue{ hit.node, scale.signal, scale.channel });
+            else if (ui().actions.beginGesture(Actions::SignalScrub, { { kNode, hit.node }, { kSignal, scale.signal }, { kChannel, scale.channel } }))
+                m_drag = ScaleDrag{ scale, {} };
+        },
+        [&](const ScaleValueControl& value) {   // the value types
+            if (doubleClick) m_menus.openValue(GraphMenus::ScaleValue{ hit.node, value.signal, value.channel });
+        },
+        [&](const OffsetControl& offset) {
+            const auto* move = std::get_if<MoveSettings>(&settings);
+            if (!move) return;
+            if (doubleClick) {
+                m_menus.openValue(GraphMenus::OffsetValue{ hit.node, offset.axis });
+                return;
+            }
+            if (ui().actions.beginGesture(Actions::MoveScrub, { { kNode, hit.node } }))
+                m_drag = OffsetDrag{ offset, offset.axis == 0 ? move->x : move->y, {} };
+        },
+        [&](const LayerControl& layer) {
+            if (const NodePtr l = ui().workspace().inputAt(hit.node, InputSlot::stackLayer(layer.layer)))
+                pressRow(hit.node, { l->id(), kNoArtboard }, m_press.graph.y - w.rect.Min.y);
+        },
+        [&](const LayerMuteControl& mute) {
+            if (const NodePtr l = ui().workspace().inputAt(hit.node, InputSlot::stackLayer(mute.layer)))
+                ui().actions.run(Actions::LayerMute, { { kNode, hit.node }, { kLayer, l->id() }, { kOn, !stackSettings(*n).mutes(l->id()) } });
+        },
+        [&](const ArtboardControl& board) {
+            if (doubleClick) ui().actions.run(Actions::GraphArtboardRename, { { kArtboard, board.artboard } });
+            else             pressRow(hit.node, { kNoNodeId, board.artboard }, m_press.graph.y - w.rect.Min.y);
+        },
+        [&](const ArtboardFoldControl& fold) { scene().toggleArtboard(hit.node, fold.artboard); },
+        [&](const ArtboardMuteControl& eye) {
+            if (const Artboard* a = ui().workspace().artboard(eye.artboard))
+                ui().actions.run(Actions::ArtboardSet, { { kArtboard, a->id }, { kVisible, !a->visible } });
+        },
+        [&](const ArtboardColorControl& color) { ui().actions.run(Actions::GraphArtboardColor, { { kArtboard, color.artboard } }); },
+    }, w.control);
 }
 
 Clock::Seconds GraphPanel::nextFrameIn() const
@@ -229,66 +246,77 @@ void GraphPanel::updateDrag()
         m_drag = RubberBand{ std::move(empty->base) };
     }
 
-    if (auto* move = std::get_if<MoveNodes>(&m_drag)) {
-        move->delta = ImVec2(gm.x - m_press.graph.x, gm.y - m_press.graph.y);
-        ui().actions.updateGesture(Actions::NodeDrag, { { kDx, move->delta.x }, { kDy, move->delta.y } });
-    } else if (const auto* rubber = std::get_if<RubberBand>(&m_drag)) {
-        const ImRect band(ImMin(m_press.graph, gm), ImMax(m_press.graph, gm));
-        NodeSelection::Set next = rubber->base;
-        for (const auto& [id, s] : scene().items()) {
-            if (scene().isMaster(id) || !s.bounds.Overlaps(band)) continue;   // the master isn't in this space
-            if (m_press.ctrl && !m_press.shift && rubber->base.contains(id)) next.erase(id);   // Ctrl: toggle
-            else next.insert(id);
-        }
-        select(selection().withIds(std::move(next)));
-    } else if (auto* scale = std::get_if<ScaleDrag>(&m_drag)) {
-        const NodeItem* s = scene().item(pressed);
-        if (!s) return;
-        for (const NodeItemChannelRow& row : s->channels)
-            if (row.signal == scale->control.signal && row.channel == scale->control.channel) {
-                // Previewed only: the graph changes once, on release (see EditPreview).
-                const float value = std::round(std::clamp((gm.x - row.track.Min.x) / row.track.GetWidth(), 0.0f, 1.0f) * 1000.0f) / 1000.0f;
-                scale->args = { { kNode, pressed }, { kSignal, row.signal }, { kChannel, row.channel }, { kValue, value } };
-                ui().actions.updateGesture(Actions::SignalScrub, scale->args);
+    std::visit(Overloaded{   // every kind of drag follows the mouse here
+        [](std::monostate) {},
+        [](PressNode&) {},    // not moved yet
+        [](PressEmpty&) {},
+        [&](MoveNodes& move) {
+            move.delta = ImVec2(gm.x - m_press.graph.x, gm.y - m_press.graph.y);
+            ui().actions.updateGesture(Actions::NodeDrag, { { kDx, move.delta.x }, { kDy, move.delta.y } });
+        },
+        [&](const RubberBand& rubber) {
+            const ImRect band(ImMin(m_press.graph, gm), ImMax(m_press.graph, gm));
+            NodeSelection::Set next = rubber.base;
+            for (const auto& [id, s] : scene().items()) {
+                if (scene().isMaster(id) || !s.bounds.Overlaps(band)) continue;   // the master isn't in this space
+                if (m_press.ctrl && !m_press.shift && rubber.base.contains(id)) next.erase(id);   // Ctrl: toggle
+                else next.insert(id);
             }
-    } else if (auto* offset = std::get_if<OffsetDrag>(&m_drag)) {
-        const Node* n = ui().workspace().find(pressed);
-        const NodeSettings settings = n ? n->settings() : NodeSettings{};
-        const auto* current = std::get_if<MoveSettings>(&settings);
-        if (!current) return;
-        const int v = offset->start + int(std::lround(gm.x - m_press.graph.x));   // one pixel per graph unit
-        const int x = offset->control.axis == 0 ? v : current->x;
-        const int y = offset->control.axis == 1 ? v : current->y;
-        offset->args = { { kNode, pressed }, { kOffsetX, x }, { kOffsetY, y } };   // previewed only, applied on release
-        ui().actions.updateGesture(Actions::MoveScrub, offset->args);
-    } else if (auto* row = std::get_if<LayerDrag>(&m_drag)) {
-        const NodeItem* s = scene().item(row->node);
-        if (!s) return;
-        if (!row->lifted) {
-            // Carried from now on. Nothing is dropped anywhere yet: the stack is laid out with its
-            // spot kept first (next frame), so the first drop is worked out on that, back home.
-            if (moved) row->lifted = true;
-            return;
-        }
-        // One layer pulled out sideways: it comes off the stack, carried as a link.
-        constexpr float kPullOut = 40.0f;
-        const bool one = row->rows.size() == 1 && row->rows[0].layer != kNoNodeId;
-        if (one && (gm.x < s->bounds.Min.x - kPullOut || gm.x > s->bounds.Max.x + kPullOut)) {
-            const NodeId layer = row->rows[0].layer;
-            const std::optional<size_t> at = Links::layerIndex(*ui().workspace().find(row->node), layer);
-            m_drag = std::monostate{};
-            if (!at) return;
-            const InputSlot slot = InputSlot::stackLayer(uint32_t(*at));
-            if (ui().actions.beginGesture(Actions::LinkMove, { { kSource, layer }, { kFrom, row->node }, { kSlot, slot } }))
-                m_drag = LinkDrag{ .node = layer, .pickedUp = true };
-            return;
-        }
-        // Where the floating rows' middle is: the gap opens there.
-        const bool artboard = std::any_of(row->rows.begin(), row->rows.end(), [](const StackRowRef& r) { return r.artboard != kNoArtboard; });
-        row->at = stackPlace(row->node, ImVec2(gm.x, gm.y - row->grab + kLayerRowH * 0.5f), StackGap::Kind::Rows, artboard, row->rows);
-    } else if (std::holds_alternative<MinimapDrag>(m_drag)) {   // held on the navigator: the view follows the mouse
-        if (ImGui::GetIO().MouseDelta.x != 0.0f || ImGui::GetIO().MouseDelta.y != 0.0f) m_minimap.drag(mouse, camera(), m_surface.size());
-    }
+            select(selection().withIds(std::move(next)));
+        },
+        [](LinkDrag&) {},   // followed by the panel's frame (updateStackGap, the link target)
+        [&](ScaleDrag& scale) {
+            const NodeItem* s = scene().item(pressed);
+            if (!s) return;
+            for (const NodeItemChannelRow& row : s->channels)
+                if (row.signal == scale.control.signal && row.channel == scale.control.channel) {
+                    // Previewed only: the graph changes once, on release (see EditPreview).
+                    const float value = std::round(std::clamp((gm.x - row.track.Min.x) / row.track.GetWidth(), 0.0f, 1.0f) * 1000.0f) / 1000.0f;
+                    scale.args = { { kNode, pressed }, { kSignal, row.signal }, { kChannel, row.channel }, { kValue, value } };
+                    ui().actions.updateGesture(Actions::SignalScrub, scale.args);
+                }
+        },
+        [&](OffsetDrag& offset) {
+            const Node* n = ui().workspace().find(pressed);
+            const NodeSettings settings = n ? n->settings() : NodeSettings{};
+            const auto* current = std::get_if<MoveSettings>(&settings);
+            if (!current) return;
+            const int v = offset.start + int(std::lround(gm.x - m_press.graph.x));   // one pixel per graph unit
+            const int x = offset.control.axis == 0 ? v : current->x;
+            const int y = offset.control.axis == 1 ? v : current->y;
+            offset.args = { { kNode, pressed }, { kOffsetX, x }, { kOffsetY, y } };   // previewed only, applied on release
+            ui().actions.updateGesture(Actions::MoveScrub, offset.args);
+        },
+        [&](LayerDrag& row) {
+            const NodeItem* s = scene().item(row.node);
+            if (!s) return;
+            if (!row.lifted) {
+                // Carried from now on. Nothing is dropped anywhere yet: the stack is laid out with its
+                // spot kept first (next frame), so the first drop is worked out on that, back home.
+                if (moved) row.lifted = true;
+                return;
+            }
+            // One layer pulled out sideways: it comes off the stack, carried as a link.
+            const bool one = row.rows.size() == 1 && row.rows[0].layer != kNoNodeId;
+            if (one && (gm.x < s->bounds.Min.x - kPullOut || gm.x > s->bounds.Max.x + kPullOut)) {
+                const NodeId layer = row.rows[0].layer;
+                const NodeId stack = row.node;   // read before m_drag changes: `row` is gone after
+                const std::optional<size_t> at = Links::layerIndex(*ui().workspace().find(stack), layer);
+                m_drag = std::monostate{};
+                if (!at) return;
+                const InputSlot slot = InputSlot::stackLayer(uint32_t(*at));
+                if (ui().actions.beginGesture(Actions::LinkMove, { { kSource, layer }, { kFrom, stack }, { kSlot, slot } }))
+                    m_drag = LinkDrag{ .node = layer, .pickedUp = true };
+                return;
+            }
+            // Where the floating rows' middle is: the gap opens there.
+            const bool artboard = std::any_of(row.rows.begin(), row.rows.end(), [](const StackRowRef& r) { return r.artboard != kNoArtboard; });
+            row.at = stackPlace(row.node, ImVec2(gm.x, gm.y - row.grab + kLayerRowH * 0.5f), StackGap::Kind::Rows, artboard, row.rows);
+        },
+        [&](MinimapDrag&) {   // held on the navigator: the view follows the mouse
+            if (ImGui::GetIO().MouseDelta.x != 0.0f || ImGui::GetIO().MouseDelta.y != 0.0f) m_minimap.drag(mouse, camera(), m_surface.size());
+        },
+    }, m_drag);
 }
 
 void GraphPanel::startLink(const PortHit& hit)
@@ -326,49 +354,20 @@ std::vector<StackRowRef> GraphPanel::shownRows(NodeId id) const
 
 void GraphPanel::pressRow(NodeId id, StackRowRef row, float grab)
 {
-    // Like a file browser: a click picks the row, Ctrl adds it or takes it out, Shift picks every
-    // row from the anchor to it (Ctrl+Shift adds them).
     const NodeItemState* view = scene().viewState(id);
-    std::vector<StackRowRef> picked = view ? view->selected : std::vector<StackRowRef>{};
-    StackRowRef anchor = view ? view->anchor : StackRowRef{};
-    const auto has = [&](const std::vector<StackRowRef>& v, StackRowRef r) { return std::find(v.begin(), v.end(), r) != v.end(); };
-    const std::vector<StackRowRef> shown = shownRows(id);
-    bool wasPicked = false;
-    if (m_press.shift) {
-        const auto at = [&](StackRowRef r) { return std::find(shown.begin(), shown.end(), r) - shown.begin(); };
-        if (anchor.empty() || !has(shown, anchor)) anchor = row;
-        const std::ptrdiff_t from = at(anchor), to = at(row);
-        const std::ptrdiff_t lo = std::min(from, to), hi = std::max(from, to);
-        if (!m_press.ctrl) picked.clear();
-        for (auto i = lo; i <= hi && i < std::ptrdiff_t(shown.size()); ++i)
-            if (!has(picked, shown[size_t(i)])) picked.push_back(shown[size_t(i)]);
-    } else if (m_press.ctrl) {
-        if (has(picked, row)) std::erase(picked, row);
-        else picked.push_back(row);
-        anchor = row;
-    } else {
-        wasPicked = has(picked, row) && picked.size() > 1;
-        if (!has(picked, row)) picked = { row };
-        anchor = row;
-    }
-    scene().pickRows(id, picked, anchor);
+    RowPick pick = pickRow(shownRows(id), view ? view->selected : std::vector<StackRowRef>{}, view ? view->anchor : StackRowRef{},
+                           row, m_press.ctrl, m_press.shift);
+    scene().pickRows(id, pick.picked, pick.anchor);
     select({});   // one kind of thing picked at a time: rows, so no nodes
-    if (!has(picked, row)) return;   // Ctrl+click took it out: nothing to drag
-
-    // What it carries: the rows picked, top first (an artboard's layers go with it).
-    std::vector<StackRowRef> carried;
-    for (const StackRowRef& r : shown)
-        if (has(picked, r)) carried.push_back(r);
-    m_drag = LayerDrag{ .node = id, .rows = std::move(carried), .pressed = row, .grab = grab, .wasPicked = wasPicked, .lifted = false, .at = {} };
+    if (pick.carried.empty()) return;   // Ctrl+click took it out: nothing to drag
+    m_drag = LayerDrag{ .node = id, .rows = std::move(pick.carried), .pressed = row, .grab = grab, .wasPicked = pick.wasPicked, .lifted = false, .at = {} };
 }
 
 StackGap GraphPanel::stackPlace(NodeId id, ImVec2 p, StackGap::Kind kind, bool carriesArtboard, const std::vector<StackRowRef>& carried) const
 {
     const NodeItem* s = scene().item(id);
     if (!s) return {};
-    // On the stack as it shows now, then settled on the stack as it would show it.
-    const StackGap drop = stackDrop(*s, p.y, kind, carriesArtboard, carried);
-    return settleDrop(drop, [&](const StackGap& g) { return scene().layoutWith(id, { g, carried }); }, p.y, kind, carriesArtboard, carried);
+    return ::stackPlace(*s, p.y, kind, carriesArtboard, carried, [&](const StackGap& g) { return scene().layoutWith(id, { g, carried }); });
 }
 
 void GraphPanel::dropped(NodeId id, const StackPlace& place)
@@ -380,54 +379,24 @@ void GraphPanel::dropped(NodeId id, const StackPlace& place)
 
 GraphPanel::LinkTarget GraphPanel::linkTarget(const LinkDrag& link, const GraphHit& hit) const
 {
-    LinkTarget t;
     const NodeId id = hit.node();
     const NodeItem* item = scene().item(id);
-    if (!item) return t;
+    const Workspace& workspace = ui().workspace();
+    const Node* n = workspace.find(id);
+    if (!item || !n) return {};
     const auto* portHit = hit.as<PortHit>();
-    const NodeItemPort* port = portHit ? portOf(scene(), *portHit) : nullptr;
     const GraphCamera& camera = cameraFor(id);
     // From an output: a new link, or one lifted off an input (moved by the workspace's own rule).
-    const Workspace& workspace = ui().workspace();
     const LinkMoveEdit* lifted = link.pickedUp && workspace.preview() ? workspace.preview()->as<LinkMoveEdit>() : nullptr;
-    const auto fits = [&](NodeId to, const InputSlot& slot) {
-        return lifted ? workspace.canMoveLink(lifted->source, lifted->from, lifted->slot, to, slot) : workspace.canConnect(link.node, to, slot);
+    const LinkEnd end{ link.fromOutput, lifted ? lifted->source : kNoNodeId, lifted ? lifted->from : kNoNodeId };
+    const auto fits = [&](const InputSlot& slot) {
+        if (!link.fromOutput) return workspace.canConnect(id, link.node, link.slot);
+        return lifted ? workspace.canMoveLink(lifted->source, lifted->from, lifted->slot, id, slot) : workspace.canConnect(link.node, id, slot);
     };
-    const ImVec2 at = camera.toGraph(ImGui::GetIO().MousePos);
-    const Node* n = workspace.find(id);
-    if (!link.fromOutput) {   // looking for an output: its port
-        if (port && port->output && workspace.canConnect(id, link.node, link.slot)) t = { true, id, {}, {}, camera.toScreen(port->pos) };
-        return t;
-    }
-    const LinkZone zone = linkZoneAt(*item, at);
-    // Over a stack's rows: into the stack, at a place, as rows are dropped (it lands on top, then
-    // moves there; a lifted one comes off its own row first).
-    if (n->ports().inputs == InputShape::Stack && zone.kind == LinkZone::Kind::Stack && !(port && port->mask)) {
-        const bool own = lifted && lifted->from == id;
-        const InputSlot slot = InputSlot::newLayer(own ? 0u : uint32_t(n->links().layers.size()));
-        if (!fits(id, slot)) return t;
-        // A link lifted off this stack's own row: that row is carried (its spot kept).
-        const std::vector<StackRowRef> carried = own ? std::vector<StackRowRef>{ { lifted->source, kNoArtboard } } : std::vector<StackRowRef>{};
-        t = { true, id, slot, stackPlace(id, at, StackGap::Kind::Link, false, carried), ImGui::GetIO().MousePos };
-        if (!t.place.dropping()) return LinkTarget{};   // the stack isn't laid out for it yet
-        for (const NodeItemPort& p : item->ports)   // the port at the gap, once it is open
-            if (p.placeholder && p.slot.is<InputSlot::NewLayer>()) t.pos = camera.toScreen(p.pos);
-        return t;
-    }
-    if (port && !port->output) {   // on an input's port: that input
-        if (fits(id, port->slot)) t = { true, id, port->slot, {}, camera.toScreen(port->pos) };
-        return t;
-    }
-    if (zone.kind == LinkZone::Kind::Channel) {   // that channel's mask
-        const InputSlot slot = InputSlot::mask(zone.channel->signal, zone.channel->channel);
-        if (const NodeItemPort* p = item->input(slot); p && fits(id, slot)) t = { true, id, slot, {}, camera.toScreen(p->pos) };
-        return t;
-    }
-    // A one-input node's body: its input. Anywhere else on a node: nothing.
-    if (n->ports().inputs == InputShape::One && zone.kind == LinkZone::Kind::Body)
-        if (const NodeItemPort* p = item->input(InputSlot::input()); p && fits(id, InputSlot::input()))
-            t = { true, id, InputSlot::input(), {}, camera.toScreen(p->pos) };
-    return t;
+    const auto place = [&](ImVec2 at, const std::vector<StackRowRef>& carried) { return stackPlace(id, at, StackGap::Kind::Link, false, carried); };
+    const LinkLanding l = linkLanding(*item, *n, camera.toGraph(ImGui::GetIO().MousePos), portHit ? portOf(scene(), *portHit) : nullptr, end, fits, place);
+    if (!l.valid) return {};
+    return { true, id, l.slot, l.place, camera.toScreen(l.pos) };
 }
 
 void GraphPanel::finishLink(const LinkDrag& link, const GraphHit& hit)

@@ -39,7 +39,7 @@ public:
     const std::string& name() const { return m_name; }   // its file's, else what it was given ("Untitled 1")
     const std::string& path() const { return m_path; }   // empty: never saved
     bool blank() const   { return m_path.empty() && m_workspace.history().size() == 1; }
-    bool unsaved() const { return m_workspace.history().current() != m_savedStep; }
+    bool unsaved() const { return m_workspace.history().serial(m_workspace.history().current()) != m_savedStep; }
     // Its workspace is in the file at `path` now, as it is (written there, or read from it).
     void savedAs(const std::string& path);
 
@@ -60,5 +60,5 @@ private:
     ProjectId  m_id = kNoProject;
     std::string m_name;
     std::string m_path;
-    StepId      m_savedStep = kStartStep;
+    StepSerial  m_savedStep{};   // the step its file holds (gone once deleted: unsaved until saved again)
 };

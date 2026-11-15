@@ -6,7 +6,7 @@ void Project::savedAs(const std::string& path)
 {
     m_path = path;
     m_name = File::stem(path);
-    m_savedStep = m_workspace.history().current();
+    m_savedStep = m_workspace.history().serial(m_workspace.history().current());
 }
 
 bool Project::isFileName(const std::string& path)

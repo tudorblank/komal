@@ -105,5 +105,9 @@ StackGap stackDrop(const NodeItem& item, float y, StackGap::Kind kind, bool carr
 // gives itself back, so what shows is what the mouse is on (closing a room moves the rows under it).
 StackGap settleDrop(StackGap drop, const std::function<NodeItem(const StackGap&)>& layoutOf, float y, StackGap::Kind kind,
                     bool carriesArtboard, const std::vector<StackRowRef>& carried);
+// The drop at height y as a drag sees it: on the stack as `item` shows it now, then settled on the
+// stack as it would show it (layoutOf). What the graph panel asks every frame of a drag.
+StackGap stackPlace(const NodeItem& item, float y, StackGap::Kind kind, bool carriesArtboard,
+                    const std::vector<StackRowRef>& carried, const std::function<NodeItem(const StackGap&)>& layoutOf);
 // Where a drop lands: onto an artboard, on top of its layers; home, where the row was; else the room's place.
 StackPlace landing(const NodeItem& item, const StackGap& gap);

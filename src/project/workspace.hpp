@@ -104,7 +104,7 @@ public:
     bool removeStackRows(NodeId compositor, const std::vector<NodeId>& layers, const std::vector<ArtboardId>& artboards);
 
     // ---- the master's artboards (project/artboard.hpp): each a group of the master's stack
-    const Artboards& artboards() const { return m_artboards; }
+    const Artboards& artboards() const { return m_artboards.all(); }
     const Artboard*  artboard(ArtboardId id) const;
     // A new one, empty and transparent, on top of the master's stack (kNoArtboard: an empty rect,
     // or out of the world).
@@ -185,16 +185,14 @@ private:
     void restoreGraph(const GraphState& target);
     void fallBackActiveRaster();   // the active raster went: the most recently made one, if any
     void showArtboards();          // the master draws them as they are (CompositorNode::setLooks)
-    Artboard* findArtboard(ArtboardId id);
     bool setMasterGroups(std::vector<StackGroup> groups);
 
     NodeRegistry m_nodes;   // first, destroyed last: everything else holds its nodes
     std::shared_ptr<CompositorNode> m_master;
     NodeId m_active = kNoNodeId;
 
-    Artboards  m_artboards;   // before the history, which reads them
-    ArtboardId m_lastArtboard = kNoArtboard;   // ids never come back
-    StepRecorder m_steps{ m_nodes, m_artboards };
+    ArtboardList m_artboards;   // before the history, which reads them
+    StepRecorder m_steps{ m_nodes, m_artboards.all() };
     bool m_seeding = false;   // init()'s seed runs: its edits are the start, no step of their own
 
     NodeSelection m_selection;

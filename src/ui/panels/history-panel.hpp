@@ -14,7 +14,7 @@
 //
 // The numbers keep their column on the left; the tree grows to the right as branches add lanes.
 //
-// Laid out again only when a step is added. A step continues its parent's lane if it's the first
+// Laid out again when steps are added or removed (the newest step's serial or the count moves). A step continues its parent's lane if it's the first
 // step made from there; every later one starts a branch in the lowest lane free from that row down.
 
 #include "project/history.hpp"
@@ -38,7 +38,8 @@ private:
 
     std::vector<int> m_lane;   // per step
     int      m_lanes = 1;
-    size_t   m_laidOut = 0;               // steps when last laid out (history only grows)
+    size_t     m_laidOut = 0;             // steps when last laid out
+    StepSerial m_laidOutNewest{};         // ... and the newest one's serial (a removal renumbers the rest)
     StepId   m_shownCurrent = kNoStep;    // the current step when last scrolled to
     std::vector<StepId> m_picked;         // the steps picked (view state: never the project's), sorted
     StepId   m_anchor = kNoStep;          // where a Shift+click range starts

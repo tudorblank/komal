@@ -1,4 +1,5 @@
 #include "ui/panels/navigator-panel.hpp"
+#include "ui/panels/panel-window.hpp"
 #include "project/project-actions.hpp"
 #include "base/math.hpp"
 #include "ui/panels/canvas/canvas-engine.hpp"

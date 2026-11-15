@@ -253,6 +253,48 @@ TEST_CASE("a value an edit would refuse is a damaged file: a name, a signal, an 
     CHECK_MESSAGE(opened.open(*fine, error), error);
 }
 
+TEST_CASE("stack settings a node would have to repair are a damaged file: kept as saved, or refused")
+{
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
+    const NodeId master = p.master().id();
+    REQUIRE(!p.master().layers().empty());
+    const auto refused = [&](const auto& damage) {
+        WorkspaceFile f = p.saved();
+        for (auto& n : f.nodes)
+            if (n.id == master) damage(std::get<CompositorSettings>(n.record.settings));
+        std::string error;
+        const std::optional<WorkspaceFile> decoded = decodeWorkspace(encodeWorkspace(f), error);
+        REQUIRE_MESSAGE(decoded, error);   // the bytes are fine ...
+        Workspace opened;
+        CHECK_FALSE(opened.open(*decoded, error));   // ... the master couldn't hold them as they are
+        CHECK(error == "damaged: settings the node can't hold as they are");
+    };
+    refused([](CompositorSettings& c) { c.muted.push_back(NodeId{ 999 }); });   // a mute of no layer of it
+    refused([&](CompositorSettings& c) {                                        // a group past its rows
+        const uint32_t rows = uint32_t(p.master().layers().size());
+        c.groups.push_back({ GroupKey{ 50 }, rows + 1, rows + 3 });
+    });
+}
+
+TEST_CASE("every kind of node is saved and opened as it was")
+{
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
+    for (const NodeKind& k : nodeKinds())
+        if (!k.ownsPixels) REQUIRE(p.addNode(k.type, 10.0f * float(k.type), 0.0f, {}) != kNoNodeId);
+    std::vector<bool> seen(nodeKinds().size(), false);
+    for (const NodePtr& n : p.nodes()) seen[size_t(n->type())] = true;
+    CHECK(std::all_of(seen.begin(), seen.end(), [](bool b) { return b; }));   // the starter has rasters
+    const std::vector<uint8_t> bytes = encodeWorkspace(p.saved());
+    std::string error;
+    const std::optional<WorkspaceFile> file = decodeWorkspace(bytes, error);
+    REQUIRE_MESSAGE(file, error);
+    Workspace opened;
+    REQUIRE_MESSAGE(opened.open(*file, error), error);
+    CHECK(encodeWorkspace(opened.saved()) == bytes);
+}
+
 TEST_CASE("projects save to their file and open from one: named after it, saved, nothing to undo")
 {
     const std::string path = scratchFile("round trip ü.komal");

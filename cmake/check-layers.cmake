@@ -2,7 +2,7 @@
 # below it, never one above, and only the libraries its layer may use. The build runs this before
 # every build (CMakeLists.txt) and stops on any wrong include, listing every one.
 #
-#   base       Signal, Deadline, Log, Perf, math, palette, files: the standard library only
+#   base       Signal, Deadline, Log, Perf, math, clocks, colors, files: the standard library only
 #   input      what input is (InputFrame), a press followed to its release   the standard library
 #              (PointerCapture); sdl-input makes it from SDL: built into the app, not the core
 #   raster     pixels, tiles, grids, rasters, brush strokes                + abseil
@@ -15,6 +15,7 @@
 #   app        the platform: the window, the loop, frames; main            anything (SDL lives here)
 #   tests      the core (base .. project) only                             + doctest
 #   tests/ui   the UI's blocks that need no window or GPU (its look)       + doctest, the UI's libraries
+#   tests/gpu  the canvas shaders on a device with no window               + doctest, the UI's libraries
 #
 #   cmake -DSRC=<src dir> -DTESTS=<tests dir> -P check-layers.cmake
 
@@ -50,6 +51,26 @@ set(PRIVATE
     "ui/style/palette.hpp|ui/style/"
     "ui/style/theme.hpp|ui/style/"
     "ui/widgets/interaction.hpp|ui/widgets/")
+
+# Inside ui, its folders are layers too, bottom first: the look, drawing, controls, tools, panels
+# (the canvas and the graph among them; they may use each other), then the files in ui/ itself
+# (the interface that holds them all). Two of those are for every folder: who has the keyboard,
+# and how navigation feels.
+set(UI_LAYERS style render widgets tools panels "")
+set(UI_SHARED "ui/input-owner.hpp" "ui/navigation.hpp")
+
+# Folders private to a folder: only files inside it may include their headers. "folder/|owner/".
+set(PRIVATE_FOLDERS
+    "ui/panels/graph/internal/|ui/panels/graph/")   # the graph's items, layout and drops
+
+# A path's ui layer: its folder under ui/ ("" for ui/ itself).
+function(ui_layer path out)
+    if(path MATCHES "^ui/([^/]+)/")
+        set(${out} "${CMAKE_MATCH_1}" PARENT_SCOPE)
+    else()
+        set(${out} "" PARENT_SCOPE)
+    endif()
+endfunction()
 
 set(problems "")
 
@@ -98,6 +119,31 @@ function(check_file path rel layer rank)
                 list(APPEND problems "${rel}: includes \"${name}\" (private to ${folder})")
             endif()
         endforeach()
+        string(FIND "${rel}" "tests/" in_tests)
+        foreach(entry IN LISTS PRIVATE_FOLDERS)
+            string(REPLACE "|" ";" pair "${entry}")
+            list(GET pair 0 folder)
+            list(GET pair 1 owner)
+            string(FIND "${name}" "${folder}" inside)
+            string(FIND "${rel}" "${owner}" own)
+            if(inside EQUAL 0 AND NOT own EQUAL 0 AND NOT in_tests EQUAL 0)
+                list(APPEND problems "${rel}: includes \"${name}\" (private to ${owner})")
+            endif()
+        endforeach()
+        string(FIND "${rel}" "ui/" from_ui)
+        string(FIND "${name}" "ui/" to_ui)
+        list(FIND UI_SHARED "${name}" shared)
+        if(from_ui EQUAL 0 AND to_ui EQUAL 0 AND shared EQUAL -1)
+            ui_layer("${rel}" from)
+            ui_layer("${name}" to)
+            list(FIND UI_LAYERS "${from}" from_rank)
+            list(FIND UI_LAYERS "${to}" to_rank)
+            if(from_rank EQUAL -1 OR to_rank EQUAL -1)
+                list(APPEND problems "${rel}: includes \"${name}\" (a ui folder that isn't in UI_LAYERS)")
+            elseif(to_rank GREATER from_rank)
+                list(APPEND problems "${rel}: includes \"${name}\" (ui/${to} is above ui/${from})")
+            endif()
+        endif()
         string(REGEX REPLACE "/.*" "" target "${name}")
         list(FIND LAYERS "${target}" target_rank)
         if(target_rank EQUAL -1)
@@ -129,7 +175,7 @@ if(TESTS)
     list(FIND LAYERS ui ui_rank)
     foreach(path IN LISTS tests)
         file(RELATIVE_PATH rel "${TESTS}" "${path}")
-        if(rel MATCHES "^ui/")
+        if(rel MATCHES "^(ui|gpu)/")
             check_file("${path}" "tests/${rel}" tests_ui ${ui_rank})
         else()
             check_file("${path}" "tests/${rel}" tests ${core_top})

@@ -86,15 +86,18 @@ void NodeThumbnails::refresh(const Workspace& workspace, const Deadline& budget)
     const bool previewing = m_preview->active();
     absl::erase_if(m_pictures, [&](const auto& kv) { return !previewing || !m_preview->plan().reaches(kv.first); });
 
+    const Clock::TimePoint now = Clock::now();
     for (NodeId id : m_requested) {
         const NodePtr n = workspace.findPtr(id);
         if (!n) continue;
         std::unique_ptr<Thumb>& tp = m_thumbs[id];
-        if (!tp) {
-            tp = std::make_unique<Thumb>();
-            tp->tiles = m_tiles->output(n);
-        }
+        if (!tp) tp = std::make_unique<Thumb>();
         Thumb& t = *tp;
+        t.asked = now;
+        if (!t.tiles) {   // new, or let go: the cache's (maybe other ones: rendered anew once current)
+            t.tiles = m_tiles->output(n);
+            t.stale = true;
+        }
         if (previewing && m_preview->plan().reaches(id)) {   // its slot shows the preview; its tiles wait
             m_toPreview.push_back(id);
             continue;
@@ -105,6 +108,11 @@ void NodeThumbnails::refresh(const Workspace& workspace, const Deadline& budget)
         if (complete && (t.stale || t.tiles->revision(t.level) != t.seen) && prepareRender(t)) m_toRender.push_back(id);
     }
     m_requested.clear();
+    for (auto& [id, t] : m_thumbs)   // not drawn lately: the tiles go back, the picture stays
+        if (t->tiles && Clock::between(t->asked, now) > kLetGo) {
+            t->tiles.reset();
+            t->draw.release();   // drew from those tiles' pages
+        }
 }
 
 bool NodeThumbnails::update(const Node& n, Thumb& t, const Deadline& budget)

@@ -1,5 +1,6 @@
 #include "ui/panels/canvas/pipelines.hpp"
 #include "gpu/error-scope.hpp"
+#include "node/node.hpp"   // kMaskLuma
 #include "ui/panels/canvas/tiles/atlas.hpp"   // ChunkInstance layout
 
 #include <cstddef>
@@ -71,10 +72,19 @@ struct PipelineDesc {
 };
 constexpr auto kFullscreen = WGPUPrimitiveTopology_TriangleList;
 
+// Numbers the shaders share with the CPU, written from C++ before every shader: the CPU's are the
+// one source (a WGSL constant nobody reads costs nothing).
+std::string sharedConstants()
+{
+    return "const kMaskLuma = vec3f(" + std::to_string(kMaskLuma[0]) + ".0, " + std::to_string(kMaskLuma[1]) + ".0, " +
+           std::to_string(kMaskLuma[2]) + ".0) / 256.0;   // node.hpp: maskFactor\n";
+}
+
 WGPURenderPipeline makePipeline(const GpuHandles& ctx, const PipelineDesc& d)
 {
-    const char* body = reinterpret_cast<const char*>(d.wgsl);
-    const std::string wgsl = d.topology == kFullscreen ? std::string(reinterpret_cast<const char*>(kShaderFullscreen)) + body : std::string(body);
+    std::string wgsl = sharedConstants();
+    if (d.topology == kFullscreen) wgsl += reinterpret_cast<const char*>(kShaderFullscreen);
+    wgsl += reinterpret_cast<const char*>(d.wgsl);
     const GpuObject<WGPUShaderModule> module{ createShaderModule(ctx.device, wgsl.c_str(), d.label) };
     if (!module) return nullptr;
 

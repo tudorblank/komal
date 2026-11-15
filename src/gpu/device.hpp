@@ -21,6 +21,9 @@ public:
     using SurfaceMaker = std::function<WGPUSurface(WGPUInstance)>;
 
     bool init(const SurfaceMaker& makeSurface, int pixelW, int pixelH);
+    // A device with no window (tests, tools): no surface, so no acquire() / present().
+    bool initHeadless() { return init(nullptr, 0, 0); }
+    bool headless() const { return !m_surface; }
     void shutdown();
 
     void resize(int pixelW, int pixelH); // reconfigures the surface if changed (or suboptimal)

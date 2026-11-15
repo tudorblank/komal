@@ -541,7 +541,7 @@ const MaskTile* Node::maskTile(Node& mask, int tx, int ty, RenderCtx& ctx)
     const MaskTile* m = nullptr;
     if (ctx.findMask(&mask, tx, ty, m)) return m;
 
-    // The mask over white: premultiplied, 255 - a + luma(rgb), with luma(rgb) <= a.
+    // The mask over white (maskFactor).
     m = RenderCtx::kFullMask;   // no tile: nothing of the mask here, the channel is untouched
     const size_t mk = ctx.mark();
     if (const Tile* src = mask.fetch(tx, ty, ctx)) {
@@ -549,8 +549,7 @@ const MaskTile* Node::maskTile(Node& mask, int tx, int ty, RenderCtx& ctx)
         const RGBA* p = src->getReadAll();
         uint8_t any = 0, all = 255;
         for (int i = 0; i < Tile::kPixels; ++i) {
-            const int luma = (54 * p[i].r + 183 * p[i].g + 19 * p[i].b + 128) >> 8;   // weights sum to 256
-            out.v[i] = uint8_t(255 - p[i].a + std::min<int>(luma, p[i].a));
+            out.v[i] = maskFactor(p[i]);
             any |= out.v[i];
             all &= out.v[i];
         }

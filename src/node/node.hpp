@@ -102,6 +102,17 @@ struct Gain {
     bool isUnit() const { return k == 255 && !perPixel; }
 };
 
+// A mask's factor at one pixel: the mask (premultiplied) over white, 255 - a + min(luma, a). The
+// one place it's written down: the GPU preview's shader gets kMaskLuma from here (the canvas
+// pipelines put it before every shader) and a GPU test holds the shader to maskFactor().
+inline constexpr int kMaskLuma[3] = { 54, 183, 19 };   // R, G, B: they sum to 256
+static_assert(kMaskLuma[0] + kMaskLuma[1] + kMaskLuma[2] == 256);
+constexpr uint8_t maskFactor(RGBA p)
+{
+    const int luma = (kMaskLuma[0] * p.r + kMaskLuma[1] * p.g + kMaskLuma[2] * p.b + 128) >> 8;
+    return uint8_t(255 - p.a + std::min<int>(luma, p.a));
+}
+
 // Scratch memory for one top-level tile render. One per thread.
 struct MaskTile { uint8_t v[Tile::kPixels]; };
 

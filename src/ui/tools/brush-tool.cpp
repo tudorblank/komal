@@ -1,7 +1,6 @@
 #include "ui/tools/brush-tool.hpp"
 #include "project/project-actions.hpp"
 #include "project/workspace.hpp"
-#include "ui/panels/canvas/scene.hpp"
 #include "ui/style/ui-style.hpp"
 #include "ui/tools/tool-manager.hpp"
 #include "ui/widgets/widgets.hpp"

@@ -6,6 +6,18 @@
 // A registry can hand on what it doesn't have (delegateTo): the interface's holds the app's own
 // actions and hands the project's to the active project's registry, which runs, logs and
 // undoes them. Keys for those are bound here, by id, so they stay whichever project is active.
+//
+// How the app's three kinds of registry route (ui/ui-main.cpp wires them):
+//   the interface's   the app's own (quit, panels, files), every panel's and tool's; what input,
+//                     menus and shortcuts run. Hands on what it doesn't have to ...
+//   a project's       its workspace's edits and gestures (project/project-actions): one per
+//                     project, the active one's is the delegate. Undo steps open and close here.
+//   the projects'     new, open, save, activate, close (project/projects-manager-actions). They
+//                     change which projects exist, so they never run mid-frame: the interface
+//                     has a stand-in for each that queues the request (ActionResult::later) and
+//                     runs them all between frames, reporting failures as notices.
+// Keys for a project's actions are bound with a stand-in project as the delegate, before any is
+// open: bind() checks a key against what it would run.
 
 #include "base/clock.hpp"
 #include "command/action.hpp"
@@ -44,9 +56,10 @@ public:
     // wherever it can fire. False (logged) if not.
     bool bind(ActionId id, Shortcut shortcut);
     const Action* find(ActionId id) const;   // its own, else the delegate's
-    // Actions it doesn't have are found, run, begun and ended there (null: none). Changed only
-    // between frames, with no gesture open (anyGesture).
-    void delegateTo(ActionRegistry* other) { m_delegate = other; }
+    // Actions it doesn't have are found, run, begun and ended there (null: none). Changed between
+    // frames; a gesture still open in the one it leaves can't end any more, so it's cancelled
+    // (its undo step closes): the one it leaves must still be there (switch away before it goes).
+    void delegateTo(ActionRegistry* other);
     bool anyGesture() const;   // here or in the delegate
 
     // A command: runs and logs it. Refused (not done) if unknown or disabled.

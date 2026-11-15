@@ -20,6 +20,7 @@ constexpr float kArtboardIndent = 12.0f;   // its layers, and their ports
 constexpr float kDropLineH  = 3.0f;    // the line a drop at the bottom, under an artboard, shows
 constexpr float kArtboardEdge = 0.3f;  // the top of an artboard's row a drop goes above it from (the rest: onto it), under another artboard
 constexpr float kStackBleed = 10.0f;   // a link takes the stack this far above and below its rows
+constexpr float kPullOut    = 40.0f;   // a layer dragged this far out of its node, sideways, comes off as a link
 constexpr float kLayerGap   = 3.0f;
 // Room a drop opens between rows. Shorter than the shortest row (an artboard's): closing it moves
 // the rows under it up by less than one, so the row under the mouse stays under it.

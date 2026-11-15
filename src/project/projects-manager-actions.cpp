@@ -8,8 +8,9 @@ void registerProjectsManagerActions(ActionRegistry& actions, ProjectsManager& pr
     using K = ActionKind;
     const auto settled = [&projects] {   // nothing going on in the active one (or none open)
         if (projects.empty()) return true;
-        const Workspace& w = projects.active().workspace();
-        return !w.strokeActive() && !w.preview();
+        const Project& p = projects.active();
+        const Workspace& w = p.workspace();
+        return !w.strokeActive() && !w.preview() && !p.actions().anyGesture();   // a scrub has no preview until it moves
     };
 
     actions.add({ .id = Actions::ProjectNew, .title = "New", .kind = K::AppState, .enabled = settled,

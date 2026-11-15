@@ -4,6 +4,7 @@
 #include "helpers.hpp"
 #include "project/project-actions.hpp"
 #include "project/project.hpp"
+#include "project/stack-rows.hpp"
 
 namespace {
 
@@ -134,6 +135,35 @@ TEST_CASE("moved rows keep their order and close up")
     CHECK_FALSE(moveRows(grouped, { {}, { g }, g, 0 }));   // a group into a group
     const StackRows empty{ { a, b }, { { g, 1, 1 } } };     // an empty group between a and b
     CHECK(moveRows(empty, { { a }, {}, g, 0 })->groups == std::vector<StackGroup>{ { g, 0, 1 } });
+}
+
+TEST_CASE("rowsLeft is the count moveRows measures places by: every place up to it, none past")
+{
+    const NodeId a{ 1 }, b{ 2 }, c{ 3 }, d{ 4 }, e{ 5 };
+    constexpr GroupKey g{ 7 }, h{ 8 };
+    const StackRows now{ { a, b, c, d, e }, { { g, 1, 3 }, { h, 4, 4 } } };   // [a] [g: b c] [d] [h:] [e]
+    CHECK(rowsLeft(now, {}) == 5);
+    CHECK(rowsLeft(now, {}, g) == 2);
+    CHECK(rowsLeft(now, {}, h) == 0);
+    // Every set of carried rows (layers and groups), every container: the places there are 0 ..= rowsLeft.
+    const std::vector<NodeId> layers{ a, b, c, d, e };
+    for (uint32_t pick = 1; pick < (1u << 7); ++pick) {
+        StackMove carried;
+        for (size_t i = 0; i < layers.size(); ++i)
+            if (pick & (1u << i)) carried.layers.push_back(layers[i]);
+        if (pick & (1u << 5)) carried.groups.push_back(g);
+        if (pick & (1u << 6)) carried.groups.push_back(h);
+        for (const GroupKey into : { kNoGroup, g, h }) {
+            if (into != kNoGroup && (!carried.groups.empty())) continue;   // groups don't nest
+            CAPTURE(pick);
+            CAPTURE(uint32_t(into));
+            const size_t n = rowsLeft(now, carried, into);
+            StackMove m = carried;
+            m.into = into;
+            for (m.at = 0; m.at <= n; ++m.at) CHECK(moveRows(now, m));
+            CHECK_FALSE(moveRows(now, m));   // one past the top
+        }
+    }
 }
 
 TEST_CASE("a stack's groups follow its rows through every link edit")

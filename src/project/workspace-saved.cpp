@@ -10,11 +10,11 @@ WorkspaceFile Workspace::saved() const
     WorkspaceFile f;
     f.nextNode     = m_nodes.nextId();
     f.numbered     = m_nodes.numbered();
-    f.lastArtboard = m_lastArtboard;
+    f.lastArtboard = m_artboards.last();
     f.master       = m_master->id();
     f.active       = m_active;
     f.camera       = m_canvasCamera;
-    f.artboards    = m_artboards;
+    f.artboards    = m_artboards.all();
     for (const NodePtr& n : nodes()) {
         f.nodes.push_back({ n->id(), n->type(), NodeRecord::of(*n) });
         if (const RasterRootNode* r = rasterAt(n->id())) {
@@ -42,15 +42,6 @@ bool Workspace::open(const WorkspaceFile& f, std::string& error)
             const WorkspaceFile::SavedNode& n = f.nodes[i];
             if (m_nodes.create(key(), n.type, n.record.x, n.record.y, n.id) == kNoNodeId) return fail("damaged: node ids");
         }
-        for (const auto& [id, type, n] : f.nodes) {
-            Node& node = *find(id);
-            node.setPosition(key(), n.x, n.y);
-            node.setLabel(key(), n.label);
-            for (int sig = 0; sig < kSignalCount; ++sig)
-                for (int ch = 0; ch < kChannelCount; ++ch)
-                    if (node.hasSignal(NodeSignal(sig))) node.setScale(key(), NodeSignal(sig), NodeChannel(ch), n.scale[sig][ch]);
-        }
-
         // Pixels: the start's own (no commit of a step).
         for (const WorkspaceFile::Raster& r : f.rasters)
             if (RasterRootNode* raster = rasterAt(r.node))
@@ -67,16 +58,17 @@ bool Workspace::open(const WorkspaceFile& f, std::string& error)
                         return fail("damaged: a link that can't be");
         }
 
-        // Settings, each its kind's. Groups are the master's alone, and they're its artboards.
+        // Each node's own fields (NodeRecord::applyTo): settings its kind's; groups are the
+        // master's alone, and they're its artboards.
         for (const auto& [id, type, n] : f.nodes) {
             Node& node = *find(id);
             if (node.settings().index() != n.settings.index()) return fail("damaged: settings of another kind");
             const auto* stack = std::get_if<CompositorSettings>(&n.settings);
             if (stack && !stack->groups.empty() && !isMaster(id)) return fail("damaged: artboards outside the master");
-            node.setSettings(key(), n.settings);
+            n.applyTo(key(), node);
+            if (node.settings() != n.settings) return fail("damaged: settings the node can't hold as they are");   // repaired: not as saved
         }
-        m_artboards = f.artboards;
-        m_lastArtboard = f.lastArtboard;
+        m_artboards.open(f.artboards, f.lastArtboard);
         if (!artboardsMatchStack()) return fail("damaged: artboards and the master's stack disagree");
         showArtboards();
 

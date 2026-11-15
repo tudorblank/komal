@@ -1,4 +1,5 @@
 #include "ui/panels/info-panel.hpp"
+#include "ui/panels/panel-window.hpp"
 #include "base/perf.hpp"
 #include "ui/panels/canvas/canvas-engine.hpp"
 #include "input/input-frame.hpp"

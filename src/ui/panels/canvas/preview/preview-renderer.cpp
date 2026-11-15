@@ -100,11 +100,14 @@ int PreviewRenderer::build(int node, Vec2 offset)
 
     int wet = -1, dry = -1;
     if (m_preview->model().wetOn(n)) {
-        if (const std::optional<Vec2> by = m_preview->model().moveOffset(n)) {
-            wet = opFor(s.input, { offset.x + by->x, offset.y + by->y });   // a move moves its input
-        } else if (n.ports().inputs == InputShape::One) {
-            wet = opFor(s.input, offset);
-        } else if (s.stack) {   // a stack the edit reaches: recomposed, as it draws
+        switch (s.how) {
+        case PreviewPlan::Wet::Input: wet = opFor(s.input, offset); break;
+        case PreviewPlan::Wet::Moved: {   // a move moves its input
+            const Vec2 by = m_preview->model().moveOffset(n).value_or(Vec2{});
+            wet = opFor(s.input, { offset.x + by.x, offset.y + by.y });
+            break;
+        }
+        case PreviewPlan::Wet::Stack: {   // a stack the edit reaches: recomposed, as it draws
             Op stack;
             stack.kind = Op::Kind::Stack;
             size_t fill = 0;
@@ -125,14 +128,19 @@ int PreviewRenderer::build(int node, Vec2 offset)
             }
             fillsUnder(s.layers.size());
             wet = push(std::move(stack));
-        } else if (s.stroke >= 0) {   // the raster being painted: the stroke over its pixels
-            Op stroke;
-            stroke.kind     = Op::Kind::Stroke;
-            stroke.pixels   = leafOp(s.wet, offset);
-            stroke.coverage = leafOp(s.stroke, offset);
-            wet = push(std::move(stroke));
-        } else {
-            wet = leafOp(s.wet, offset);
+            break;
+        }
+        case PreviewPlan::Wet::Frozen:
+            if (s.stroke >= 0) {   // the raster being painted: the stroke over its pixels
+                Op stroke;
+                stroke.kind     = Op::Kind::Stroke;
+                stroke.pixels   = leafOp(s.wet, offset);
+                stroke.coverage = leafOp(s.stroke, offset);
+                wet = push(std::move(stroke));
+            } else {
+                wet = leafOp(s.wet, offset);
+            }
+            break;
         }
     }
     if (m_preview->model().dryOn(n)) dry = opFor(s.input, offset);

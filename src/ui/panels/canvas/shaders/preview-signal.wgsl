@@ -3,8 +3,9 @@
 //
 //   out = Main( Wet(wet) over Dry(dry) )
 //   shaping with gains g (A, R, G, B):  rgb *= gA * gC,  a *= gA
-//   a mask's factor: the mask over white, 1 - a + min(luma(rgb), a)
-// Fragment stage only: the vertex stage is fullscreen.wgsl's (put before it).
+//   a mask's factor: the mask over white, 1 - a + min(luma(rgb), a)   (node.hpp: maskFactor)
+// Fragment stage only: the vertex stage is fullscreen.wgsl's (put before it), and kMaskLuma
+// comes from C++ (pipelines.cpp: sharedConstants).
 
 struct Params {
     mainK : vec4f, wetK : vec4f, dryK : vec4f,   // scales, A R G B
@@ -49,7 +50,7 @@ fn maskPixel(i : i32, p : vec2i) -> vec4f {
 fn factor(i : i32, p : vec2i) -> f32 {
     if (i < 0) { return 1.0; }
     let m = maskPixel(i, p);
-    let luma = dot(m.rgb, vec3f(54.0, 183.0, 19.0) / 256.0);
+    let luma = dot(m.rgb, kMaskLuma);
     return clamp(1.0 - m.a + min(luma, m.a), 0.0, 1.0);
 }
 

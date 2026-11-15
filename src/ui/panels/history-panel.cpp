@@ -1,4 +1,5 @@
 #include "ui/panels/history-panel.hpp"
+#include "ui/panels/panel-window.hpp"
 #include "project/project-actions.hpp"
 #include "command/actions.hpp"
 #include "project/workspace.hpp"
@@ -58,6 +59,7 @@ void HistoryPanel::layout(const History& h)
     for (uint32_t id = 0; id < n; ++id) m_lane[id] = chains[size_t(chainOf[id])].lane;
     m_lanes   = int(laneEnd.size());
     m_laidOut = n;
+    m_laidOutNewest = h.serial(stepAt(n - 1));
 }
 
 PanelInfo HistoryPanel::info() const { return { Actions::ViewHistoryTree, "History Tree", DockSlot::RightBottom }; }
@@ -113,8 +115,13 @@ void HistoryPanel::draw()
     ActionRegistry& actions = ui().actions;
     const Widgets::PanelWindow window(*this, actions);
     if (!window) return;
-    if (history.size() != m_laidOut) layout(history);
-    std::erase_if(m_picked, [&](StepId s) { return !history.contains(s); });
+    if (history.size() != m_laidOut || history.serial(stepAt(uint32_t(history.size() - 1))) != m_laidOutNewest) {
+        if (history.size() <= m_laidOut) {   // steps removed (then maybe added): the ids picked are someone else's now
+            m_picked.clear();
+            m_anchor = kNoStep;
+        }
+        layout(history);
+    }
 
     const Style::HistoryStyle& style = Style::get().history;
     const uint32_t count   = uint32_t(history.size());

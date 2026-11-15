@@ -55,21 +55,30 @@ int PreviewPlan::planFor(const NodePtr& n)
     Planned p;
     p.node = n;
     const NodeLinks& in = n->links();
-    const InputShape shape = n->ports().inputs;
-    const bool recompose = shape == InputShape::Stack && n->id() != m_edited &&
+    const WetRule rule = nodeKind(n->type()).wet;
+    const bool readsInput = rule == WetRule::Input || rule == WetRule::MovedInput;
+    if (n->ports().inputs == InputShape::One && in.input && (readsInput || n->hasDryWet())) p.input = sourceFor(in.input);
+    const bool recompose = rule == WetRule::Stack && n->id() != m_edited &&
         std::any_of(in.layers.begin(), in.layers.end(), [&](const NodePtr& l) { return m_index.contains(l->id()); });
-    if (shape == InputShape::One) {
-        if (in.input) p.input = sourceFor(in.input);
-    } else if (recompose) {   // layers the edit reaches are rebuilt; the rest are drawn as they are
-        p.stack = true;
-        const auto& stack = static_cast<const CompositorNode&>(*n);   // the one stack kind
-        for (const CompositorNode::Drawn& d : stack.drawn()) {
-            if (d.row >= 0) p.layers.push_back(sourceFor(in.layers[size_t(d.row)]));
-            else            p.fills.push_back({ d.fill, d.tint, p.layers.size() });
+    switch (rule) {
+    case WetRule::Input:      p.how = Wet::Input; break;
+    case WetRule::MovedInput: p.how = Wet::Moved; break;
+    case WetRule::Stack:
+        if (recompose) {   // layers the edit reaches are rebuilt; the rest are drawn as they are
+            p.how = Wet::Stack;
+            for (const CompositorNode::Drawn& d : stackDrawn(*n)) {
+                if (d.row >= 0) p.layers.push_back(sourceFor(in.layers[size_t(d.row)]));
+                else            p.fills.push_back({ d.fill, d.tint, p.layers.size() });
+            }
+            break;
         }
-    } else {
-        p.wet = leafFor(n, PreviewLeaf::Kind::Wet);   // its wet can't change: frozen, its signals change on the GPU
+        [[fallthrough]];   // only its signals change: its composite is frozen
+    case WetRule::OwnPixels:
+    case WetRule::Computed:   // the GPU can't rebuild it: as it was, until the edit lands
+        p.how = Wet::Frozen;
+        p.wet = leafFor(n, PreviewLeaf::Kind::Wet);
         if (m_stroke && n->id() == m_edited) p.stroke = leafFor(n, PreviewLeaf::Kind::Stroke);
+        break;
     }
     for (int sig = 0; sig < kSignalCount; ++sig)
         for (int ch = 0; ch < kChannelCount; ++ch)

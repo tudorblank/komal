@@ -1,4 +1,5 @@
 #include "ui/panels/canvas/canvas-panel.hpp"
+#include "ui/panels/panel-window.hpp"
 #include "ui/input-owner.hpp"
 #include "project/project-actions.hpp"
 #include "ui/render/painter.hpp"

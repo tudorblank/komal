@@ -100,19 +100,6 @@ GraphHit hitTest(const HitView& v, ImVec2 mouse)
     return {};
 }
 
-LinkZone linkZoneAt(const NodeItem& item, ImVec2 p)
-{
-    if (item.stackArea) {
-        ImRect area = *item.stackArea;
-        area.Expand(ImVec2(0.0f, GraphLayout::kStackBleed));
-        if (area.Contains(p)) return { LinkZone::Kind::Stack };
-    }
-    for (const NodeItemChannelRow& row : item.channels)
-        if (row.rect.Contains(p)) return { LinkZone::Kind::Channel, &row };
-    if (!item.boxes.empty() && item.boxes.front().rect.Contains(p)) return { LinkZone::Kind::Body };
-    return {};
-}
-
 const NodeItemPort* portOf(const GraphScene& scene, const PortHit& hit)
 {
     const NodeItem* s = scene.item(hit.node);

@@ -1,4 +1,5 @@
 #include "ui/panels/color-panel.hpp"
+#include "ui/panels/panel-window.hpp"
 #include "base/math.hpp"
 #include "command/actions.hpp"
 #include "ui/render/painter.hpp"

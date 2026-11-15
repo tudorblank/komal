@@ -1,6 +1,7 @@
 #include "node/node-types.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cstring>
 #include <utility>
 
@@ -313,4 +314,11 @@ const Tile* CompositorNode::composeTile(int tx, int ty, RenderCtx& ctx)
         if (any) w.markChanged();
     }
     return any ? &acc : nullptr;
+}
+
+std::span<const CompositorNode::Drawn> stackDrawn(const Node& n)
+{
+    if (n.ports().inputs != InputShape::Stack) return {};
+    assert(n.type() == NodeType::Compositor && "stackDrawn knows one stack kind: add the new one here");
+    return static_cast<const CompositorNode&>(n).drawn();
 }

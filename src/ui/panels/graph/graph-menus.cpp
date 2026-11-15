@@ -1,6 +1,7 @@
 #include "ui/panels/graph/graph-menus.hpp"
 #include "ui/style/ui-style.hpp"
 #include "project/project-actions.hpp"
+#include "project/stack-rows.hpp"
 #include "project/workspace.hpp"
 #include "ui/panels/graph/internal/layout.hpp"
 #include "ui/widgets/widgets.hpp"
@@ -21,11 +22,9 @@ constexpr const char* kValuePopup = "##value-edit";
 // The top of `stack`'s rows, as a place among the rows left once `leaving` is out of its own.
 size_t stackTop(const Node& stack, NodeId leaving)
 {
-    const std::vector<NodePtr>& layers = stack.links().layers;
-    size_t top = 0;
-    for (const StackGroups::Entry& e : StackGroups::entries(stackSettings(stack).groups, layers.size()))
-        if (e.group != kNoGroup || layers[e.begin]->id() != leaving) ++top;
-    return top;
+    StackMove carried;
+    carried.layers = { leaving };
+    return rowsLeft(stackRowsOf(stack), carried);
 }
 
 }

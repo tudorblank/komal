@@ -236,12 +236,13 @@ if(KOMAL_TESTS)
     add_custom_command(TARGET komal-tests POST_BUILD COMMAND komal-tests --minimal COMMENT "Running the tests" VERBATIM)
 
     # The UI's blocks that need no window or GPU: its look (theme files, palette, styles), and how
-    # the graph lays a node out and where a drop on a stack lands.
+    # the graph lays a node out, where a drop on a stack or a dragged link lands, and how rows are picked.
     file(GLOB UI_TEST_SOURCES CONFIGURE_DEPENDS tests/ui/*.cpp tests/ui/*.hpp)
     add_executable(komal-ui-tests ${UI_TEST_SOURCES}
         src/ui/style/theme.cpp src/ui/style/theme-list.cpp
         src/ui/style/palette.cpp src/ui/style/ui-style.cpp src/ui/style/graph-style.cpp
-        src/ui/panels/graph/internal/node-item.cpp src/ui/panels/graph/internal/stack-drop.cpp)
+        src/ui/panels/graph/internal/node-item.cpp src/ui/panels/graph/internal/stack-drop.cpp
+        src/ui/panels/graph/internal/link-drop.cpp src/ui/panels/graph/internal/row-pick.cpp)
     target_include_directories(komal-ui-tests PRIVATE src)
     target_include_directories(komal-ui-tests SYSTEM PRIVATE ${doctest_SOURCE_DIR} ${tomlplusplus_SOURCE_DIR}/include)
     target_link_libraries(komal-ui-tests PRIVATE komal-core imgui)
@@ -249,9 +250,24 @@ if(KOMAL_TESTS)
     add_test(NAME komal-ui-tests COMMAND komal-ui-tests)
     add_custom_command(TARGET komal-ui-tests POST_BUILD COMMAND komal-ui-tests --minimal COMMENT "Running the UI tests" VERBATIM)
 
+    # The canvas shaders on a device with no window: every pipeline made, and the preview's maths
+    # held to the CPU's. Skipped (not failed) where there's no GPU.
+    file(GLOB GPU_TEST_SOURCES CONFIGURE_DEPENDS tests/gpu/*.cpp tests/gpu/*.hpp)
+    file(GLOB GPU_SOURCES CONFIGURE_DEPENDS src/gpu/*.cpp src/gpu/*.hpp)
+    add_executable(komal-gpu-tests ${GPU_TEST_SOURCES} ${GPU_SOURCES} src/ui/panels/canvas/pipelines.cpp
+        ${GENERATED_DIR}/shader-texture.cpp ${GENERATED_DIR}/shader-color.cpp ${GENERATED_DIR}/shader-preview-signal.cpp
+        ${GENERATED_DIR}/shader-preview-blit.cpp ${GENERATED_DIR}/shader-checker.cpp ${GENERATED_DIR}/shader-preview-stroke.cpp
+        ${GENERATED_DIR}/shader-fullscreen.cpp)
+    target_include_directories(komal-gpu-tests PRIVATE src)
+    target_include_directories(komal-gpu-tests SYSTEM PRIVATE ${doctest_SOURCE_DIR})
+    target_link_libraries(komal-gpu-tests PRIVATE komal-core wgpu_native)
+    komal_warnings(komal-gpu-tests)
+    add_test(NAME komal-gpu-tests COMMAND komal-gpu-tests)
+    add_custom_command(TARGET komal-gpu-tests POST_BUILD COMMAND komal-gpu-tests --minimal COMMENT "Running the GPU tests" VERBATIM)
+
     # Clang only: doctest includes <ciso646> there, which newer standard libraries #warning about
     # in C++20 (no longer a standard header). Not ours, and an error under KOMAL_WERROR.
-    foreach(target komal-tests komal-ui-tests)
+    foreach(target komal-tests komal-ui-tests komal-gpu-tests)
         target_compile_options(${target} PRIVATE $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-cpp>)
     endforeach()
 endif()
@@ -268,6 +284,7 @@ add_dependencies(${PROJECT_NAME} check-layers)
 if(KOMAL_TESTS)
     add_dependencies(komal-tests check-layers)
     add_dependencies(komal-ui-tests check-layers)
+    add_dependencies(komal-gpu-tests check-layers)
 endif()
 
 # ---------------------------------------------------------------- app and document icons

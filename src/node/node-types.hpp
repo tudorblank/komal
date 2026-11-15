@@ -4,6 +4,8 @@
 
 #include "node/node.hpp"
 
+#include <span>
+
 // ============================ RASTER ROOT ============================
 class RasterRootNode : public Node {
     struct Private { explicit Private() = default; };
@@ -149,3 +151,7 @@ private:
     TileGrid m_cache;       // raw composite
     TileSet  m_empty;       // tiles known to composite to nothing
 };
+
+// What a stack draws (ports().inputs == InputShape::Stack), bottom first; nothing for any other
+// node. With stackSettings, the one way to read a stack from outside node/: never cast to its class.
+std::span<const CompositorNode::Drawn> stackDrawn(const Node& n);

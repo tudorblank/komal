@@ -10,6 +10,9 @@
 // While an edit in progress reaches a node, its slot shows the preview's picture instead
 // (PreviewPicture, the preview's thumbnail branch), and the node's tiles wait: once the edit is
 // over they catch up, and the slot keeps the preview's last picture until they have.
+//
+// A thumbnail not drawn for kLetGo lets go of the node's tiles (its picture stays in its slot), so
+// the TileCache can evict them; drawn again, it takes them back and catches up.
 
 #include "base/frames.hpp"
 #include "ui/panels/canvas/preview/preview-picture.hpp"
@@ -53,8 +56,10 @@ public:
 
 private:
     static constexpr int kPageSize = 2048;
+    static constexpr Clock::Seconds kLetGo{ 5.0 };   // not drawn this long: its tiles go back to the cache
     struct Thumb {
-        std::shared_ptr<RasterTiles> tiles;   // the node's output
+        std::shared_ptr<RasterTiles> tiles;   // the node's output (null once let go)
+        Clock::TimePoint asked{};             // last drawn
         BoundsI      bounds;                  // what the picture is fitted to
         int          level = -1;
         uint64_t     seen = 0;                // the level's revision, as last rendered

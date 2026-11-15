@@ -37,15 +37,15 @@
 #include "ui/dockspace.hpp"
 #include "ui/panels/intro-screen.hpp"
 #include "ui/input-owner.hpp"
-#include "ui/image-importer.hpp"
+#include "ui/file-intake.hpp"
 #include "ui/notices.hpp"
 #include "ui/panels/panel-base.hpp"
 #include "ui/tools/tool-manager.hpp"
+#include "ui/unsaved-changes.hpp"
 
 #include <imgui.h>
 #include <webgpu/webgpu.h>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <string>
 #include <utility>
@@ -74,18 +74,18 @@ public:
     void draw();                              // ImGui side
     void renderGpu(WGPUCommandEncoder enc);   // wgpu side (offscreen passes)
 
-    bool quitRequested() const { return m_quit; }
+    bool quitRequested() const { return m_unsaved.quit(); }
     void requestQuit();   // the window's close button, the OS: app.quit (which asks if anything is unsaved)
     // When the UI next needs a frame without new input (base/frames.hpp): tiles still
     // syncing, a throttled picture or thumbnail, a hold turning into a gesture.
     Clock::Seconds nextFrameIn() const;
     // Any thread (a dialog's, the command line): a .komal file opens as a project, anything else
     // is imported as an image.
-    void openFile(std::string path);
-    void saveTo(ProjectId project, std::string path);   // any thread: the save dialog's answer (empty: cancelled)
+    void openFile(std::string path) { m_intake.open(std::move(path)); }
+    void saveTo(ProjectId project, std::string path) { m_intake.saveTo(project, std::move(path)); }   // any thread: the save dialog's answer (empty: cancelled)
     // A file dropped at window (x, y): a .komal file opens wherever it lands; an image is imported
     // if it lands on the canvas or the graph.
-    void dropFile(std::string path, float x, float y) { m_drops.push_back({ std::move(path), ImVec2(x, y) }); }
+    void dropFile(std::string path, float x, float y) { m_intake.drop(std::move(path), ImVec2(x, y)); }
 
 private:
     template<class T> T* addPanel();
@@ -94,28 +94,18 @@ private:
     void drawMenuBar();
     void registerAppActions();   // ui/app-actions.cpp: every app-state action
     const Project* projectOf(const ActionArgs& args) const;   // its kProject, else the active one (null: none)
-    void dispatchDrops();
     void projectsChanged(const ProjectsEvent& e);   // the engine and every panel follow
     void registerProjectRequests();    // project.* here: each asks for its change, made between frames
     void applyProjectRequests();       // ... the changes asked for, before anything is drawn
-    void takeInbox();                  // the files that came from other threads, as project requests
     void settleHistories();            // once a frame, last: history's pixels warmed and cooled (Workspace::settleHistory)
-    // ---- unsaved changes: asked first, one project at a time (closing it, or quitting with it)
-    void ask(ProjectId project, bool quitting);
-    void askNextBeforeQuit();       // the next unsaved one not answered yet; none left: quit
-    void answered(bool saved);      // its "Yes" saved it (or didn't): on to what was waiting
-    void stopAsking();              // Cancel: nothing closes, no quitting
-    void drawConfirm();
 
     ActionRegistry   m_actions;   // the app's own; the active project's through it (delegateTo)
     ProjectsManager* m_projects = nullptr;
     Connection       m_projectsEvents;
     ActionRegistry   m_projectActions;   // the projects' own (project/projects-manager-actions): logged as they run
     std::vector<std::pair<ActionId, ActionArgs>> m_projectRequests;   // asked for this frame, in order
-    // Files that came from another thread (a dialog, the command line), for the next frame.
-    std::mutex m_inboxLock;
-    std::vector<std::string> m_toOpen;
-    std::vector<std::pair<ProjectId, std::string>> m_toSave;
+    FileIntake     m_intake;    // files from other threads, drops, imports
+    UnsavedChanges m_unsaved;   // asked first, one project at a time (closing it, or quitting with it)
     ToolManager    m_tools;     // before the panels that use it
     InputOwner     m_owner;     // who has the keyboard this frame
     CanvasEngine   m_canvas;    // ... and what canvas views draw with
@@ -123,30 +113,16 @@ private:
 
     Dockspace::Panels   m_panels;      // in View menu order, also their GPU work's (the canvas first)
     std::vector<Panel*> m_drawOrder;   // Edit panels, then Show panels (PanelInfo::phase), each in menu order
-    CanvasPanel* m_canvasPanel = nullptr;   // in m_panels: the ones a drop can land on
-    GraphPanel*  m_graphPanel  = nullptr;
     Dockspace    m_dockspace;
     IntroScreen  m_intro;   // with no project open, in its place
 
-    ImageImporter       m_importer;
     Notices             m_notices;
-    struct Drop { std::string path; ImVec2 pos; };
-    std::vector<Drop>   m_drops;
 
     const InputFrame*   m_input = nullptr;
     const HostInfo*     m_host  = nullptr;
 
-    // "Save changes to <name> before closing / quitting?" Yes: saved (asked where, if it has no
-    // file yet), then closed or on to the next; No: closed unsaved, or left as it is; Cancel: stop.
-    struct Confirm { bool quitting = false; ProjectId project = kNoProject; };
-    std::optional<Confirm> m_confirm;   // asked now
-    std::optional<Confirm> m_saving;    // answered Yes: waits for its save
-    bool m_quitting = false;            // asking about each unsaved one in turn, then quitting
-    std::vector<ProjectId> m_keptUnsaved;   // ... answered No so far
-
     static constexpr Clock::Milliseconds kHistoryShare{ 2.0 };   // a frame's time for that, at most
 
     bool m_initialized = false;
-    bool m_quit = false;
     bool m_toldOutOfMemory = false;   // the user knows the GPU is full
 };

@@ -59,6 +59,48 @@ TEST_CASE("unsaved: away from the step its file holds, whichever way")
     CHECK(project.unsaved());
 }
 
+TEST_CASE("unsaved survives deleting history steps: the saved step is found again, or gone")
+{
+    Project project;
+    project.workspace().init();
+    edit(project);                                       // step 1
+    edit(project);                                       // step 2
+    project.savedAs("/somewhere/poster.komal");          // the file holds step 2
+    edit(project);                                       // step 3: unsaved
+    REQUIRE(project.unsaved());
+    // Deleting step 1 renumbers the others (3 becomes 2): still unsaved.
+    REQUIRE(project.actions().run(Actions::HistoryDelete, { { ProjectArgs::kSteps, std::vector<StepId>{ StepId(1) } } }));
+    CHECK(project.unsaved());
+    REQUIRE(project.actions().run(Actions::EditUndo));   // back on the saved step (now id 1)
+    CHECK_FALSE(project.unsaved());
+    REQUIRE(project.actions().run(Actions::EditRedo));
+    // The saved step itself deleted: nothing holds what the file does, unsaved until saved again.
+    REQUIRE(project.actions().run(Actions::HistoryDelete, { { ProjectArgs::kSteps, std::vector<StepId>{ StepId(1) } } }));
+    CHECK(project.unsaved());
+    REQUIRE(project.actions().run(Actions::EditUndo));
+    CHECK(project.unsaved());
+    project.savedAs("/somewhere/poster.komal");
+    CHECK_FALSE(project.unsaved());
+}
+
+TEST_CASE("projects don't switch or close while a gesture is open in the active one")
+{
+    ProjectsManager projects;
+    ActionRegistry manager;
+    registerProjectsManagerActions(manager, projects);
+    Project& one = projects.create();
+    Project& two = projects.create();
+    REQUIRE(manager.run(Actions::ProjectActivate, { { ProjectArgs::kProject, one.id() } }));
+    // A scrub begun, not moved yet: no preview, but a gesture (and its undo step) is open.
+    REQUIRE(one.actions().beginGesture(Actions::SignalScrub, { { ProjectArgs::kNode, one.workspace().master().id() },
+                                                               { ProjectArgs::kSignal, NodeSignal::Main }, { ProjectArgs::kChannel, NodeChannel::A } }));
+    CHECK_FALSE(one.workspace().preview());
+    CHECK_FALSE(manager.run(Actions::ProjectActivate, { { ProjectArgs::kProject, two.id() } }));
+    CHECK_FALSE(manager.run(Actions::ProjectClose, { { ProjectArgs::kProject, one.id() } }));
+    one.actions().cancelGesture(Actions::SignalScrub);
+    CHECK(manager.run(Actions::ProjectActivate, { { ProjectArgs::kProject, two.id() } }));
+}
+
 TEST_CASE("each project has its own workspace, history and actions")
 {
     ProjectsManager projects;

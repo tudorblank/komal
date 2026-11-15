@@ -1,4 +1,5 @@
 #include "ui/panels/toolbox-panel.hpp"
+#include "ui/panels/panel-window.hpp"
 #include "command/actions.hpp"
 #include "ui/tools/tool-manager.hpp"
 #include "ui/render/skins.hpp"

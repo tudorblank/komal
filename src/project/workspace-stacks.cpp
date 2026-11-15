@@ -26,9 +26,7 @@ bool Workspace::moveStackRows(NodeId compositor, const StackMove& move)
     Node* c = find(compositor);
     if (!c || c->ports().inputs != InputShape::Stack) return false;
     if ((!move.groups.empty() || move.into != kNoArtboard) && !isMaster(compositor)) return false;   // only the master has artboards
-    StackRows now;
-    for (const NodePtr& l : c->links().layers) now.layers.push_back(l->id());
-    now.groups = stackSettings(*c).groups;
+    const StackRows now = stackRowsOf(*c);
     const std::optional<StackRows> next = moveRows(now, move);
     if (!next || *next == now) return false;
 
@@ -69,42 +67,28 @@ bool Workspace::removeStackRows(NodeId compositor, const std::vector<NodeId>& la
 
 // ---------------------------------------------------------------- artboards
 
-Artboard* Workspace::findArtboard(ArtboardId id)
-{
-    for (Artboard& a : m_artboards)
-        if (a.id == id) return &a;
-    return nullptr;
-}
-
 const Artboard* Workspace::artboard(ArtboardId id) const
 {
-    return const_cast<Workspace*>(this)->findArtboard(id);
+    return m_artboards.find(id);
 }
 
 ArtboardId Workspace::addArtboard(const BoundsI& rect)
 {
-    if (!rectFits(rect)) return kNoArtboard;
-    m_lastArtboard = ArtboardId(uint32_t(m_lastArtboard) + 1);
-    Artboard a;
-    a.id   = m_lastArtboard;
-    a.rect = rect;
-    a.name = "Artboard " + std::to_string(uint32_t(a.id));   // ids never come back: nor do names
-    m_artboards.push_back(a);
+    const ArtboardId id = m_artboards.add(rect);
+    if (id == kNoArtboard) return kNoArtboard;
     std::vector<StackGroup> groups = stackSettings(*m_master).groups;   // empty, on top
     const uint32_t top = uint32_t(m_master->layers().size());
-    groups.push_back({ a.id, top, top });
+    groups.push_back({ id, top, top });
     setMasterGroups(std::move(groups));
     showArtboards();
     emit(WorkspaceEventType::ArtboardsChanged, m_master->id());
     emit(WorkspaceEventType::LayersChanged, m_master->id());
-    return a.id;
+    return id;
 }
 
 bool Workspace::setArtboard(const Artboard& a)
 {
-    Artboard* now = findArtboard(a.id);
-    if (!now || *now == a || !fits(a)) return false;
-    *now = a;
+    if (!m_artboards.set(a)) return false;
     showArtboards();
     emit(WorkspaceEventType::ArtboardsChanged, m_master->id());
     return true;
@@ -112,9 +96,7 @@ bool Workspace::setArtboard(const Artboard& a)
 
 bool Workspace::deleteArtboard(ArtboardId id)
 {
-    const Artboard* a = findArtboard(id);
-    if (!a) return false;
-    m_artboards.erase(m_artboards.begin() + (a - m_artboards.data()));
+    if (!m_artboards.remove(id)) return false;
     std::vector<StackGroup> groups = stackSettings(*m_master).groups;
     std::erase_if(groups, [&](const StackGroup& g) { return g.key == id; });
     setMasterGroups(std::move(groups));
@@ -135,17 +117,11 @@ bool Workspace::setMasterGroups(std::vector<StackGroup> groups)
 
 bool Workspace::artboardsMatchStack() const
 {
-    const std::vector<StackGroup> groups = stackSettings(*m_master).groups;
-    if (groups.size() != m_artboards.size()) return false;
-    return std::all_of(m_artboards.begin(), m_artboards.end(), [&](const Artboard& a) {
-        return std::count_if(groups.begin(), groups.end(), [&](const StackGroup& g) { return g.key == a.id; }) == 1;
-    });
+    return m_artboards.match(stackSettings(*m_master).groups);
 }
 
 void Workspace::showArtboards()
 {
     assert(artboardsMatchStack() && "an artboard without its group, or a group without its artboard");
-    std::vector<GroupLook> looks;
-    for (const Artboard& a : m_artboards) looks.push_back({ a.id, a.rect, a.color, !a.visible });
-    m_master->setLooks(key(), std::move(looks));
+    m_master->setLooks(key(), m_artboards.looks());
 }

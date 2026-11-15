@@ -1,4 +1,5 @@
 #include "ui/panels/project-tabs-panel.hpp"
+#include "ui/panels/panel-window.hpp"
 #include "command/actions.hpp"
 #include "project/projects-manager-actions.hpp"
 #include "ui/render/skins.hpp"

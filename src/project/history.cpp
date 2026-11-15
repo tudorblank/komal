@@ -10,6 +10,7 @@ void History::push(HistoryStep step)
     Entry& n = m_entries.emplace_back();
     n.parent = m_current;
     n.depth  = depth;
+    n.serial = StepSerial(++m_made);
     n.step   = std::move(step);
 
     at(m_current).children.push_back(id);
@@ -72,6 +73,7 @@ void History::remove(const std::vector<StepId>& steps)
         if (gone[i]) continue;
         const StepId id = StepId(i);
         Entry n;
+        n.serial = at(id).serial;
         n.step = std::move(at(id).step);
         for (StepId c : childrenLeft(id)) n.children.push_back(newId(c));
         const StepId redo = redoLeft(id);

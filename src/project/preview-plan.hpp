@@ -9,6 +9,8 @@
 //     composite when only its signals change),
 //   - every mask the edit doesn't reach: its output,
 //   - a stroke's coverage, over the raster it paints.
+// How each reached node's wet is made is decided here, once, from its kind's WetRule
+// (node-kinds.hpp): the GPU preview and the bounds rules both switch on it.
 
 #include "project/edit-preview.hpp"
 
@@ -35,13 +37,21 @@ public:
         Color8  color;    // straight
         size_t  under;    // drawn under layers[under] (layers.size(): on top)
     };
+    // How a reached node's wet is made under the edit.
+    enum class Wet : uint8_t {
+        Input,    // its input as it is
+        Moved,    // its input, shifted by its offset (PreviewModel::moveOffset)
+        Stack,    // recomposed: its layers and fills, as it draws
+        Frozen,   // as it was (a leaf): its own pixels, a stack the edit reaches only through
+                  // its signals, or a kind the GPU can't rebuild (WetRule::Computed)
+    };
     struct Planned {
         NodePtr node;
-        Source  input;                                // a one-input node's (InputShape::One)
-        bool    stack = false;                        // a recomposed stack: ...
-        std::vector<Source> layers;                   // ... its layers shown, bottom first ...
+        Wet     how = Wet::Frozen;
+        Source  input;                                // a one-input node's, when its wet or dry reads it
+        std::vector<Source> layers;                   // Stack: its layers shown, bottom first ...
         std::vector<Fill>   fills;                    // ... and its groups' fills
-        int     wet = -1;                             // otherwise its raw wet, frozen (leaf)
+        int     wet = -1;                             // Frozen: its raw wet (leaf) ...
         int     stroke = -1;                          // ... with the stroke over it (leaf)
         Source  masks[kSignalCount][kChannelCount];
     };

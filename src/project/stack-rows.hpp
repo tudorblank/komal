@@ -26,6 +26,14 @@ struct StackMove {
     size_t   at = 0;                // ... at this position among the rows left there (0 = bottom)
 };
 
+StackRows stackRowsOf(const Node& stack);   // its layers and groups as they are
+
 // The rows after the move; nullopt when it doesn't fit (a layer or group that isn't there, a group
 // into a group, a place out of range).
 std::optional<StackRows> moveRows(const StackRows& now, const StackMove& move);
+
+// How many rows are left in `into` (the top level, or a group's layers) once `carried`'s layers and
+// groups are out (its into and at aside): a place there is 0 ..= this. The one count places are
+// measured by: moveRows, the graph's layout of a drag and its menus. Carried rows that aren't
+// there are skipped.
+size_t rowsLeft(const StackRows& now, const StackMove& carried, GroupKey into = kNoGroup);

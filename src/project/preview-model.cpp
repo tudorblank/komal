@@ -1,6 +1,5 @@
 #include "project/preview-model.hpp"
 #include "project/workspace.hpp"
-#include "node/node-kinds.hpp"
 
 // ---------------------------------------------------------------- a node under the edit
 
@@ -46,17 +45,23 @@ BoundsI PreviewModel::boundsOf(int node, Vec2 offset) const
     const Node& n = *s.node;
     BoundsI b;
     if (wetOn(n)) {
-        if (const std::optional<Vec2> by = moveOffset(n)) {
-            b = sourceBounds(s.input, { offset.x + by->x, offset.y + by->y });
-        } else if (n.ports().inputs == InputShape::One) {
-            b = sourceBounds(s.input, offset);
-        } else if (s.stack) {
+        switch (s.how) {
+        case PreviewPlan::Wet::Input: b = sourceBounds(s.input, offset); break;
+        case PreviewPlan::Wet::Moved: {
+            const Vec2 by = moveOffset(n).value_or(Vec2{});
+            b = sourceBounds(s.input, { offset.x + by.x, offset.y + by.y });
+            break;
+        }
+        case PreviewPlan::Wet::Stack:
             for (PreviewPlan::Source l : s.layers) b.expand(sourceBounds(l, offset));
             for (const PreviewPlan::Fill& f : s.fills) b.expand(f.rect.offsetBy(int(offset.x), int(offset.y)));
-        } else if (s.wet >= 0) {
+            break;
+        case PreviewPlan::Wet::Frozen: {
             b = leafBounds(s.wet, offset);
             const BrushParams& brush = m_workspace->stroke().params();
             if (s.stroke >= 0 && !brush.keepAlpha && brush.mode != CompositeMode::Erase) b.expand(leafBounds(s.stroke, offset));
+            break;
+        }
         }
     }
     if (dryOn(n)) b.expand(sourceBounds(s.input, offset));

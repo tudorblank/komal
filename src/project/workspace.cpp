@@ -150,7 +150,7 @@ bool Workspace::setNodeSettings(NodeId id, const NodeSettings& settings)
     if (!n) return false;
     const NodeSettings now = n->settings();
     if (now.index() != settings.index() || now == settings) return false;   // its own kind's, and a change
-    if (const auto* m = std::get_if<MoveSettings>(&settings); m && !fits(*m)) return false;
+    if (!fits(settings)) return false;
     if (const auto* c = std::get_if<CompositorSettings>(&settings); c && c->groups != std::get<CompositorSettings>(now).groups)
         return false;   // the artboards' (addArtboard, moveStackRows)
     if (id == m_stroke.node()) endStroke();   // finished under the rules it started with
@@ -375,8 +375,8 @@ bool Workspace::goToHistory(StepId step)
 void Workspace::restoreGraph(const GraphState& target)
 {
     target.restore(key(), m_nodes, emitter());
-    if (*target.artboards != m_artboards) {
-        m_artboards = *target.artboards;
+    if (*target.artboards != m_artboards.all()) {
+        m_artboards.restore(*target.artboards);
         showArtboards();
         emit(WorkspaceEventType::ArtboardsChanged, m_master->id());
     }

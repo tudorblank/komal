@@ -20,6 +20,9 @@ struct GraphState;
 enum class StepId : uint32_t {};
 constexpr StepId kStartStep{ 0 };
 constexpr StepId kNoStep{ 0xFFFFFFFFu };
+// A step's serial: given once when it's made, never renumbered or reused (a StepId is renumbered
+// when steps are removed). What to keep to find "that step" again later, e.g. the one saved.
+enum class StepSerial : uint64_t {};
 
 // A raster's pixels as a step leaves them: shared with the steps around it while they're the same.
 struct RasterState {
@@ -40,6 +43,7 @@ public:
     History() { m_entries.emplace_back().step.label = "Start"; }   // kStartStep: the initial state
 
     StepId current() const { return m_current; }
+    StepSerial serial(StepId id) const { return at(id).serial; }
     bool canUndo() const { return m_current != kStartStep; }
     bool canRedo() const { return redoChild(m_current) != kNoStep; }
 
@@ -68,6 +72,7 @@ private:
         StepId   parent = kNoStep;
         uint32_t depth = 0;
         StepId   redoChild = kNoStep;
+        StepSerial serial{};
         std::vector<StepId> children;
         HistoryStep step;
     };
@@ -77,4 +82,5 @@ private:
 
     std::vector<Entry> m_entries;
     StepId m_current = kStartStep;
+    uint64_t m_made = 0;   // steps made so far (the start's serial is 0)
 };

@@ -1,10 +1,12 @@
 // The edit in progress on the CPU (PreviewModel) against what the project becomes once it's
 // applied: the GPU preview renders from the model, so a rule the model gets wrong shows wrong
 // pictures. On random graphs: every node's bounds as the model says them under the edit, then as
-// the project has them after; and every node the edit changed must be one the plan reaches.
+// the project has them after; and every node the edit changed must be one the plan reaches. Every
+// kind is reached, planned by its WetRule (a new kind is in these graphs by itself).
 
 #include "project/preview-model.hpp"
 #include "helpers.hpp"
+#include "node/node-kinds.hpp"
 
 namespace {
 
@@ -58,9 +60,28 @@ std::vector<std::pair<NodeId, BoundsI>> boundsOf(const Workspace& p, const Previ
 
 }
 
+namespace {
+
+// How the plan makes a reached node's wet, as its kind's WetRule says.
+bool plannedByRule(const PreviewPlan::Planned& s, NodeId edited)
+{
+    using Wet = PreviewPlan::Wet;
+    switch (nodeKind(s.node->type()).wet) {
+    case WetRule::OwnPixels:  return s.how == Wet::Frozen && s.wet >= 0;
+    case WetRule::Input:      return s.how == Wet::Input;
+    case WetRule::MovedInput: return s.how == Wet::Moved;
+    case WetRule::Stack:      return s.how == Wet::Stack ? s.node->id() != edited : s.how == Wet::Frozen && s.wet >= 0;
+    case WetRule::Computed:   return s.how == Wet::Frozen && s.wet >= 0;   // as it was: never passed through
+    }
+    return false;
+}
+
+}
+
 TEST_CASE("the preview model's bounds are the project's once the edit is applied")
 {
     int made[3] = {};   // edits of each kind actually tried
+    std::vector<int> reached(nodeKinds().size(), 0);   // per node kind, nodes the plans reached
     for (const uint32_t seed : { 11u, 12u, 13u, 14u, 15u, 16u, 17u, 18u }) {
         StarterWorkspace s;
         Workspace& p = s.workspace;
@@ -97,6 +118,10 @@ TEST_CASE("the preview model's bounds are the project's once the edit is applied
             ++made[kind];
             PreviewModel model(p);
             REQUIRE(model.plan(*p.preview()));
+            for (const PreviewPlan::Planned& planned : model.plan().nodes()) {
+                ++reached[size_t(planned.node->type())];
+                CHECK(plannedByRule(planned, model.plan().edited()));
+            }
             const auto predicted = boundsOf(p, &model);
 
             if (kind == 2) {
@@ -116,6 +141,10 @@ TEST_CASE("the preview model's bounds are the project's once the edit is applied
                 if (actual != before[i].second) CHECK(model.plan().reaches(id));   // it changed: the plan knew
             }
         }
+    }
+    for (const NodeKind& k : nodeKinds()) {
+        CAPTURE(k.id);
+        CHECK(reached[size_t(k.type)] >= 5);   // every kind's preview rules tried
     }
     CHECK(made[0] >= 20);
     CHECK(made[1] >= 10);

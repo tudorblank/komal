@@ -23,6 +23,7 @@ template<> struct GpuRelease<WGPUPipelineLayout>  { static void release(WGPUPipe
 template<> struct GpuRelease<WGPURenderPipeline>  { static void release(WGPURenderPipeline o)  { wgpuRenderPipelineRelease(o); } };
 template<> struct GpuRelease<WGPUSampler>         { static void release(WGPUSampler o)         { wgpuSamplerRelease(o); } };
 template<> struct GpuRelease<WGPUShaderModule>    { static void release(WGPUShaderModule o)    { wgpuShaderModuleRelease(o); } };
+template<> struct GpuRelease<WGPUCommandBuffer>   { static void release(WGPUCommandBuffer o)   { wgpuCommandBufferRelease(o); } };
 
 template<class T>
 class GpuObject {

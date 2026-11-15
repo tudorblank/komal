@@ -7,7 +7,8 @@
 // and how it's drawn (its skin, ui/render). A control borrows its style and hands it to its
 // skin; it never holds a color or a size of its own.
 //
-// Tool windows open with PanelWindow: panelPadding on every side, sectionGap between sections.
+// Tool windows open with PanelWindow (ui/panels/panel-window.hpp): panelPadding on every side,
+// sectionGap between sections.
 // Every row is rowHeight tall; every box (field, button, swatch) is boxHeight tall, centred in
 // it (Style::metrics()). A row reads left to right:
 //
@@ -17,7 +18,6 @@
 // they line up down a panel and across panels.
 
 #include "command/actions.hpp"
-#include "ui/panels/panel-base.hpp"
 #include "ui/render/skins.hpp"
 
 #include <imgui.h>
@@ -31,38 +31,7 @@ namespace Widgets {
 
 constexpr float kNoDefault = std::numeric_limits<float>::quiet_NaN();
 
-// ---- panels
-// A panel's window, open for the scope: its title, and its close button running its View toggle.
-// Padded: panelPadding on every side; a view (the canvas, the graph) fills it edge to edge.
-//
-//   Widgets::PanelWindow window(*this, actions);
-//   if (!window) return;
-class PanelWindow {
-public:
-    enum class Padding { Panel, None };
-    PanelWindow(const Panel& panel, ActionRegistry& actions, ImGuiWindowFlags flags = 0, Padding padding = Padding::Panel);
-    ~PanelWindow();
-    PanelWindow(const PanelWindow&) = delete;
-    PanelWindow& operator=(const PanelWindow&) = delete;
-    explicit operator bool() const { return m_shown; }   // false: collapsed or tabbed away
-
-private:
-    bool m_shown = false;
-};
-// A bar under the menu bar (the Toolbox, the projects' strip), open for the scope: `height` tall,
-// `padding` inside, on `back`. The dockspace lays out below it. Its items space themselves
-// (SameLine with their style's gap).
-class BarWindow {
-public:
-    BarWindow(const Panel& panel, float height, ImVec2 padding, ImU32 back);
-    ~BarWindow();
-    BarWindow(const BarWindow&) = delete;
-    BarWindow& operator=(const BarWindow&) = delete;
-    explicit operator bool() const { return m_shown; }
-
-private:
-    bool m_shown = false;
-};
+// ---- sections (a panel's window: ui/panels/panel-window.hpp)
 void  sectionGap();
 void  heading(const char* text);   // a titled section's start: its title between two lines
 // The height `rows` control rows, `headings` headings and `gaps` section gaps take, spacing
