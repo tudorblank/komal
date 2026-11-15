@@ -1,6 +1,6 @@
 #pragma once
 // Raster tiles on the GPU: 64x64 tiles in slots of 2048x2048 pages (AtlasPages), found by key in
-// an atlas (TileAtlas; several atlases can share pages), and drawn by each view that shows them
+// an atlas (TileAtlas; atlases share pages), and drawn by each view that shows them
 // with one instanced draw per page (TileDrawList, texture.wgsl, premultiplied). Owners decide
 // which tiles go in; views decide where they're drawn.
 
@@ -17,7 +17,6 @@ struct ChunkInstance {
     float scale[2];
     float uvOffset[2];
     float uvScale[2];
-    float opacity;
 };
 
 // Pages of tile slots (SlotPages), each with the bind group the atlas pipeline samples it
@@ -54,32 +53,26 @@ private:
     bool m_full = false;
 };
 
-// Tiles by key, in the slots of its own pages or shared ones.
+// Tiles by key, in the slots of shared pages (which must outlive it).
 class TileAtlas {
 public:
-    TileAtlas() = default;
+    explicit TileAtlas(AtlasPages& pages) : m_pages(&pages) {}
     ~TileAtlas() { clear(); }
     TileAtlas(const TileAtlas&) = delete;
     TileAtlas& operator=(const TileAtlas&) = delete;
-
-    void share(AtlasPages& pages) { m_pages = &pages; }   // while empty; they must outlive it
 
     // Adds or replaces. False when there's no room on the GPU: the tile isn't there.
     bool upload(const CanvasPipelines& p, TileKey key, const RGBA* pixels);
     void free(TileKey key);   // its slot is reused after the pages' next recycle()
     void clear();             // drops every tile; before any view draws from it this frame
-    void release();           // clear(), and drops its own pages' GPU resources
 
     bool   contains(TileKey key) const { return m_chunks.contains(key); }
-    bool   empty()     const { return m_chunks.empty(); }
     size_t tileCount() const { return m_chunks.size(); }
-    const AtlasPages& pages() const { return *m_pages; }
 
 private:
     friend class TileDrawList;
 
-    AtlasPages  m_own;
-    AtlasPages* m_pages = &m_own;
+    AtlasPages* m_pages;
     absl::flat_hash_map<TileKey, AtlasPages::Slot> m_chunks;
 };
 
@@ -95,7 +88,7 @@ public:
 
     void begin(const TileAtlas& atlas);
     bool add(TileKey key, float x, float y, float size, float subX = 0.0f, float subY = 0.0f, float subSize = 1.0f);
-    bool end(const CanvasPipelines& p, float opacity);
+    bool end(const CanvasPipelines& p);
     // The atlas pipeline and a camera must be bound.
     void draw(WGPURenderPassEncoder pass) const;
     void release();

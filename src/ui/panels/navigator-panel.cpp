@@ -1,12 +1,12 @@
 #include "ui/panels/navigator-panel.hpp"
-#include "document/document-actions.hpp"
+#include "project/project-actions.hpp"
 #include "base/math.hpp"
 #include "ui/panels/canvas/canvas-engine.hpp"
 #include "ui/panels/canvas/imgui-texture.hpp"
 #include "input/input-frame.hpp"
 #include "ui/navigation.hpp"
 #include "base/frames.hpp"
-#include "document/workspace.hpp"
+#include "project/workspace.hpp"
 #include "ui/render/painter.hpp"
 #include "ui/style/ui-style.hpp"
 #include "ui/widgets/widgets.hpp"
@@ -64,32 +64,29 @@ bool insideQuad(const ImVec2 (&q)[4], ImVec2 p)
 
 }
 
-PanelInfo Navigator::info() const { return { Actions::ViewNavigator, "Navigator", DockSlot::RightTop }; }
+PanelInfo NavigatorPanel::info() const { return { Actions::ViewNavigator, "Navigator", DockSlot::RightTop }; }
 
-bool Navigator::init()
+bool NavigatorPanel::init()
 {
-    if (ui().documents.empty()) return true;   // made as one is shown (Activated)
-    m_preview   = &ui().canvas.preview();
-    m_pipelines = &ui().canvas.pipelines();
-    m_ready = ui().canvas.ready() && m_scene.init(ui().canvas.pipelines()) && m_view.init(m_scene);
-    if (!m_ready) return false;
+    if (ui().projects.empty()) return true;   // made as one is shown (Activated)
+    if (!initGpu()) return false;
     m_checker = m_scene.addItem<CheckerItem>(CheckerItem::Kind::Picture);
     m_checker->setZ(-1.0f);
     m_scene.addItem<RasterItem>(ui().canvas.outputTiles());
     return true;
 }
 
-void Navigator::documentsChanged(const DocumentsEvent& e)
+void NavigatorPanel::projectsChanged(const ProjectsEvent& e)
 {
-    // Its picture is the active document's tiles: let go of before they go, made again for the next.
-    if (e.type == DocumentsEvent::Type::Closing && e.id == ui().documents.active().id()) shutdown();
-    if (e.type == DocumentsEvent::Type::Activated) {
+    // Its picture is the active project's tiles: let go of before they go, made again for the next.
+    if (e.type == ProjectsEvent::Type::Closing && e.id == ui().projects.active().id()) shutdown();
+    if (e.type == ProjectsEvent::Type::Activated) {
         shutdown();
         init();
     }
 }
 
-void Navigator::releaseGpu()
+void NavigatorPanel::releaseGpu()
 {
     m_previewPicture.release();
     m_view.shutdown();
@@ -98,17 +95,22 @@ void Navigator::releaseGpu()
     m_pictureShown = false;
 }
 
-void Navigator::restoreGpu()
+void NavigatorPanel::restoreGpu()
 {
     if (!m_checker) {   // never made (no GPU at start): made now
         init();
         return;
     }
-    m_pipelines = &ui().canvas.pipelines();
-    m_ready = ui().canvas.ready() && m_scene.init(ui().canvas.pipelines()) && m_view.init(m_scene);
+    initGpu();
 }
 
-void Navigator::shutdown()
+bool NavigatorPanel::initGpu()
+{
+    m_ready = ui().canvas.ready() && m_scene.init(ui().canvas.pipelines()) && m_view.init(m_scene);
+    return m_ready;
+}
+
+void NavigatorPanel::shutdown()
 {
     m_previewPicture.release();
     m_view.shutdown();
@@ -118,7 +120,7 @@ void Navigator::shutdown()
     m_pictureShown = false;
 }
 
-void Navigator::draw()
+void NavigatorPanel::draw()
 {
     m_pictureShown = false;
     if (!isOpen()) return;
@@ -144,26 +146,28 @@ void Navigator::draw()
     }
 }
 
-void Navigator::renderGpu(WGPUCommandEncoder enc)
+void NavigatorPanel::renderGpu(WGPUCommandEncoder enc)
 {
     if (!m_pictureShown) return;
     m_previewWaiting = false;
-    if (m_preview->active() && m_previewW > 0) {
-        const auto r = m_previewPicture.render(*m_preview, ui().workspace().master().id(), m_previewW, m_previewH, *m_pipelines, enc,
+    const Preview& preview = ui().canvas.preview();
+    if (preview.active() && m_previewW > 0) {
+        const auto r = m_previewPicture.render(preview, ui().workspace().master().id(), m_previewW, m_previewH, ui().canvas.pipelines(), enc,
                                                ui().canvas.budget(CanvasEngine::Work::Navigator));
         m_previewWaiting = r == PreviewPicture::Result::Waiting;
     }
     m_view.render(enc, ui().canvas.budget(CanvasEngine::Work::Navigator));   // only when the tiles or the map changed
 }
 
-Clock::Seconds Navigator::nextFrameIn() const
+Clock::Seconds NavigatorPanel::nextFrameIn() const
 {
     return m_pictureShown && (m_view.busy() || m_previewWaiting || m_handoff) ? kFrameNow : kNoFrame;
 }
 
-bool Navigator::showsPreview()
+bool NavigatorPanel::showsPreview()
 {
-    if (m_preview->active() && m_preview->plan().reaches(ui().workspace().master().id())) {
+    const Preview& preview = ui().canvas.preview();
+    if (preview.active() && preview.plan().reaches(ui().workspace().master().id())) {
         m_handoff = m_previewPicture.hasPicture();
         m_handoffFrames = 0;
         return m_handoff;
@@ -174,17 +178,17 @@ bool Navigator::showsPreview()
     return m_handoff;
 }
 
-void Navigator::zoomBy(float factor)
+void NavigatorPanel::zoomBy(float factor)
 {
-    ui().actions.run(Actions::CanvasZoom, { { DocArgs::kFactor, factor } });
+    ui().actions.run(Actions::CanvasZoom, { { ProjectArgs::kFactor, factor } });
 }
 
-void Navigator::rotateTo(float degrees)
+void NavigatorPanel::rotateTo(float degrees)
 {
-    ui().actions.run(Actions::CanvasRotate, { { DocArgs::kDegrees, degrees } });
+    ui().actions.run(Actions::CanvasRotate, { { ProjectArgs::kDegrees, degrees } });
 }
 
-void Navigator::drawMap(ImVec2 size)
+void NavigatorPanel::drawMap(ImVec2 size)
 {
     const CanvasCamera& cam = ui().workspace().canvasCamera();
     const Vec2 viewport = ui().workspace().canvasViewport();
@@ -204,8 +208,9 @@ void Navigator::drawMap(ImVec2 size)
     // back after it, the picture shows what it last fitted.
     const bool preview = showsPreview();
     const NodeId master = ui().workspace().master().id();
-    const bool live = m_preview->active() && m_preview->plan().reaches(master);
-    const BoundsI b = !preview ? ui().workspace().master().bounds() : live ? m_preview->model().bounds(master) : m_previewPicture.bounds();
+    const Preview& engine = ui().canvas.preview();
+    const bool live = engine.active() && engine.plan().reaches(master);
+    const BoundsI b = !preview ? ui().workspace().master().bounds() : live ? engine.model().bounds(master) : m_previewPicture.bounds();
     if (b.empty()) {
         const char* text = "Nothing on the canvas yet";
         const ImVec2 t = ImGui::CalcTextSize(text);
@@ -228,7 +233,7 @@ void Navigator::drawMap(ImVec2 size)
     // Navigation first, so the outline is this frame's (the camera is the workspace's: an action
     // changes it at once). Pressing the outline grabs it; elsewhere centres there.
     const Vec2 center = { viewport.x * 0.5f, viewport.y * 0.5f };
-    if (hovered && (ui().input.mods & ModPrimary) && io.MouseWheel != 0.0f) zoomBy(std::pow(Navigation::kWheelZoomStep, io.MouseWheel));
+    if (hovered && (ui().input.mods & ModPrimary) && ui().input.wheelY != 0.0f) zoomBy(std::pow(Navigation::kWheelZoomStep, ui().input.wheelY));
     if (ImGui::IsItemActivated()) {
         ImVec2 q[4];
         viewQuad(q);
@@ -239,7 +244,7 @@ void Navigator::drawMap(ImVec2 size)
     if (!active) m_dragging = false;
     if (m_dragging) {
         const Vec2 m = toWorld(io.MousePos), to = { m.x + m_grab.x, m.y + m_grab.y };
-        if (to != cam.screenToWorld(center)) ui().actions.run(Actions::CanvasCenterOn, { { DocArgs::kX, to.x }, { DocArgs::kY, to.y } });
+        if (to != cam.screenToWorld(center)) ui().actions.run(Actions::CanvasCenterOn, { { ProjectArgs::kX, to.x }, { ProjectArgs::kY, to.y } });
     }
 
     // The picture: a view of the output's tiles over exactly the bounds, rendered in renderGpu().
@@ -291,7 +296,7 @@ void Navigator::drawMap(ImVec2 size)
     }
 }
 
-void Navigator::drawControls()
+void NavigatorPanel::drawControls()
 {
     // Per setting: [-] slider [+] [value], the slider's figure saying which (a ramp: zoom; a wave:
     // rotation). Double-clicking a slider resets it.

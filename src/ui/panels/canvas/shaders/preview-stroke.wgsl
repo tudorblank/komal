@@ -2,7 +2,7 @@
 // maths as BrushStroke::composeTile on the CPU. Both textures are the size of the picture and
 // premultiplied; pixels are read 1:1.
 //
-//   source = colour * coverage * opacity
+//   source = color * coverage * opacity
 //   paint:  source over the pixels          erase:  the pixels * (1 - source.a)
 //   alpha locked: painting keeps each pixel's alpha (rgb rescaled to it), erasing does nothing
 // Fragment stage only: the vertex stage is fullscreen.wgsl's (put before it).

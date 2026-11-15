@@ -1,7 +1,7 @@
 #pragma once
-// The UI's look, defined in one place: the palette's colours (palette.hpp, made from a theme
+// The UI's look, defined in one place: the palette's colors (palette.hpp, made from a theme
 // file) and the UI's sizes, made into one style per component. ImGui's own widgets (menus, tabs, popups, scrollbars) get
-// the same colours through apply(). Nothing else in the UI holds a colour or a look's size: a
+// the same colors through apply(). Nothing else in the UI holds a color or a look's size: a
 // control borrows its style from here and hands it to its skin (ui/render/skins.hpp), which
 // draws it.
 //
@@ -16,19 +16,16 @@
 #include "base/color.hpp"
 
 #include <imgui.h>
-#include <string>
 #include <string_view>
-#include <vector>
 
 namespace Style {
 
 constexpr float kBaseFontSize = 15.0f;   // the UI font's size at scale 1, points
 
-// The theme the palette is made from (assets/themes/<name>.toml), any time: everything made from
-// the palette follows (ImGui's colours, every style, the canvas). False, and why, if it can't be
-// read; the one in use stays.
-const std::vector<std::string_view>& themes();   // the built-in ones
-bool useTheme(std::string_view name, std::string& why);
+// The theme the palette is made from (by id: ui/style/theme-list.hpp), any time: everything made
+// from the palette follows (ImGui's colors, every style, the canvas). False if it can't be had
+// (logged); the one in use stays.
+bool useTheme(std::string_view name);
 
 // ImGui's style from the palette, scaled by the window's content scale.
 void apply(float contentScale);
@@ -54,11 +51,7 @@ struct Metrics {
 };
 
 // ---- the controls' styles
-struct TextStyle {
-    ImU32 normal, dim;   // text, and disabled text or a hint
-};
-
-// The box every field, button and swatch is drawn in.
+// The box every field, button and swatch is drawn in (fields and buttons each their own colors).
 struct BoxStyle {
     ImU32 fill, fillHot;
     ImU32 text, prefix;   // its text, and what goes dim before it (a field's "R")
@@ -73,7 +66,7 @@ struct IconStyle {
     float minStroke;
 };
 
-// A colour shown in a box.
+// A color shown in a box.
 struct SwatchStyle {
     ImU32 rim, rimHot;
     float rounding;
@@ -104,7 +97,7 @@ struct SliderStyle {
 // A thick slider: a box with a figure in it showing how the value runs (the navigator's zoom and
 // rotation), the part the value covers filled, under a box-tall grab.
 struct FigureSliderStyle {
-    SliderStyle grab;     // its grab (taller), and the figure's colours
+    SliderStyle grab;     // its grab (taller), and the figure's colors
     float margin;         // the grab's travel kept clear at each end
     float boxHeight;
     float padding;        // the figure inside the box
@@ -115,15 +108,31 @@ struct FigureSliderStyle {
 struct GradientSliderStyle {
     SliderStyle grab;
     float thickness;
-    ImU32 edge;           // drawn over the gradient's corners: the panel's colour
+    ImU32 edge;           // drawn over the gradient's corners: the panel's color
     float edgeWidth;
     ImU32 checkerA, checkerB;   // under a gradient that's see-through (an alpha slider)
     float checkerCell;
 };
 
+// Buttons alike in a row (a dialog's answers): each fits the widest label.
+struct ButtonRowStyle {
+    float labelPadding;   // either side of the widest label
+    float gap;
+};
+
+// A titled section's start: its title between two lines (ImGui's separator text, in its sizes).
+struct HeadingStyle {
+    ImU32  text, line;
+    float  lineWidth;
+    ImVec2 padding;   // the title's indent, and above and below it
+    float  gap;       // between the title and the lines
+    float  height() const { return ImGui::GetFontSize() + 2.0f * padding.y; }
+};
+
 // The Toolbox's square tool buttons.
 struct ToolButtonStyle {
     float size, padding;
+    float gap;                    // between buttons
     ImU32 bar;                    // the bar's background: one band with the menu bar
     ImU32 fillHot, fillSelected, outline;
     ImU32 icon, iconDim;
@@ -131,22 +140,22 @@ struct ToolButtonStyle {
     float iconSize;               // of the button
 };
 
-// The strip of open documents under the toolbar: a tab each, the one shown lighter.
-struct DocumentTabStyle {
+// The strip of open projects under the Toolbox: a tab each, the one shown lighter.
+struct ProjectTabStyle {
     float height;                 // the strip's
     float tabHeight;
-    float margin;                 // before the first tab (the toolbar's, so they line up)
-    float padding, gap;           // a tab's name's room on each side; between tabs
+    float margin;                 // before the first tab (the Toolbox's, so they line up)
+    float padding, gap;           // a tab's name's room on each side; between tabs (ImGui's spacing)
     float mark;                   // the close cross's (or unsaved dot's) box, after the name
     float minWidth, maxWidth;     // a tab's (its name cut short to fit)
     float rounding;
-    ImU32 bar;                    // the toolbar's: one band with it
+    ImU32 bar;                    // the Toolbox's: one band with it
     ImU32 shown, hot;
     ImU32 text, textShown;
     ImU32 markHot;                // under the close cross while the mouse is on it
 };
 
-// What the window shows while no document is open: the face, the buttons under it.
+// What the window shows while no project is open: the face, the buttons under it.
 struct IntroStyle {
     float face;          // its width
     float gap;           // between it and the buttons, and between them
@@ -172,6 +181,9 @@ struct HudStyle {
 // The History Tree: a lane per branch, a dot per step.
 struct HistoryStyle {
     float rowHeight, laneWidth, dot, line, ring;
+    float otherDot;               // a step off both ways: smaller
+    float aheadRing;              // a step on redo's way: a hollow dot, its ring this wide
+    float bend;                   // a branch's link turns down into its lane this far below its parent
     float labelGap, labelRoom, numberPadding, rounding;
     ImU32 here, ahead, other;     // the way back to the start, redo's way on, the rest
     ImU32 text, textDim, rowHot, rowPicked, hollow;
@@ -184,13 +196,15 @@ struct MapStyle {
     float viewWidth, offMapDot, offMapLine;
 };
 
-// The colour picker: the swatch pair, the hue ring and its square.
+// The color picker: the swatch pair, the hue ring and its square.
 struct ColorPickerStyle {
     float block;                       // the swatch pair's corner
     float swatchShare;                 // each swatch, of the block
-    float swatchRounding, swatchGap;   // a swatch's corners, and the panel colour around it
+    float swatchRounding, swatchGap;   // a swatch's corners, and the panel color around it
+    float swatchOuterRounding;         // ... that color's corners, and the edited one's ring's
+    float swatchRimWidth;              // its rims: pixels at any scale
     ImU32 rim, lightRim, gap, edited;
-    float editedWidth;
+    float editedWidth, editedOffset;   // the edited one's ring, this far outside it
     ImU32 swap, swapHot;               // the swap arrow
     float swapStroke, swapHeadMin, swapHead;
     int   ringSegments;
@@ -202,9 +216,11 @@ struct ColorPickerStyle {
     float markerRimWidth, markerWidth;
     float hueMarker, squareMarker, squareMarkerMin;   // marker radii: of the ring's width, of the hue marker's
     float maxSize, minSize;
-    ImU32 checkerA, checkerB;   // under a colour that's see-through
+    ImU32 checkerA, checkerB;   // under a color that's see-through
     float checkerCell;
     float floatWidth;           // the floating picker (FloatColorPick): its square and rows
+    float floatSquare;          // ... its square's height, of its width
+    float floatMarker;          // ... its square's marker
 };
 
 // The graph's popups: the value being typed, the add-node menu.
@@ -214,7 +230,7 @@ struct MenuStyle {
     float hintColumn;    // where its kinds' notes start
 };
 
-// The canvas engine's look: what's behind a picture and the marks drawn over it. Colours as
+// The canvas engine's look: what's behind a picture and the marks drawn over it. Colors as
 // Color8, the way its GPU passes take them.
 struct CanvasStyle {
     Color8 background;                       // a view, before its checkerboard
@@ -224,28 +240,33 @@ struct CanvasStyle {
     float  pictureCheckerCell;               // ... their squares, pixels
     Color8 origin;                           // the "+" on the canvas's 0, 0
     Color8 selection;                        // around what the selected nodes cover
-    float  selectionWidth;
+    float  selectionWidth;                   // points at any scale (this style is scale-free)
     Color8 previewFrom;                      // where a dragged edit's area was
     Color8 previewTo;                        // ... and where it goes
-    float  previewToWidth;
+    float  previewToWidth;                   // points at any scale
     Color8 artboardFrame;                    // an artboard's rect ...
     Color8 artboardLabel;                    // ... and its name
+    uint8_t artboardHiddenAlpha;             // ... both, while it's hidden
+    float  artboardLabelScale;               // its name, of the UI font
+    float  artboardLabelGap;                 // ... above its rect, points
 };
 const CanvasStyle& canvas();   // scale-free: any time
 
 // Every component, at the panels' scale.
 struct Styles {
     Metrics             metrics;
-    TextStyle           text;
-    BoxStyle            box;
+    BoxStyle            box;      // fields
+    BoxStyle            button;   // buttons: the same box, the palette's button colors
     IconStyle           icon;
     SwatchStyle         swatch;
     ToggleStyle         toggle;
     SliderStyle         slider;
     FigureSliderStyle   figureSlider;
     GradientSliderStyle gradientSlider;
+    ButtonRowStyle      buttonRow;
+    HeadingStyle        heading;
     ToolButtonStyle     toolButton;
-    DocumentTabStyle    documentTab;
+    ProjectTabStyle     projectTab;
     IntroStyle          intro;
     NoticeStyle         notice;
     HudStyle            hud;

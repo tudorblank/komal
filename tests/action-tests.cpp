@@ -1,6 +1,6 @@
 #include "command/actions.hpp"
-#include "document/document-actions.hpp"
-#include "document/document.hpp"
+#include "project/project-actions.hpp"
+#include "project/project.hpp"
 #include "helpers.hpp"
 
 #include <doctest/doctest.h>
@@ -65,16 +65,6 @@ TEST_CASE("arguments read back as the types they were written as")
     CHECK(a.format() == "nodes=[4,9] signal=2 slot=mask:dry.g color=#FF8000C8 index=3 value=0.25 on=on");
 }
 
-TEST_CASE("colours as text")
-{
-    CHECK(Color8{ 1, 171, 255, 0 }.text() == "#01ABFF00");
-    CHECK(Color8::parse("#01abff00") == Color8{ 1, 171, 255, 0 });
-    for (const char* bad : { "", "#", "01ABFF00", "#01ABFF0", "#01ABFF000", "#01ABFG00", "#01 BFF00" }) {
-        CAPTURE(bad);
-        CHECK_FALSE(Color8::parse(bad));
-    }
-}
-
 TEST_CASE("the registry refuses malformed actions and bad arguments")
 {
     ActionRegistry r;
@@ -87,6 +77,26 @@ TEST_CASE("the registry refuses malformed actions and bad arguments")
     CHECK_FALSE(r.run(ActionId("test.run"), { { kN, 20 } }));   // refused: out of range
     CHECK(log.saw("'n' is out of range"));
     CHECK(runs == 2);
+}
+
+TEST_CASE("a polled action is only keys: bound, never run, read where it's used")
+{
+    ActionRegistry r;
+    const ActionId hold("test.hold");
+    r.add({ .id = hold, .title = "Hold", .kind = ActionKind::Interface, .polled = true });
+    REQUIRE(r.bind(hold, { Key::Space }));
+    InputFrame input;
+    input.keys.push_back({ Key::Space, ModShift });
+    input.held = { Key::Space };
+    input.mods = ModShift;
+    r.dispatch(input, ActionScope::Global);           // nothing to run
+    CHECK_FALSE(r.pressed(hold, input));              // pressed: its exact modifiers
+    CHECK(r.held(hold, input));                       // held: whatever is held with it
+    input.keys = { { Key::Space } };
+    CHECK(r.pressed(hold, input));
+    input.held.clear();
+    CHECK_FALSE(r.held(hold, input));
+    CHECK(r.log().empty());
 }
 
 TEST_CASE("a gesture's end sees begin's arguments, and a cancel ends it")
@@ -149,8 +159,8 @@ TEST_CASE("a cancelled stroke leaves the raster as it was, and no step")
     StarterWorkspace s;
     Workspace& p = s.workspace;
     ActionRegistry actions;
-    registerDocumentActions(actions, p);
-    REQUIRE(actions.beginGesture(Actions::BrushStroke, strokeArgs(p.activeRasterId(), BrushParams{}, { 500.0f, 500.0f, 1.0f }, false)));
+    registerProjectActions(actions, p);
+    REQUIRE(actions.beginGesture(Actions::BrushStroke, strokeArgs(p.activeRasterId(), BrushParams{}, { 500.0f, 500.0f, 1.0f })));
     CHECK(p.strokeActive());
     actions.cancelGesture(Actions::BrushStroke);
     CHECK_FALSE(p.strokeActive());
@@ -165,78 +175,99 @@ TEST_CASE("a stroke is made from its arguments alone: what the log keeps")
     StarterWorkspace s;
     Workspace& p = s.workspace;
     ActionRegistry actions;
-    registerDocumentActions(actions, p);
+    registerProjectActions(actions, p);
     BrushParams brush;
     brush.diameter = 9.0f;
     brush.hardness = 1.0f;
     brush.color    = { 255, 0, 0, 255 };
-    const ActionArgs args = strokeArgs(p.activeRasterId(), brush, { 300.0f, 200.0f, 1.0f }, true);
+    const ActionArgs args = strokeArgs(p.activeRasterId(), brush, { 300.0f, 200.0f, 1.0f });
 
     // Another raster than the one being painted: refused.
     ActionArgs elsewhere = args;
-    elsewhere.add({ DocArgs::kRaster, s.master });
+    elsewhere.add({ ProjectArgs::kRaster, s.master });
     {
         const LogCapture log;
         CHECK_FALSE(actions.beginGesture(Actions::BrushStroke, elsewhere));
     }
     // Out of the brush's range: refused.
     ActionArgs huge = args;
-    huge.add({ DocArgs::kSize, BrushParams::kMaxDiameter * 2.0f });
+    huge.add({ ProjectArgs::kSize, BrushParams::kMaxDiameter * 2.0f });
     {
         const LogCapture log;
         CHECK_FALSE(actions.beginGesture(Actions::BrushStroke, huge));
     }
 
     REQUIRE(actions.beginGesture(Actions::BrushStroke, args));
-    CHECK(actions.endGesture(Actions::BrushStroke, { { DocArgs::kPoints, 1 } }));
-    CHECK(pixelOf(p, s.paint, 300, 200) == RGBA{ 255, 0, 0, 255 });   // the first dab, in its colour
+    CHECK(actions.endGesture(Actions::BrushStroke, { { ProjectArgs::kPoints, 1 } }));
+    CHECK(pixelOf(p, s.paint, 300, 200) == RGBA{ 255, 0, 0, 255 });   // the first dab, in its color
     CHECK(pixelOf(p, s.paint, 300, 206).a == 0);                       // its size
     CHECK(actions.log().back().args.find("color=#FF0000FF") != std::string::npos);
-    CHECK(actions.log().back().args.find("device=pen") != std::string::npos);
 }
 
 TEST_CASE("a workspace is driven by its actions alone, no interface")
 {
-    Document document;
-    document.workspace().init([](Workspace& seeded) {   // one raster to start from
+    Project project;
+    project.workspace().init([](Workspace& seeded) {   // one raster to start from
         TileGrid tiles;
         fillPixel(tiles, 0, 0, { 255, 0, 0, 255 });
         seeded.importTiles(tiles, "", {});
     });
-    const Workspace& p = document.workspace();
-    const ActionResult made = document.actions().run(Actions::NodeAdd, { { DocArgs::kType, "move" }, { DocArgs::kX, 10.0f }, { DocArgs::kY, 20.0f },
-                                                                        { DocArgs::kFrom, p.activeRasterId() } });
+    const Workspace& p = project.workspace();
+    const ActionResult made = project.actions().run(Actions::NodeAdd, { { ProjectArgs::kType, "move" }, { ProjectArgs::kX, 10.0f }, { ProjectArgs::kY, 20.0f },
+                                                                        { ProjectArgs::kFrom, p.activeRasterId() } });
     REQUIRE(made);
-    const NodeId id = NodeId(made.made);
+    const NodeId id = made.madeAs<NodeId>();
     REQUIRE(p.find(id));
     CHECK(p.find(id)->x() == 10.0f);
-    CHECK(document.actions().run(Actions::MoveSet, { { DocArgs::kNode, id }, { DocArgs::kOffsetX, 5 }, { DocArgs::kOffsetY, -3 } }));
-    CHECK(document.actions().run(Actions::EditUndo));
-    CHECK(document.actions().run(Actions::EditUndo));
+    CHECK(project.actions().run(Actions::MoveSet, { { ProjectArgs::kNode, id }, { ProjectArgs::kOffsetX, 5 }, { ProjectArgs::kOffsetY, -3 } }));
+    CHECK(project.actions().run(Actions::EditUndo));
+    CHECK(project.actions().run(Actions::EditUndo));
     CHECK_FALSE(p.find(id));   // both steps undone
-    CHECK(document.actions().log().size() >= 4);
+    CHECK(project.actions().log().size() >= 4);
 }
 
-TEST_CASE("a registry hands on what it doesn't have: the active document's actions, keys kept")
+TEST_CASE("link.disconnect unlinks an input as one step, and undo links it again")
 {
-    Document one, two;
+    Project project;
+    project.workspace().init([](Workspace& seeded) {
+        TileGrid tiles;
+        fillPixel(tiles, 0, 0, { 255, 0, 0, 255 });
+        seeded.importTiles(tiles, "", {});
+    });
+    const Workspace& p = project.workspace();
+    const NodeId raster = p.activeRasterId();
+    const NodeId move = project.actions().run(Actions::NodeAdd, { { ProjectArgs::kType, "move" }, { ProjectArgs::kX, 0.0f }, { ProjectArgs::kY, 0.0f },
+                                                                  { ProjectArgs::kFrom, raster } }).madeAs<NodeId>();
+    REQUIRE(p.inputAt(move, InputSlot::input()));
+    const ActionArgs args{ { ProjectArgs::kTo, move }, { ProjectArgs::kSlot, InputSlot::input() } };
+    CHECK(project.actions().run(Actions::LinkDisconnect, args));
+    CHECK_FALSE(p.inputAt(move, InputSlot::input()));
+    CHECK_FALSE(project.actions().run(Actions::LinkDisconnect, args));   // nothing left there
+    CHECK(project.actions().run(Actions::EditUndo));
+    REQUIRE(p.inputAt(move, InputSlot::input()));
+    CHECK(p.inputAt(move, InputSlot::input())->id() == raster);
+}
+
+TEST_CASE("a registry hands on what it doesn't have: the active project's actions, keys kept")
+{
+    Project one, two;
     one.workspace().init();
     two.workspace().init();
-    ActionRegistry app;   // the interface's: its own actions, the document's through the delegate
+    ActionRegistry app;   // the interface's: its own actions, the project's through the delegate
     int quits = 0;
     app.add({ .id = Actions::AppQuit, .title = "Quit", .kind = ActionKind::AppState, .run = [&] { ++quits; } });
     app.delegateTo(&one.actions());
-    REQUIRE(app.bind(Actions::EditUndo, { Key::Z, ModPrimary }));   // the document's: kept here, by id
+    REQUIRE(app.bind(Actions::EditUndo, { Key::Z, ModPrimary }));   // the project's: kept here, by id
     REQUIRE(app.bind(Actions::AppQuit, { Key::Q, ModPrimary }));
     CHECK(app.shortcutLabel(Actions::EditUndo) == shortcutLabel({ Key::Z, ModPrimary }));
 
-    const auto add = [&] { return app.run(Actions::NodeAdd, { { DocArgs::kType, "move" }, { DocArgs::kX, 0.0f }, { DocArgs::kY, 0.0f } }); };
+    const auto add = [&] { return app.run(Actions::NodeAdd, { { ProjectArgs::kType, "move" }, { ProjectArgs::kX, 0.0f }, { ProjectArgs::kY, 0.0f } }); };
     REQUIRE(add());                                    // into the delegate: its step, its log
     CHECK(one.workspace().history().size() == 2);
     CHECK(one.actions().log().back().id == Actions::NodeAdd);
     CHECK(app.log().empty());                          // app.quit not run yet: nothing of its own
 
-    app.delegateTo(&two.actions());                    // another document active
+    app.delegateTo(&two.actions());                    // another project active
     REQUIRE(add());
     CHECK(two.workspace().history().size() == 2);
     CHECK(one.workspace().history().size() == 2);
@@ -251,7 +282,7 @@ TEST_CASE("a registry hands on what it doesn't have: the active document's actio
     CHECK(quits == 1);
 
     CHECK_FALSE(app.anyGesture());
-    REQUIRE(app.beginGesture(Actions::NodeDrag, { { DocArgs::kNodes, std::vector<NodeId>{ two.workspace().master().id() } } }));
+    REQUIRE(app.beginGesture(Actions::NodeDrag, { { ProjectArgs::kNodes, std::vector<NodeId>{ two.workspace().master().id() } } }));
     CHECK(app.anyGesture());                           // open in the delegate
     CHECK(app.inGesture(Actions::NodeDrag));
     app.cancelGesture(Actions::NodeDrag);

@@ -1,19 +1,16 @@
 #include "ui/panels/graph/graph-panel.hpp"
 #include "ui/panels/canvas/canvas-engine.hpp"
-#include "document/workspace.hpp"
+#include "project/workspace.hpp"
 #include "ui/panels/graph/internal/layout.hpp"
 #include "ui/style/graph-style.hpp"
 #include "ui/style/fonts.hpp"
-#include "ui/widgets/widgets.hpp"
 
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 
 using namespace GraphLayout;
 using namespace GraphStyle;
-
 
 GraphPaint GraphPanel::paintContext(const GraphCamera& camera) const
 {
@@ -88,15 +85,12 @@ void GraphPanel::paint(const GraphPaint& g, const GraphHit& hit, ImVec2 canvasMi
         const auto& rows = lifted->rows;
         // Going into an artboard: see-through, the artboard outlined where it lands.
         const bool intoArtboard = landing(*s, lifted->at).into != kNoArtboard;
-        const GraphPaint ghost{ intoArtboard ? pg.draw.faded(0.45f) : pg.draw, pg.camera, pg.contentScale, pg.font, pg.numberFont };
+        const GraphPaint ghost{ intoArtboard ? pg.draw.faded(kCarriedFade) : pg.draw, pg.camera, pg.contentScale, pg.font, pg.numberFont };
         const size_t pressed = size_t(std::find(rows.begin(), rows.end(), lifted->pressed) - rows.begin());
-        float y = pg.camera.toGraph(ImGui::GetIO().MousePos).y - lifted->grab;
-        for (size_t i = 0; i < pressed && i < rows.size(); ++i)
-            y -= (rows[i].artboard != kNoArtboard ? kArtboardRowH : kLayerRowH) + kLayerGap;
-        for (const StackRowRef& r : rows) {
-            const float h = r.artboard != kNoArtboard ? kArtboardRowH : kLayerRowH;
-            const ImRect row(s->header.Min.x + 6.0f, y, s->header.Max.x - 6.0f, y + h);
-            y += h + kLayerGap;
+        const std::vector<CarriedRow> carried = carriedRows(*s, rows, pressed, pg.camera.toGraph(ImGui::GetIO().MousePos).y - lifted->grab);
+        for (size_t i = 0; i < rows.size(); ++i) {
+            const StackRowRef& r = rows[i];
+            const ImRect& row = carried[i].rect;
             if (r.artboard != kNoArtboard) {
                 paintArtboardRow(ghost, ui().workspace().artboard(r.artboard), row, { .lifted = true, .selected = true });
                 continue;
@@ -105,7 +99,7 @@ void GraphPanel::paint(const GraphPaint& g, const GraphHit& hit, ImVec2 canvasMi
             if (!layer) continue;
             if (const NodeItem* from = scene().item(layer->id()); from && from->output()) {
                 const ImVec2 a = cameraFor(layer->id()).toScreen(from->output()->pos);
-                const ImVec2 b = pg.at(ImVec2(row.Min.x - 6.0f, row.GetCenter().y));
+                const ImVec2 b = pg.at(carried[i].port);
                 if (scene().isMaster(id)) paintFadingLink(g, linkCurve(g, a, b), colors().imageLink, false);
                 else              paintLink(g, linkCurve(g, a, b), colors().imageLink, false);
             }
@@ -138,7 +132,7 @@ void GraphPanel::paint(const GraphPaint& g, const GraphHit& hit, ImVec2 canvasMi
         const NodeItem* s = scene().item(link->node);
         const NodeItemPort* fixed = s ? (link->fromOutput ? s->output() : s->input(link->slot)) : nullptr;
         if (fixed) {
-            const LinkTarget t = linkTarget(*link, hit);
+            const LinkTarget& t = link->target;
             const ImVec2 loose = t.valid ? t.pos : ImGui::GetIO().MousePos;
             const ImVec2 anchor = cameraFor(link->node).toScreen(fixed->pos);
             const LinkCurve c = link->fromOutput ? linkCurve(g, anchor, loose) : linkCurve(g, loose, anchor);

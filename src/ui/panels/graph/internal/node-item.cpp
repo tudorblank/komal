@@ -1,13 +1,11 @@
 #include "ui/panels/graph/internal/node-item.hpp"
-#include "document/workspace.hpp"
+#include "project/workspace.hpp"
 #include "ui/panels/graph/internal/layout.hpp"
-#include "ui/style/graph-style.hpp"
 
 #include <algorithm>
 #include <cstdint>
 
 using namespace GraphLayout;
-using namespace GraphStyle;
 
 const NodeItemPort* NodeItem::output() const
 {
@@ -92,13 +90,13 @@ public:
         if (std::holds_alternative<MoveSettings>(settings)) {
             static const char* kLabel[2] = { "Offset X", "Offset Y" };
             const float boxTop = openBox();
-            m_y += 4.0f;
+            m_y += kPropertyPad;
             for (int axis = 0; axis < 2; ++axis) {
                 m_item.properties.push_back({ ImRect(m_x0, m_y, m_x1, m_y + kRowH), kLabel[axis] });
-                widget(OffsetControl{ axis }, ImRect(m_x0 + kPad + 56.0f, m_y + 2.0f, m_x1 - kPad, m_y + kRowH - 2.0f));
+                widget(OffsetControl{ axis }, ImRect(m_x0 + kPad + kPropertyLabelW, m_y + kValueInset, m_x1 - kPad, m_y + kRowH - kValueInset));
                 m_y += kRowH;
             }
-            m_y += 4.0f;
+            m_y += kPropertyPad;
             closeBox(boxTop);
         } else if (stack && !master) {
             const float boxTop = openBox();
@@ -108,13 +106,13 @@ public:
 
         // ---- signals
         const float boxTop = openBox();
-        m_y += 3.0f;
+        m_y += kSignalsPad;
         section(NodeSignal::Main);
         if (m_node.hasDryWet()) {   // effect nodes only
             section(NodeSignal::Wet);
             section(NodeSignal::Dry);
         }
-        m_y += 3.0f;
+        m_y += kSignalsPad;
         closeBox(boxTop);
 
         m_item.bounds = m_item.boxes.front().rect;
@@ -142,7 +140,7 @@ private:
             const float h = kIconSize * 0.5f;
             const float x = m_x0 + kPad;
             widget(LockControl{},      ImRect(x, cy - h, x + kIconSize, cy + h));
-            widget(LockAlphaControl{}, ImRect(x + kIconSize + 6.0f, cy - h, x + 2.0f * kIconSize + 6.0f, cy + h));
+            widget(LockAlphaControl{}, ImRect(x + kIconSize + kLockGap, cy - h, x + 2.0f * kIconSize + kLockGap, cy + h));
         }
         const float tx = m_x0 + (kNodeWidth - kThumbW) * 0.5f;
         m_item.thumb = ImRect(tx, io.Max.y + 1.0f, tx + kThumbW, io.Max.y + 1.0f + kThumbH);
@@ -184,8 +182,8 @@ private:
         const bool       single    = m_stack.lifted.size() == 1;
 
         const float areaTop = m_y;
-        m_y += 4.0f;
-        const float x0 = m_x0 + 6.0f, x1 = m_x1 - 6.0f;
+        m_y += kStackPad;
+        const float x0 = m_x0 + kStackInset, x1 = m_x1 - kStackInset;
         const auto indent = [](ArtboardId inside) { return inside != kNoArtboard ? kArtboardIndent : 0.0f; };
         const auto place = [&](float height, ArtboardId inside) {
             const ImRect r(x0 + indent(inside), m_y, x1, m_y + height);
@@ -275,7 +273,7 @@ private:
             }
             if (gapInto == kNoArtboard && !roomDone && below == gapAt) gapRow(kNoArtboard);
         }
-        m_y += 4.0f - kLayerGap;
+        m_y += kStackPad - kLayerGap;
         m_item.stackArea = ImRect(m_x0, areaTop, m_x1, m_y);
     }
 
@@ -289,17 +287,19 @@ private:
         const bool expanded = m_view.expanded[int(sig)];
         const ImRect head(m_x0, m_y, m_x1, m_y + kRowH);
         m_item.sections.push_back({ head, sig, expanded });
-        widget(SectionControl{ sig }, ImRect(m_x0 + 4.0f, head.Min.y, m_x1 - 4.0f, head.Max.y));
+        widget(SectionControl{ sig }, ImRect(m_x0 + kSectionInset, head.Min.y, m_x1 - kSectionInset, head.Max.y));
         m_y = head.Max.y;
 
         for (int ch = 0; ch < kChannelCount; ++ch) {
             // Collapsed: alpha, plus any channel with a mask (a link never ends nowhere).
             if (!expanded && ch != int(NodeChannel::A) && !m_node.mask(sig, NodeChannel(ch))) continue;
             const ImRect row(m_x0, m_y, m_x1, m_y + kRowH);
-            const ImRect track(m_x0 + 16.0f, row.Min.y + 3.0f, m_x1 - 50.0f, row.Max.y - 3.0f);
+            const ImRect track(m_x0 + kTrackLeft, row.Min.y + kTrackInset, m_x1 - kTrackRight, row.Max.y - kTrackInset);
             m_item.channels.push_back({ row, track, sig, NodeChannel(ch) });
-            // The whole row past the port: the track drags, the value double-clicks to type.
-            widget(ScaleControl{ sig, NodeChannel(ch) }, ImRect(track.Min.x - 5.0f, row.Min.y, row.Max.x - 2.0f, row.Max.y));
+            // The whole row past the port: the track, then the value.
+            const float split = track.Max.x + kTrackReach;
+            widget(ScaleControl{ sig, NodeChannel(ch) }, ImRect(track.Min.x - kTrackReach, row.Min.y, split, row.Max.y));
+            widget(ScaleValueControl{ sig, NodeChannel(ch) }, ImRect(split, row.Min.y, row.Max.x - kRowEndInset, row.Max.y));
             inputPort(row.GetCenter().y, InputSlot::mask(sig, NodeChannel(ch)), true);
             m_y = row.Max.y;
         }
@@ -316,35 +316,51 @@ private:
 
 }
 
+std::vector<CarriedRow> carriedRows(const NodeItem& item, const std::vector<StackRowRef>& rows, size_t pressed, float pressedTop)
+{
+    const auto height = [](const StackRowRef& r) { return r.artboard != kNoArtboard ? kArtboardRowH : kLayerRowH; };
+    float y = pressedTop;
+    for (size_t i = 0; i < pressed && i < rows.size(); ++i) y -= height(rows[i]) + kLayerGap;
+    std::vector<CarriedRow> out;
+    out.reserve(rows.size());
+    for (const StackRowRef& r : rows) {
+        const float h = height(r);
+        const ImRect rect(item.header.Min.x + kStackInset, y, item.header.Max.x - kStackInset, y + h);
+        out.push_back({ rect, ImVec2(rect.Min.x - kStackInset, rect.GetCenter().y) });
+        y += h + kLayerGap;
+    }
+    return out;
+}
+
 ImRect layerEyeRect(const ImRect& r)
 {
     const float cy = r.GetCenter().y, h = kIconSize * 0.5f;
-    return ImRect(r.Min.x + 6.0f, cy - h, r.Min.x + 6.0f + kIconSize, cy + h);
+    return ImRect(r.Min.x + kLayerEyeX, cy - h, r.Min.x + kLayerEyeX + kIconSize, cy + h);
 }
 
 ImRect layerThumbRect(const ImRect& r)
 {
-    const float th = r.GetHeight() - 6.0f;
-    const float x = layerEyeRect(r).Max.x + 5.0f;
-    return ImRect(x, r.Min.y + 3.0f, x + th * 4.0f / 3.0f, r.Max.y - 3.0f);
+    const float th = r.GetHeight() - 2.0f * kLayerThumbInset;
+    const float x = layerEyeRect(r).Max.x + kLayerThumbGap;
+    return ImRect(x, r.Min.y + kLayerThumbInset, x + th * 4.0f / 3.0f, r.Max.y - kLayerThumbInset);
 }
 
 ImRect artboardFoldRect(const ImRect& r)
 {
     const float cy = r.GetCenter().y, h = kIconSize * 0.5f;
-    return ImRect(r.Min.x + 3.0f, cy - h, r.Min.x + 3.0f + kIconSize, cy + h);
+    return ImRect(r.Min.x + kArtboardFoldX, cy - h, r.Min.x + kArtboardFoldX + kIconSize, cy + h);
 }
 
 ImRect artboardEyeRect(const ImRect& r)
 {
     const ImRect fold = artboardFoldRect(r);
-    return ImRect(fold.Max.x + 4.0f, fold.Min.y, fold.Max.x + 4.0f + kIconSize, fold.Max.y);
+    return ImRect(fold.Max.x + kArtboardEyeGap, fold.Min.y, fold.Max.x + kArtboardEyeGap + kIconSize, fold.Max.y);
 }
 
 ImRect artboardColorRect(const ImRect& r)
 {
     const ImRect eye = artboardEyeRect(r);
-    return ImRect(eye.Max.x + 6.0f, eye.Min.y, eye.Max.x + 6.0f + kIconSize, eye.Max.y);
+    return ImRect(eye.Max.x + kArtboardColorGap, eye.Min.y, eye.Max.x + kArtboardColorGap + kIconSize, eye.Max.y);
 }
 
 void buildNodeItem(const Workspace& workspace, const Node& n, const NodeItemState& view, StackLayout stack, NodeItem& out)

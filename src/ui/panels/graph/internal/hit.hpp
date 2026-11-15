@@ -11,6 +11,7 @@
 #include "ui/panels/graph/internal/camera.hpp"
 #include "ui/panels/graph/internal/node-item.hpp"
 #include "ui/panels/graph/internal/painter.hpp"
+#include "ui/style/graph-style.hpp"
 
 #include <span>
 #include <type_traits>
@@ -51,7 +52,7 @@ namespace HitReach {
 constexpr float kPort     = 9.0f;    // graph units around a port's centre ...
 constexpr float kPortPx   = 7.0f;    // ... and never less than these UI pixels (zoomed out)
 constexpr float kLinkPx   = 6.0f;    // UI pixels from a link's curve
-constexpr float kInsertPx = 10.0f;   // UI pixels from the insert button's centre
+constexpr float kInsertPx = GraphStyle::kInsertRadius + 1.0f;   // UI pixels from the insert button's centre (its ring included)
 }
 
 // The graph view as hit testing sees it, front to back: the pinned master, the minimap, the
@@ -72,7 +73,15 @@ GraphHit hitTest(const HitView& view, ImVec2 mouse);
 // Where on a link its insert button is: the point nearest to the mouse, kept off the ports at
 // its ends. Screen.
 ImVec2   insertPoint(const LinkCurve& curve, ImVec2 mouse);
-GraphHit hitNodeItem(NodeId id, const NodeItem& item, ImVec2 graphPoint, float portReach);   // ports, widgets, boxes
+
+// Where on a node a link dropped lands (graph space), as zones of its own: its stack's rows (a
+// little past them), a channel's row (its slider, its value), its first box (title, picture).
+struct LinkZone {
+    enum class Kind : uint8_t { None, Stack, Channel, Body };
+    Kind kind = Kind::None;
+    const NodeItemChannelRow* channel = nullptr;   // Channel's
+};
+LinkZone linkZoneAt(const NodeItem& item, ImVec2 graphPoint);
 
 // What a hit is on, in the scene it was tested against (null: not there any more).
 const NodeItemPort*   portOf(const GraphScene& scene, const PortHit& hit);

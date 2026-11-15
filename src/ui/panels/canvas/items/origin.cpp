@@ -1,20 +1,13 @@
-#include "origin.hpp"
+#include "ui/panels/canvas/items/origin.hpp"
 
 OriginItem::OriginItem()
     : m_horizontal(0.0f, 0.0f, 0.0f, 0.0f, Style::canvas().origin), m_vertical(0.0f, 0.0f, 0.0f, 0.0f, Style::canvas().origin) {}
-
-void OriginItem::setArm(float points)
-{
-    if (points == m_arm || points <= 0.0f) return;
-    m_arm = points;
-    update();
-}
 
 bool OriginItem::prepare(CanvasFrame& frame)
 {
     // One target pixel and the arm length, in world units at this zoom.
     const float pixel = 1.0f / (frame.camera.zoom * frame.pixelsPerPoint());
-    const float arm   = m_arm / frame.camera.zoom;
+    const float arm   = kArm / frame.camera.zoom;
     m_horizontal.setColor(Style::canvas().origin);
     m_vertical.setColor(Style::canvas().origin);
     m_horizontal.setRect(-arm, -pixel * 0.5f, arm * 2.0f + pixel, pixel);

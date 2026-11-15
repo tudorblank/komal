@@ -1,6 +1,6 @@
 #include "ui/panels/canvas/preview/preview.hpp"
 #include "ui/panels/canvas/preview/stroke-source.hpp"
-#include "document/workspace.hpp"
+#include "project/workspace.hpp"
 #include "node/node-kinds.hpp"
 
 void Preview::init(const Workspace& workspace, TileCache& cache)

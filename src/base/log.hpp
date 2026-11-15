@@ -4,7 +4,7 @@
 // anything that isn't something the user did (!actionlog): platform/gpu/files
 //
 //   Log::info("gpu", "%s, %u images", name, count);
-//   Log::error("import", "%s: %s", path, why);
+//   Log::error("import", "%s: %s", path, error);
 //
 // lines go to stderr, unless a sink takes them instead (tests read what was logged)
 

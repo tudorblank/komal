@@ -1,5 +1,5 @@
 #include "ui/panels/canvas/canvas-engine.hpp"
-#include "document/workspace.hpp"
+#include "project/workspace.hpp"
 #include "gpu/device.hpp"
 
 #include <algorithm>
@@ -12,12 +12,12 @@ bool CanvasEngine::init(const GpuDevice& gpu)
 
 void CanvasEngine::shutdown()
 {
-    while (!m_documents.empty()) close(m_documents.back()->id);
+    while (!m_projects.empty()) close(m_projects.back()->id);
     m_pipelines.release();
     m_ready = false;
 }
 
-void CanvasEngine::open(DocumentId id, const Workspace& workspace)
+void CanvasEngine::open(ProjectId id, const Workspace& workspace)
 {
     auto p = std::make_unique<Pictures>();
     p->id = id;
@@ -31,13 +31,13 @@ void CanvasEngine::open(DocumentId id, const Workspace& workspace)
         raw->thumbnails.forget(e.node);
         raw->tiles.forget(e.node);
     });
-    m_documents.push_back(std::move(p));
+    m_projects.push_back(std::move(p));
 }
 
-void CanvasEngine::close(DocumentId id)
+void CanvasEngine::close(ProjectId id)
 {
-    const auto it = std::find_if(m_documents.begin(), m_documents.end(), [&](const auto& p) { return p->id == id; });
-    if (it == m_documents.end()) return;
+    const auto it = std::find_if(m_projects.begin(), m_projects.end(), [&](const auto& p) { return p->id == id; });
+    if (it == m_projects.end()) return;
     Pictures& p = **it;
     if (m_active == &p) m_active = nullptr;
     p.events.disconnect();
@@ -45,12 +45,12 @@ void CanvasEngine::close(DocumentId id)
     p.preview.shutdown();
     p.output.reset();
     p.tiles.release();
-    m_documents.erase(it);
+    m_projects.erase(it);
 }
 
-void CanvasEngine::activate(DocumentId id)
+void CanvasEngine::activate(ProjectId id)
 {
-    for (const auto& p : m_documents)
+    for (const auto& p : m_projects)
         if (p->id == id) m_active = p.get();
 }
 
@@ -61,12 +61,12 @@ void CanvasEngine::makeThumbnails(Pictures& p)
 
 bool CanvasEngine::outOfMemory() const
 {
-    return std::any_of(m_documents.begin(), m_documents.end(), [](const auto& p) { return p->tiles.outOfMemory(); });
+    return std::any_of(m_projects.begin(), m_projects.end(), [](const auto& p) { return p->tiles.outOfMemory(); });
 }
 
 void CanvasEngine::releaseGpu()
 {
-    for (const auto& p : m_documents) {
+    for (const auto& p : m_projects) {
         p->thumbnails.shutdown();
         p->preview.releaseGpu();   // its own tiles go into the pages: before they do
         p->tiles.releaseGpu();
@@ -78,7 +78,7 @@ void CanvasEngine::releaseGpu()
 bool CanvasEngine::restoreGpu(const GpuDevice& gpu)
 {
     m_ready = m_pipelines.create(GpuHandles{ gpu.device(), gpu.queue(), kTargetFormat });
-    for (const auto& p : m_documents) makeThumbnails(*p);
+    for (const auto& p : m_projects) makeThumbnails(*p);
     return m_ready;
 }
 
@@ -86,7 +86,7 @@ void CanvasEngine::beginFrame()
 {
     m_frameBudget = Deadline::in(kFrameBudget);
     if (!m_ready) return;
-    for (const auto& p : m_documents) p->tiles.sync();   // before any view of them builds; the others' age out
+    for (const auto& p : m_projects) p->tiles.sync();   // before any view of them builds; the others' age out
     if (m_active) m_active->preview.update();             // ... or previews
 }
 

@@ -28,8 +28,6 @@ public:
     void release() { m_held = false; }   // ended from outside (the tool switched away)
 
     bool held() const { return m_held; }
-    PointerButton button() const { return m_button; }
-    bool pen() const { return m_pen; }   // held by the pen (tip or eraser), not the mouse
 
 private:
     static bool isPen(PointerDevice d) { return d != PointerDevice::Mouse; }

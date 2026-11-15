@@ -1,4 +1,4 @@
-#include "tool-manager.hpp"
+#include "ui/tools/tool-manager.hpp"
 #include "ui/tools/brush-tool.hpp"
 #include "ui/tools/hand-tool.hpp"
 
@@ -30,7 +30,10 @@ void ToolManager::registerActions(ActionRegistry& actions)
                       } });
     }
 
-    // The colours (ColorArgs).
+    // Held over the canvas: the hand, whatever tool is picked (setSpringHand).
+    actions.add({ .id = Actions::ToolHandHold, .title = "Hand (hold)", .kind = K::Interface, .scope = ActionScope::Canvas, .polled = true });
+
+    // The colors (ColorArgs).
     using namespace ColorArgs;
     const auto channel = [](ArgKey<float> key) { return Arg::number(key, 0.0, 1.0).optional(); };
     actions.add({ .id = Actions::ColorSet, .title = "Set Color", .kind = K::AppState,

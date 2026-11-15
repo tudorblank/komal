@@ -1,7 +1,11 @@
 #pragma once
+#include "base/color.hpp"
+#include "base/math.hpp"
 #include "gpu/handles.hpp"
 
+#include <algorithm>
 #include <cstdint>
+#include <iterator>
 
 // Uniform of the preview signal pass (preview-signal.wgsl). Channels in NodeChannel order
 // (A, R, G, B); a mask is its texture index (0..11), or -1.
@@ -29,6 +33,16 @@ struct RectParams {
     float color[4];    // straight RGBA
 };
 static_assert(sizeof(RectParams) == 80);
+// The world rectangle (x, y, w, h) in `color`.
+inline RectParams rectParams(float x, float y, float w, float h, Color8 color)
+{
+    RectParams r{};
+    const Mat4 model = Mat4::translateScale(x + w * 0.5f, y + h * 0.5f, w, h);
+    std::copy(std::begin(model.m), std::end(model.m), std::begin(r.model));
+    const auto c = color.floats();
+    std::copy(c.begin(), c.end(), std::begin(r.color));
+    return r;
+}
 
 // Uniform of the checkerboard background (checker.wgsl).
 struct CheckerParams {
@@ -38,7 +52,18 @@ struct CheckerParams {
     float pad;
 };
 static_assert(sizeof(CheckerParams) == 48);
-CheckerParams pictureChecker(float originX, float originY);   // a small picture's (thumbnails, the navigator), from that corner
+// Opaque squares of `a` and `b`, `a` at the origin.
+inline CheckerParams checkerParams(Color8 a, Color8 b, float originX, float originY, float cell)
+{
+    CheckerParams c{};
+    const auto fa = a.floats(), fb = b.floats();
+    for (size_t i = 0; i < 3; ++i) { c.colorA[i] = fa[i]; c.colorB[i] = fb[i]; }
+    c.colorA[3] = c.colorB[3] = 1.0f;
+    c.origin[0] = originX;
+    c.origin[1] = originY;
+    c.cell      = cell;
+    return c;
+}
 
 // The layouts and pipelines every item kind of a canvas scene draws with, shared (and owned: each
 // a GpuObject). Items own only their data (buffers, textures, bind groups).

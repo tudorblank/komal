@@ -1,6 +1,6 @@
 #pragma once
 // Binary data written and read the same on every platform: little-endian, floats as their bits.
-// The one way the app writes its own binary files (a .komal document).
+// The one way the app writes its own binary files (a .komal project).
 //
 //   ByteWriter w;
 //   w.u32(7); w.f32(0.5f); w.text("Raster 1"); w.raw(bytes);
@@ -53,10 +53,8 @@ public:
     std::string text(size_t maxLength = 1 << 16);    // longer than that: failed
     std::span<const uint8_t> raw(size_t n);           // a view of the next n bytes (empty if they aren't there)
     ByteReader sub(size_t n);                         // the next n bytes, read on their own (a chunk)
-    void skip(size_t n) { raw(n); }
 
     bool   ok() const { return m_ok; }
-    void   fail() { m_ok = false; }                   // the data read doesn't make sense: failed too
     size_t left() const { return m_ok ? m_bytes.size() - m_at : 0; }
     bool   atEnd() const { return left() == 0; }
 

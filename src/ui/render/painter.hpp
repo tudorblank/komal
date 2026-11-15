@@ -2,8 +2,8 @@
 // The one way the UI draws: a surface (the window being drawn, or the screen over every window)
 // and the shapes, text and pictures drawn on it, in screen pixels. Controls are drawn by their
 // skins (skins.hpp) on one; panels that draw views of their own (the graph, the history tree, the
-// colour ring, the canvas's overlays) draw on one too. Nothing else in the UI touches ImGui's draw
-// lists. Colours and sizes come from the caller's style (ui/style): a painter has none of its own.
+// color ring, the canvas's overlays) draw on one too. Nothing else in the UI touches ImGui's draw
+// lists. Colors and sizes come from the caller's style (ui/style): a painter has none of its own.
 //
 //   const Painter p = Painter::window();
 //   p.fillRect(a, b, style.fill, style.rounding);
@@ -22,7 +22,7 @@ public:
     // ---- shapes. `corners`: ImDrawFlags_RoundCorners* (0: all of them)
     void fillRect(ImVec2 a, ImVec2 b, ImU32 color, float rounding = 0.0f, ImDrawFlags corners = 0) const;
     void strokeRect(ImVec2 a, ImVec2 b, ImU32 color, float rounding = 0.0f, float width = 1.0f, ImDrawFlags corners = 0) const;
-    // Each corner its own colour, blended across: top left, top right, bottom right, bottom left.
+    // Each corner its own color, blended across: top left, top right, bottom right, bottom left.
     void gradientRect(ImVec2 a, ImVec2 b, ImU32 topLeft, ImU32 topRight, ImU32 bottomRight, ImU32 bottomLeft) const;
     void line(ImVec2 a, ImVec2 b, ImU32 color, float width = 1.0f) const;
     void fillCircle(ImVec2 center, float radius, ImU32 color, int segments = 0) const;
@@ -30,7 +30,7 @@ public:
     void fillTriangle(ImVec2 a, ImVec2 b, ImVec2 c, ImU32 color) const;
     void fillQuad(ImVec2 a, ImVec2 b, ImVec2 c, ImVec2 d, ImU32 color) const;
     void strokeQuad(ImVec2 a, ImVec2 b, ImVec2 c, ImVec2 d, ImU32 color, float width = 1.0f) const;
-    // A quad whose corners carry their own colours, blended across (a segment of a gradient ring).
+    // A quad whose corners carry their own colors, blended across (a segment of a gradient ring).
     void gradientQuad(const ImVec2 (&corners)[4], const ImU32 (&colors)[4]) const;
     void fillPolygon(std::span<const ImVec2> points, ImU32 color) const;   // any outline, concave too
     void polyline(std::span<const ImVec2> points, ImU32 color, float width = 1.0f, bool closed = false) const;
@@ -47,7 +47,7 @@ public:
 
     // ---- pictures
     void image(ImTextureID texture, ImVec2 a, ImVec2 b, ImVec2 uv0 = ImVec2(0.0f, 0.0f), ImVec2 uv1 = ImVec2(1.0f, 1.0f),
-               ImU32 tint = IM_COL32_WHITE) const;   // tint: each texel's colour multiplied by it
+               ImU32 tint = IM_COL32_WHITE) const;   // tint: each texel's color multiplied by it
 
     // Drawing only inside a..b while it lives (and inside any clip already there).
     class Clip {

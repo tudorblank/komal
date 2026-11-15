@@ -7,7 +7,7 @@
 class RenderTarget {
 public:
     void init(WGPUDevice device, WGPUTextureFormat format);   // learns the device's largest texture
-    void shutdown() { m_texture.reset(); m_device = nullptr; }
+    void release() { m_texture.release(); m_device = nullptr; }
 
     // (Re)creates the texture if its size differs from w x h (each side clamped to what the
     // device takes). Returns false on failure.

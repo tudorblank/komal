@@ -24,5 +24,5 @@ void WindowState::save(const std::string& path) const
     char text[64];
     std::snprintf(text, sizeof text, "%d %d %d\n", width, height, maximized ? 1 : 0);
     std::string error;
-    if (!File::write(path, std::string(text), error)) Log::error("settings", "%s: %s", path.c_str(), error.c_str());
+    if (!File::replace(path, std::string(text), error)) Log::error("settings", "%s: %s", path.c_str(), error.c_str());
 }

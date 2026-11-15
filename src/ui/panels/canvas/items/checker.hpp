@@ -1,11 +1,14 @@
 #pragma once
 // The canvas background: a checkerboard where nothing covers it, drawn first over the whole
 // view. Squares keep their size on screen at any zoom; the pattern is anchored to the canvas
-// origin, so it travels with a pan (checker.wgsl). Its colours and squares are the canvas
+// origin, so it travels with a pan (checker.wgsl). Its colors and squares are the canvas
 // style's, read as it draws: a theme change shows at once.
 
 #include "ui/style/ui-style.hpp"
 #include "ui/panels/canvas/canvas-item.hpp"
+
+// A small picture's checkerboard (thumbnails, previews), from (originX, originY) in its target.
+CheckerParams pictureChecker(float originX, float originY);
 
 class CheckerItem : public CanvasItem {
 public:

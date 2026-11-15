@@ -1,6 +1,6 @@
 #pragma once
 // The graph view's look: what its canvas, nodes, ports, links and minimap are drawn in, made of
-// the palette's colours (palette.hpp), and the sizes that are only looks (text, corners, ports, links).
+// the palette's colors (palette.hpp), and the sizes that are only looks (text, corners, ports, links).
 // Where things sit in a node is the graph's own layout (panels/graph/internal/layout.hpp); its
 // sliders are the app's (Style::slider at the graph's zoom, Tone::Node).
 
@@ -21,8 +21,11 @@ constexpr float kSmallText  = 12.5f;
 constexpr float kHintText   = 0.85f;   // the graph's help line, of the UI font
 constexpr float kLinkWidth  = 2.0f;    // pixels at 100%
 constexpr uint8_t kPlaceholderAlpha = 150;   // a port that isn't there yet
+constexpr float kInsertRadius = 9.0f;  // a hovered link's insert button, UI pixels
+constexpr float kMasterLinkFade = 0.7f;   // a link into the master loses this much of its alpha on the way
+constexpr float kCarriedFade = 0.45f;  // rows carried into an artboard: see-through
 
-// ---- colours: made from the palette (graph-style.cpp), again when the theme changes
+// ---- colors: made from the palette (graph-style.cpp), again when the theme changes
 struct Colors {
     // the canvas
     ImU32 canvas;
@@ -40,7 +43,7 @@ struct Colors {
     ImU32 selectedText;     // ... its name ...
     ImU32 selectedEdge;     // ... its blend chip
     ImU32 originEdge;       // a row a drag carries: its spot's dashed outline
-    ImU32 swatchCheckerA;   // a transparent colour's square: a checkerboard, as behind a thumbnail
+    ImU32 swatchCheckerA;   // a transparent color's square: a checkerboard, as behind a thumbnail
     ImU32 swatchCheckerB;
     ImU32 border;
     ImU32 borderHover;

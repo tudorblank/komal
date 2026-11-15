@@ -1,4 +1,4 @@
-#include "actions.hpp"
+#include "command/actions.hpp"
 #include "base/clock.hpp"
 #include "base/log.hpp"
 
@@ -9,14 +9,29 @@ namespace {
 
 constexpr ArgKey<int64_t> kMade{ "made" };   // what an action made (a new node's id), in the log
 
-bool logged(ActionKind kind) { return kind == ActionKind::DocumentEdit || kind == ActionKind::Gesture || kind == ActionKind::AppState; }
+bool logged(ActionKind kind) { return kind == ActionKind::ProjectEdit || kind == ActionKind::Gesture || kind == ActionKind::AppState; }
+
+// "Ctrl+Shift+" (KeyMod flags; Cmd on macOS)
+std::string modifiersLabel(uint8_t mods)
+{
+    std::string out;
+    if (mods & ModCtrl)  out += "Ctrl+";
+    if (mods & ModAlt)   out += "Alt+";
+    if (mods & ModShift) out += "Shift+";
+#if defined(__APPLE__)
+    if (mods & ModSuper) out += "Cmd+";
+#else
+    if (mods & ModSuper) out += "Super+";
+#endif
+    return out;
+}
 
 }
 
 const char* actionKindName(ActionKind kind)
 {
     switch (kind) {
-    case ActionKind::DocumentEdit: return "edit";
+    case ActionKind::ProjectEdit: return "edit";
     case ActionKind::Gesture:      return "gesture";
     case ActionKind::AppState:     return "app";
     case ActionKind::Interface:    return "interface";
@@ -29,13 +44,14 @@ const char* actionKindName(ActionKind kind)
 
 ActionRegistry::ActionRegistry() = default;
 
-std::string ActionRegistry::whyNot(const Action& action) const
+std::string ActionRegistry::malformed(const Action& action) const
 {
     if (action.id.name().empty() || own(action.id)) return "its id is empty or taken";
     if (action.kind == ActionKind::Unset) return "it doesn't say its kind";
     const bool gesture = action.kind == ActionKind::Gesture;
-    if (gesture ? (!action.begin || action.run) : (!action.run || action.begin || action.update || action.end || action.cancel))
-        return "a gesture begins (and never runs), anything else runs";
+    const bool handlers = action.begin || action.update || action.end || action.cancel;
+    if (action.polled ? (gesture || action.run || handlers) : gesture ? (!action.begin || action.run) : (!action.run || handlers))
+        return "a gesture begins (and never runs), a polled action has no handler, anything else runs";
     if (!gesture && (!action.endArgs.empty() || !action.updateArgs.empty())) return "only a gesture ends and updates";
     if (!action.shortcuts.empty()) return "its keys come from the keymap (bind)";
     return {};
@@ -43,8 +59,8 @@ std::string ActionRegistry::whyNot(const Action& action) const
 
 void ActionRegistry::add(Action action)
 {
-    if (const std::string why = whyNot(action); !why.empty()) {
-        Log::error("action", "%.*s not added: %s", int(action.id.name().size()), action.id.name().data(), why.c_str());
+    if (const std::string error = malformed(action); !error.empty()) {
+        Log::error("action", "%.*s not added: %s", int(action.id.name().size()), action.id.name().data(), error.c_str());
         assert(false && "a malformed action");
         return;
     }
@@ -55,10 +71,10 @@ void ActionRegistry::add(Action action)
 bool ActionRegistry::bind(ActionId id, Shortcut shortcut)
 {
     const Action* a = find(id);
-    std::string why;
-    if (!a) why = "no such action";
-    else if (shortcut.key == Key::Unknown) why = "no key";
-    else if (!a->run) why = "a gesture isn't started by a key";
+    std::string error;
+    if (!a) error = "no such action";
+    else if (shortcut.key == Key::Unknown) error = "no key";
+    else if (!a->run && !a->polled) error = "a gesture isn't started by a key";
     else {
         // Panel scopes are never live together, but the global scope is live with either.
         const ActionScope scope = a->scope;
@@ -66,13 +82,13 @@ bool ActionRegistry::bind(ActionId id, Shortcut shortcut)
         for (const Action& other : m_actions)
             if (clash(other.scope))
                 for (const Shortcut& o : other.shortcuts)
-                    if (shortcut == o) why = "the key is " + std::string(other.id.name()) + "'s";
+                    if (shortcut == o) error = "the key is " + std::string(other.id.name()) + "'s";
         for (const DelegatedKey& k : m_delegatedKeys)
             if (const Action* other = find(k.id); other && k.shortcut == shortcut && clash(other->scope))
-                why = "the key is " + std::string(k.id.name()) + "'s";
+                error = "the key is " + std::string(k.id.name()) + "'s";
     }
-    if (!why.empty()) {
-        Log::error("action", "%.*s: key %s not bound: %s", int(id.name().size()), id.name().data(), ::shortcutLabel(shortcut).c_str(), why.c_str());
+    if (!error.empty()) {
+        Log::error("action", "%.*s: key %s not bound: %s", int(id.name().size()), id.name().data(), ::shortcutLabel(shortcut).c_str(), error.c_str());
         assert(false && "a keymap mistake");
         return false;
     }
@@ -120,7 +136,7 @@ ActionResult ActionRegistry::run(ActionId id, ActionArgs args)
     closeStep(*a);
     args.payload.reset();   // never logged
     if (r.made) args.add({ kMade, r.made });
-    record(*a, args, r ? ActionLogEntry::Status::Done : ActionLogEntry::Status::Refused, r.why);
+    record(*a, args, r ? ActionLogEntry::Status::Done : ActionLogEntry::Status::Refused, r.error);
     return r;
 }
 
@@ -137,9 +153,9 @@ bool ActionRegistry::beginGesture(ActionId id, ActionArgs args)
     }
     if (!argsFit(*a, a->args, a->payload, args)) return false;
     openStep(*a);
-    if (!a->begin(args)) {
+    if (const ActionResult r = a->begin(args); !r) {
         closeStep(*a);
-        record(*a, args, ActionLogEntry::Status::Refused);
+        record(*a, args, ActionLogEntry::Status::Refused, r.error);
         return false;
     }
     args.payload.reset();   // only for the handler
@@ -164,7 +180,8 @@ ActionResult ActionRegistry::endGesture(ActionId id, ActionArgs args)
     ActionArgs logged = std::move(it->second.args);
     m_gestures.erase(it);
     const Action* a = find(id);
-    if (a && !argsFit(*a, a->endArgs, nullptr, args)) {   // ends all the same: as if cancelled
+    if (!a) return {};
+    if (!argsFit(*a, a->endArgs, nullptr, args)) {   // ends all the same: as if cancelled
         if (a->cancel) a->cancel(ActionArgs{});
         closeStep(*a);
         return {};
@@ -173,11 +190,11 @@ ActionResult ActionRegistry::endGesture(ActionId id, ActionArgs args)
     ActionArgs all = logged;
     all.append(args);
     all.payload = args.payload;
-    const ActionResult r = a && a->end ? a->end(all) : ActionResult{ true };
-    if (a) closeStep(*a);
+    const ActionResult r = a->end ? a->end(all) : ActionResult{ true };
+    closeStep(*a);
     logged.append(args);
     if (r.made) logged.add({ kMade, r.made });
-    if (a) record(*a, logged, r ? ActionLogEntry::Status::Done : ActionLogEntry::Status::Refused);
+    record(*a, logged, r ? ActionLogEntry::Status::Done : ActionLogEntry::Status::Refused, r.error);
     return r;
 }
 
@@ -189,9 +206,10 @@ void ActionRegistry::cancelGesture(ActionId id)
     const ActionArgs logged = std::move(it->second.args);
     m_gestures.erase(it);
     const Action* a = find(id);
-    if (a && a->cancel) a->cancel(ActionArgs{});
-    if (a) closeStep(*a);
-    if (a) record(*a, logged, ActionLogEntry::Status::Cancelled);
+    if (!a) return;
+    if (a->cancel) a->cancel(ActionArgs{});
+    closeStep(*a);
+    record(*a, logged, ActionLogEntry::Status::Cancelled);
 }
 
 bool ActionRegistry::inGesture(ActionId id) const
@@ -204,18 +222,18 @@ bool ActionRegistry::inGesture(ActionId id) const
 
 bool ActionRegistry::argsFit(const Action& a, std::span<const ArgSpec> specs, const std::type_info* payload, const ActionArgs& args)
 {
-    std::string why = checkArgs(specs, args);
-    if (why.empty()) why = checkPayload(payload, args.payload);
-    if (why.empty()) return true;
-    Log::error("action", "%.*s refused: %s", int(a.id.name().size()), a.id.name().data(), why.c_str());   // a caller's mistake, whatever the kind
-    record(a, args, ActionLogEntry::Status::Refused, std::move(why));
+    std::string error = checkArgs(specs, args);
+    if (error.empty()) error = checkPayload(payload, args.payload);
+    if (error.empty()) return true;
+    Log::error("action", "%.*s refused: %s", int(a.id.name().size()), a.id.name().data(), error.c_str());   // a caller's mistake, whatever the kind
+    record(a, args, ActionLogEntry::Status::Refused, std::move(error));
     return false;
 }
 
-void ActionRegistry::record(const Action& a, const ActionArgs& args, ActionLogEntry::Status status, std::string why)
+void ActionRegistry::record(const Action& a, const ActionArgs& args, ActionLogEntry::Status status, std::string error)
 {
     if (!logged(a.kind)) return;
-    ActionLogEntry e{ Clock::sinceStart(), a.kind, a.id, args.format(), status, std::move(why) };
+    ActionLogEntry e{ Clock::sinceStart(), a.kind, a.id, args.format(), status, std::move(error) };
     // Repeated runs of a coalescing action in one interaction: one line, with the last values.
     if (a.coalesce && status == ActionLogEntry::Status::Done) {
         if (m_hasPending && m_pending.id != e.id) flushPending();
@@ -238,7 +256,7 @@ void ActionRegistry::write(ActionLogEntry e)
 {
     static constexpr const char* kStatus[] = { "", " (refused)", " (disabled)", " (cancelled)" };
     Log::info("action", "%8.2fs %-7s %.*s%s%s%s%s%s", e.at.count(), actionKindName(e.kind), int(e.id.name().size()), e.id.name().data(),
-              e.args.empty() ? "" : " ", e.args.c_str(), kStatus[int(e.status)], e.why.empty() ? "" : ": ", e.why.c_str());
+              e.args.empty() ? "" : " ", e.args.c_str(), kStatus[int(e.status)], e.error.empty() ? "" : ": ", e.error.c_str());
     m_log.push_back(std::move(e));
     if (m_log.size() > kLogCapacity) m_log.pop_front();
 }
@@ -263,7 +281,7 @@ void ActionRegistry::setUndoSteps(std::function<void(const Action&)> open, std::
 
 bool ActionRegistry::isStep(const Action& a) const
 {
-    return a.undoStep && (a.kind == ActionKind::DocumentEdit || a.kind == ActionKind::Gesture);
+    return a.undoStep && (a.kind == ActionKind::ProjectEdit || a.kind == ActionKind::Gesture);
 }
 
 // ---------------------------------------------------------------- shortcuts
@@ -290,6 +308,26 @@ void ActionRegistry::dispatch(const InputFrame& input, ActionScope panel)
     for (const ActionId id : fired) run(id);
 }
 
+template<class F>
+bool ActionRegistry::anyKey(ActionId id, F&& f) const
+{
+    if (const Action* a = own(id))
+        return std::any_of(a->shortcuts.begin(), a->shortcuts.end(), f);
+    return std::any_of(m_delegatedKeys.begin(), m_delegatedKeys.end(), [&](const DelegatedKey& k) { return k.id == id && f(k.shortcut); });
+}
+
+bool ActionRegistry::pressed(ActionId id, const InputFrame& input) const
+{
+    const Action* a = find(id);
+    const bool repeats = a && a->repeats;
+    return anyKey(id, [&](const Shortcut& s) { return input.pressed(s, repeats); });
+}
+
+bool ActionRegistry::held(ActionId id, const InputFrame& input) const
+{
+    return anyKey(id, [&](const Shortcut& s) { return input.isDown(s.key); });
+}
+
 std::string ActionRegistry::shortcutLabel(ActionId id) const
 {
     const Action* a = find(id);
@@ -314,20 +352,6 @@ std::string ActionRegistry::describe(std::initializer_list<HelpPart> parts) cons
             out += mod;
         }
     }
-    return out;
-}
-
-std::string modifiersLabel(uint8_t mods)
-{
-    std::string out;
-    if (mods & ModCtrl)  out += "Ctrl+";
-    if (mods & ModAlt)   out += "Alt+";
-    if (mods & ModShift) out += "Shift+";
-#if defined(__APPLE__)
-    if (mods & ModSuper) out += "Cmd+";
-#else
-    if (mods & ModSuper) out += "Super+";
-#endif
     return out;
 }
 

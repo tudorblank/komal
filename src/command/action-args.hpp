@@ -68,8 +68,7 @@ public:
     // A literal's text for a std::string argument: { kName, "photo" }.
     ActionArg(ArgKey<std::string> key, const char* v) : m_name(key.name), m_value(std::string(v)) {}
 
-    std::string_view   name() const { return m_name; }
-    const ActionValue& value() const { return m_value; }
+    std::string_view name() const { return m_name; }
 
 private:
     friend class ActionArgs;
@@ -170,8 +169,8 @@ ArgSpec ids(ArgKey<T> key) { return { key.name, ArgSpec::Type::Ids, true, -kAny,
 
 }
 
-// Why `args` don't fit `specs`: a missing, unknown or mistyped argument, or one out of range.
+// What's wrong with `args` against `specs`: a missing, unknown or mistyped argument, or one out of range.
 // Empty: they fit.
 std::string checkArgs(std::span<const ArgSpec> specs, const ActionArgs& args);
-// Why a payload doesn't fit what an action takes (null: none). Empty: it fits.
+// What's wrong with a payload for what an action takes (null: none). Empty: it fits.
 std::string checkPayload(const std::type_info* takes, const std::any& payload);

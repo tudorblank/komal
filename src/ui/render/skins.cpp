@@ -6,19 +6,31 @@
 
 namespace Skin {
 
-// ---------------------------------------------------------------- boxes
+namespace {
 
 void box(const Painter& p, const Style::BoxStyle& s, ImVec2 a, ImVec2 b, bool hot)
 {
     p.fillRect(a, b, hot ? s.fillHot : s.fill, s.rounding);
 }
 
-void centeredText(const Painter& p, ImVec2 a, ImVec2 b, ImU32 color, const char* text, const char* end)
+// Clipped to a..b.
+void centeredText(const Painter& p, ImVec2 a, ImVec2 b, ImU32 color, const char* text, const char* end = nullptr)
 {
     const ImVec2 t = ImGui::CalcTextSize(text, end);
     const Painter::Clip clip = p.clip(a, b);
     p.text(ImVec2(std::round((a.x + b.x - t.x) * 0.5f), std::round((a.y + b.y - t.y) * 0.5f)), color, text, end);
 }
+
+void sliderGrab(const Painter& p, const Style::SliderStyle& s, float x, float cy, bool hot)
+{
+    const float gw = s.grabHalfWidth, gh = s.grabHalfHeight, rim = s.rimWidth;
+    p.fillRect(ImVec2(x - gw - rim, cy - gh - rim), ImVec2(x + gw + rim, cy + gh + rim), s.rim, s.rimRounding);
+    p.fillRect(ImVec2(x - gw, cy - gh), ImVec2(x + gw, cy + gh), hot ? s.grabHot : s.grab, s.grabRounding);
+}
+
+}
+
+// ---------------------------------------------------------------- boxes
 
 void button(const Painter& p, const Style::BoxStyle& s, ImVec2 a, ImVec2 b, bool hot, const char* label, const char* end)
 {
@@ -118,13 +130,6 @@ void toggleLabel(const Painter& p, const Style::ToggleStyle& s, ImVec2 at, const
 
 // ---------------------------------------------------------------- sliders
 
-void sliderGrab(const Painter& p, const Style::SliderStyle& s, float x, float cy, bool hot)
-{
-    const float gw = s.grabHalfWidth, gh = s.grabHalfHeight, rim = s.rimWidth;
-    p.fillRect(ImVec2(x - gw - rim, cy - gh - rim), ImVec2(x + gw + rim, cy + gh + rim), s.rim, s.rimRounding);
-    p.fillRect(ImVec2(x - gw, cy - gh), ImVec2(x + gw, cy + gh), hot ? s.grabHot : s.grab, s.grabRounding);
-}
-
 void slider(const Painter& p, const Style::SliderStyle& s, float x0, float x1, float cy, float xv, bool hot)
 {
     const float t = s.trackThickness;
@@ -187,12 +192,12 @@ void gradientSlider(const Painter& p, const Style::GradientSliderStyle& s, float
         const float a = x0 + len * float(i) / float(count - 1), b = x0 + len * float(i + 1) / float(count - 1);
         p.gradientRect(ImVec2(a, y0), ImVec2(b, y1), stops[i], stops[i + 1], stops[i + 1], stops[i]);
     }
-    // Rounded ends: the panel colour drawn over the gradient's corners.
+    // Rounded ends: the panel color drawn over the gradient's corners.
     p.strokeRect(ImVec2(x0 - 1.0f, y0 - 1.0f), ImVec2(x1 + 1.0f, y1 + 1.0f), s.edge, th * 0.5f + 1.0f, s.edgeWidth);
     sliderGrab(p, s.grab, xv, cy, hot);
 }
 
-// ---------------------------------------------------------------- colour pickers
+// ---------------------------------------------------------------- color pickers
 
 void checker(const Painter& p, ImVec2 a, ImVec2 b, float cell, ImU32 colorA, ImU32 colorB)
 {
@@ -227,12 +232,13 @@ void toolButton(const Painter& p, const Style::ToolButtonStyle& s, ImVec2 a, ImV
     if (selected) p.strokeRect(a, b, s.outline, s.rounding);
 }
 
-void documentTab(const Painter& p, const Style::DocumentTabStyle& s, ImVec2 a, ImVec2 b, bool shown, bool hot, const char* name,
+void projectTab(const Painter& p, const Style::ProjectTabStyle& s, ImVec2 a, ImVec2 b, bool shown, bool hot, const char* name,
                  TabMark mark)
 {
     if (shown || hot) p.fillRect(a, b, shown ? s.shown : s.hot, s.rounding);
     const ImU32 ink = shown ? s.textShown : s.text;
-    const float markX = b.x - s.padding * 0.5f - s.mark, cy = (a.y + b.y) * 0.5f;
+    const Box m = projectTabMark(s, a, b);
+    const float markX = m.min.x, cy = (a.y + b.y) * 0.5f;
     {
         const Painter::Clip clip = p.clip(a, ImVec2(markX, b.y));
         p.text(ImVec2(a.x + s.padding, std::round(cy - ImGui::GetFontSize() * 0.5f)), ink, name);
@@ -243,7 +249,7 @@ void documentTab(const Painter& p, const Style::DocumentTabStyle& s, ImVec2 a, I
         p.fillCircle(c, std::max(2.0f, s.mark * 0.18f), ink);
         break;
     case TabMark::CloseHot:
-        p.fillRect(ImVec2(markX, cy - s.mark * 0.5f), ImVec2(markX + s.mark, cy + s.mark * 0.5f), s.markHot, s.rounding);
+        p.fillRect(m.min, m.max, s.markHot, s.rounding);
         [[fallthrough]];
     case TabMark::Close: {
         const float r = s.mark * 0.22f, w = std::max(1.0f, s.mark * 0.09f);
@@ -252,6 +258,30 @@ void documentTab(const Painter& p, const Style::DocumentTabStyle& s, ImVec2 a, I
         break;
     }
     }
+}
+
+Box projectTabMark(const Style::ProjectTabStyle& s, ImVec2 a, ImVec2 b)
+{
+    const float x = b.x - s.padding * 0.5f - s.mark, cy = (a.y + b.y) * 0.5f;
+    return { ImVec2(x, cy - s.mark * 0.5f), ImVec2(x + s.mark, cy + s.mark * 0.5f) };
+}
+
+float projectTabWidth(const Style::ProjectTabStyle& s, float nameWidth)
+{
+    return s.padding * 1.5f + nameWidth + s.mark;
+}
+
+// ---------------------------------------------------------------- headings
+
+void heading(const Painter& p, const Style::HeadingStyle& s, ImVec2 a, ImVec2 b, const char* title)
+{
+    // As ImGui's separator text: the lines through the middle, the title indented.
+    const ImVec2 t = ImGui::CalcTextSize(title);
+    const float y = std::trunc((a.y + b.y) * 0.5f + 0.99999f);
+    const float x = a.x + s.padding.x;
+    if (x - s.gap > a.x) p.line(ImVec2(a.x, y), ImVec2(x - s.gap, y), s.line, s.lineWidth);
+    if (b.x > x + t.x + s.gap) p.line(ImVec2(x + t.x + s.gap, y), ImVec2(b.x, y), s.line, s.lineWidth);
+    p.text(ImVec2(x, a.y + std::trunc((b.y - a.y - t.y) * 0.5f + 0.99999f)), s.text, title);
 }
 
 }

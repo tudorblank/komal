@@ -2,7 +2,7 @@
 // What input is, with no platform in it: pointer and key events, shortcuts, and the InputFrame,
 // one frame's worth of them. The app fills one from SDL each frame (input/sdl-input.hpp);
 // the rest of the app only reads it: shortcuts (ActionRegistry), tools (every pointer sample with
-// its pen data), panels (held keys, Space for the hand).
+// its pen data), panels (held keys: the hand's hold).
 //
 // The input's whole path, one file per step:
 //
@@ -73,7 +73,6 @@ struct KeyEvent {
     uint8_t  mods   = ModNone;   // KeyMod flags held with it
     bool     down   = true;
     bool     repeat = false;     // the OS's key repeat, while held
-    uint64_t timeNs = 0;
 };
 
 // a key with an exact set of modifiers: Shortcut{ Key::Z, ModPrimary | ModShift }.
@@ -96,6 +95,10 @@ struct InputFrame {
     bool buttonHeld(PointerDevice device, PointerButton b) const
     { return ((unsigned(device == PointerDevice::Mouse ? mouseButtons : penButtons) >> unsigned(b)) & 1u) != 0; }
 
+    // the wheel this frame, in notches: y > 0 away from the user, x > 0 to the left (as ImGui has them)
+    float wheelX = 0.0f, wheelY = 0.0f;
+    bool wheeled() const { return wheelX != 0.0f || wheelY != 0.0f; }
+
     // the pen as it was last reported (not reset between frames).
     struct Pen {
         bool  present  = false;   // a pen has been used since the app started
@@ -104,7 +107,6 @@ struct InputFrame {
         float pressure = 0.0f;
         float tiltX = 0.0f, tiltY = 0.0f;
     } pen;
-    PointerDevice lastDevice = PointerDevice::Mouse;
 
     // ---- keyboard
     std::vector<KeyEvent> keys;          // in the order they happened

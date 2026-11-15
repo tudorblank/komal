@@ -5,8 +5,5 @@
 class ToolPropertiesPanel : public Panel {
 public:
     PanelInfo info() const override;
-    bool init() override;
     void draw() override;
-
-private:
 };

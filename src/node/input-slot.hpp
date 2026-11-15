@@ -51,5 +51,4 @@ struct InputSlot {
 
     std::string text() const;
     static std::optional<InputSlot> parse(std::string_view text);
-    static bool valid(std::string_view text) { return parse(text).has_value(); }   // for an action's ArgSpec
 };

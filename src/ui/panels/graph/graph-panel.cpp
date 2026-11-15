@@ -1,21 +1,16 @@
 #include "ui/panels/graph/graph-panel.hpp"
 #include "ui/input-owner.hpp"
 #include "command/actions.hpp"
-#include "input/input-frame.hpp"
 #include "base/perf.hpp"
-#include "ui/panels/canvas/canvas-engine.hpp"
-#include "document/document-actions.hpp"
-#include "document/workspace.hpp"
+#include "project/project-actions.hpp"
+#include "project/workspace.hpp"
 #include "ui/panels/graph/internal/layout.hpp"
-#include "ui/style/graph-style.hpp"
 #include "ui/widgets/widgets.hpp"
 
 #include <imgui.h>
 #include <algorithm>
-#include <cstdio>
 
 using namespace GraphLayout;
-using namespace GraphStyle;
 
 namespace {
 
@@ -27,7 +22,7 @@ PanelInfo GraphPanel::info() const { return { Actions::ViewGraph, "Graph", DockS
 
 bool GraphPanel::init()
 {
-    if (!ui().documents.empty()) show(ui().documents.active().id());   // else made as one is shown
+    if (!ui().projects.empty()) show(ui().projects.active().id());   // else made as one is shown
     registerActions(ui().actions);
     return true;
 }
@@ -38,24 +33,24 @@ void GraphPanel::shutdown()
     m_views.clear();
 }
 
-void GraphPanel::documentsChanged(const DocumentsEvent& e)
+void GraphPanel::projectsChanged(const ProjectsEvent& e)
 {
     switch (e.type) {
-    case DocumentsEvent::Type::Opened:
+    case ProjectsEvent::Type::Opened:
         break;   // its graph is made once it's shown
-    case DocumentsEvent::Type::Closing:
-        if (m_view && m_view->document == e.id) m_view = nullptr;
-        std::erase_if(m_views, [&](const auto& v) { return v->document == e.id; });
+    case ProjectsEvent::Type::Closing:
+        if (m_view && m_view->project == e.id) m_view = nullptr;
+        std::erase_if(m_views, [&](const auto& v) { return v->project == e.id; });
         break;
-    case DocumentsEvent::Type::Activated:
+    case ProjectsEvent::Type::Activated:
         show(e.id);
         break;
     }
 }
 
-void GraphPanel::show(DocumentId id)
+void GraphPanel::show(ProjectId id)
 {
-    // What the last one's graph left: no drag or press goes on into another (the documents only
+    // What the last one's graph left: no drag or press goes on into another (the projects only
     // switch with no edit in progress), nothing derived from its scene is kept.
     m_press = {};
     m_drag = {};
@@ -68,15 +63,15 @@ void GraphPanel::show(DocumentId id)
     m_minimapKey = {};
     m_minimapRevision = 0;
     m_menus = GraphMenus{};
-    m_menus.init(ui().workspace(), ui().actions);
+    m_menus.init(ui().workspace(), ui().actions, ui().input);
 
     for (const auto& v : m_views)
-        if (v->document == id) {
+        if (v->project == id) {
             m_view = v.get();
             return;
         }
     auto made = std::make_unique<GraphView>();
-    made->document = id;
+    made->project = id;
     made->scene.init(ui().workspace());
     m_view = made.get();
     m_views.push_back(std::move(made));
@@ -99,7 +94,7 @@ void GraphPanel::draw()
     ImGui::InvisibleButton("##graph", size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight |
                                             ImGuiButtonFlags_MouseButtonMiddle);
     const bool hovered = ImGui::IsItemHovered();
-    m_canvasActive = ImGui::IsItemActive();
+    m_buttonActive = ImGui::IsItemActive();
     camera().setFrame(canvasMin, uiScale());
 
     layoutOverlays(canvasMin, canvasMax);
@@ -126,12 +121,12 @@ void GraphPanel::draw()
     placeLinkCurves(g);
     hit = tracking ? hitAt(mouse) : GraphHit{};
     m_hoveredLink = hit.link();
-    // A link dragged over a stack opens a gap where it would land (laid out from next frame on).
+    // Where a dragged link would land; over a stack it opens a gap there (laid out from next frame on).
     if (auto* link = std::get_if<LinkDrag>(&m_drag)) {
-        const LinkTarget t = linkTarget(*link, hit);
-        const bool placed = t.valid && t.place.dropping();
-        link->gapStack = placed ? t.node : kNoNodeId;
-        link->gap      = placed ? t.place : StackGap{};
+        link->target = linkTarget(*link, hit);
+        const bool placed = link->target.valid && link->target.place.dropping();
+        link->gapStack = placed ? link->target.node : kNoNodeId;
+        link->gap      = placed ? link->target.place : StackGap{};
     }
 
     {
@@ -176,15 +171,20 @@ void GraphPanel::removePickedRows()
 {
     NodeId id = kNoNodeId;
     if (!rowsPicked(&id)) return;
+    if (ui().actions.run(Actions::LayersRemove, rowArgs(id, scene().viewState(id)->selected))) scene().pickRows(kNoNodeId, {}, {});
+}
+
+ActionArgs GraphPanel::rowArgs(NodeId id, const std::vector<StackRowRef>& rows)
+{
     std::vector<NodeId> layers;
     std::vector<ArtboardId> artboards;
-    for (const StackRowRef& r : scene().viewState(id)->selected) {
+    for (const StackRowRef& r : rows) {
         if (r.layer != kNoNodeId) layers.push_back(r.layer);
         else                      artboards.push_back(r.artboard);
     }
-    ActionArgs args{ { DocArgs::kNode, id }, { DocArgs::kLayers, layers } };
-    if (!artboards.empty()) args.add({ DocArgs::kArtboards, artboards });
-    if (ui().actions.run(Actions::LayersRemove, args)) scene().pickRows(kNoNodeId, {}, {});
+    ActionArgs args{ { ProjectArgs::kNode, id }, { ProjectArgs::kLayers, layers } };
+    if (!artboards.empty()) args.add({ ProjectArgs::kArtboards, artboards });
+    return args;
 }
 
 void GraphPanel::updateStackGap()
@@ -276,12 +276,21 @@ void GraphPanel::registerActions(ActionRegistry& actions)
     actions.add({ .id = Actions::GraphAddNode, .title = "Add Node...", .kind = ui, .scope = graph,
                   .run = [this] { m_menus.openAdd(GraphMenus::Free{}, camera().toGraph(ImGui::GetIO().MousePos)); } });
     // nodes: the ones to show (none given: the selection), where their output is on the canvas.
-    actions.add({ .id = Actions::GraphShowInCanvas, .title = "Show in Canvas", .kind = ui, .args = { Arg::ids(DocArgs::kNodes).optional() },
+    actions.add({ .id = Actions::GraphShowInCanvas, .title = "Show in Canvas", .kind = ui, .args = { Arg::ids(ProjectArgs::kNodes).optional() },
                   .mouse = "Double-click", .scope = graph,
-                  .run = [this](const ActionArgs& a) { showInCanvas(a.has(DocArgs::kNodes) ? a.get(DocArgs::kNodes) : selection().list()); } });
+                  .run = [this](const ActionArgs& a) { showInCanvas(a.has(ProjectArgs::kNodes) ? a.get(ProjectArgs::kNodes) : selection().list()); } });
     // node: the one to rename (none given: the one selected), in a field at the mouse.
-    actions.add({ .id = Actions::GraphRename, .title = "Rename...", .kind = ui, .args = { Arg::id(DocArgs::kNode).optional() }, .scope = graph,
-                  .run = [this](const ActionArgs& a) { return m_menus.openValue(GraphMenus::Rename{ a.get(DocArgs::kNode, selection().single()) }); } });
+    actions.add({ .id = Actions::GraphRename, .title = "Rename...", .kind = ui, .args = { Arg::id(ProjectArgs::kNode).optional() }, .scope = graph,
+                  .run = [this](const ActionArgs& a) { return m_menus.openValue(GraphMenus::Rename{ a.get(ProjectArgs::kNode, selection().single()) }); } });
+    // artboard: its color, in a floating picker at the mouse; its name, in a field there.
+    actions.add({ .id = Actions::GraphArtboardColor, .title = "Artboard Color...", .kind = ui, .args = { Arg::id(ProjectArgs::kArtboard) }, .scope = graph,
+                  .run = [this](const ActionArgs& a) { m_menus.openColor(a.get(ProjectArgs::kArtboard)); } });
+    actions.add({ .id = Actions::GraphArtboardRename, .title = "Rename Artboard...", .kind = ui, .args = { Arg::id(ProjectArgs::kArtboard) }, .scope = graph,
+                  .run = [this](const ActionArgs& a) { return m_menus.openValue(GraphMenus::RenameArtboard{ a.get(ProjectArgs::kArtboard) }); } });
+    // The add menu's keys, read while it's open.
+    actions.add({ .id = Actions::MenuUp, .title = "Menu Up", .kind = ui, .scope = graph, .repeats = true, .polled = true });
+    actions.add({ .id = Actions::MenuDown, .title = "Menu Down", .kind = ui, .scope = graph, .repeats = true, .polled = true });
+    actions.add({ .id = Actions::MenuAccept, .title = "Menu Pick", .kind = ui, .scope = graph, .polled = true });
 }
 
 void GraphPanel::showInCanvas(const std::vector<NodeId>& ids)
@@ -289,12 +298,12 @@ void GraphPanel::showInCanvas(const std::vector<NodeId>& ids)
     BoundsI b;
     for (NodeId id : ids)
         if (const Node* n = ui().workspace().find(id)) b.expand(n->bounds());   // a Move: where it moved them to
-    ui().actions.run(Actions::CanvasFrame, { { DocArgs::kMinX, b.minX }, { DocArgs::kMinY, b.minY }, { DocArgs::kMaxX, b.maxX }, { DocArgs::kMaxY, b.maxY } });
+    ui().actions.run(Actions::CanvasFrame, { { ProjectArgs::kMinX, b.minX }, { ProjectArgs::kMinY, b.minY }, { ProjectArgs::kMaxX, b.maxX }, { ProjectArgs::kMaxY, b.maxY } });
 }
 
 void GraphPanel::deleteSelection()
 {
-    ui().actions.run(Actions::NodeDelete, { { DocArgs::kNodes, selection().list() } });   // the master is skipped; the rest heal the links around them
+    ui().actions.run(Actions::NodeDelete, { { ProjectArgs::kNodes, selection().list() } });   // the master is skipped; the rest heal the links around them
 }
 
 void GraphPanel::frameNodes(bool selectionOnly, ImVec2 canvasSize)

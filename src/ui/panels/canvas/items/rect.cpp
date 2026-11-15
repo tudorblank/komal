@@ -1,7 +1,4 @@
-#include "rect.hpp"
-#include "base/math.hpp"
-
-#include <cstring>
+#include "ui/panels/canvas/items/rect.hpp"
 
 RectItem::RectItem(float x, float y, float w, float h, Color8 color)
     : m_x(x), m_y(y), m_w(w), m_h(h), m_color(color) {}
@@ -31,11 +28,7 @@ bool RectItem::prepare(CanvasFrame& frame)
     }
     if (!m_upload) return false;
 
-    const Mat4 model = Mat4::translateScale(m_x + m_w * 0.5f, m_y + m_h * 0.5f, m_w, m_h);
-    RectParams data{};
-    std::memcpy(data.model, model.m, sizeof data.model);
-    const auto color = m_color.floats();   // straight
-    std::memcpy(data.color, color.data(), sizeof data.color);
+    const RectParams data = rectParams(m_x, m_y, m_w, m_h, m_color);
     m_uniform.write(p.ctx.queue, &data, sizeof data);
     m_upload = false;
     return true;

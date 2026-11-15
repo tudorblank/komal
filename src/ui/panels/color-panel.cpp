@@ -1,4 +1,4 @@
-#include "color-panel.hpp"
+#include "ui/panels/color-panel.hpp"
 #include "base/math.hpp"
 #include "command/actions.hpp"
 #include "ui/render/painter.hpp"
@@ -6,23 +6,16 @@
 #include "ui/style/ui-style.hpp"
 #include "ui/tools/tool-base.hpp"
 #include "ui/tools/tool-manager.hpp"
+#include "ui/widgets/hsv.hpp"
 #include "ui/widgets/widgets.hpp"
 
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <cstring>
 #include <utility>
 
 namespace {
-
-ImU32 hsv(float h, float s, float v, float a = 1.0f)
-{
-    float r, g, b;
-    ImGui::ColorConvertHSVtoRGB(h, s, v, r, g, b);
-    return ImGui::ColorConvertFloat4ToU32(ImVec4(r, g, b, a));
-}
 
 // The hue at an angle around the ring: red at the top, going clockwise.
 float hueAt(float angle) { return std::fmod(angle / kTau + 0.25f + 1.0f, 1.0f); }
@@ -32,11 +25,7 @@ float angleOf(float hue) { return (hue - 0.25f) * kTau; }
 
 void ColorPanel::syncFrom(const float rgb[3])
 {
-    float h, s, v;
-    ImGui::ColorConvertRGBtoHSV(rgb[0], rgb[1], rgb[2], h, s, v);
-    if (v > 0.0f && s > 0.0f) m_h = h;   // grey or black has no hue: keep the one we had
-    if (v > 0.0f) m_s = s;               // black has no saturation either
-    m_v = v;
+    Hsv::follow(rgb, m_h, m_s, m_v);
     std::memcpy(m_last, rgb, sizeof m_last);
 }
 
@@ -50,7 +39,7 @@ PanelInfo ColorPanel::info() const { return { Actions::ViewColor, "Color", DockS
 
 bool ColorPanel::init()
 {
-    // From anywhere a colour is shown (the brush's swatch): this panel, opened and in front.
+    // From anywhere a color is shown (the brush's swatch): this panel, opened and in front.
     ui().actions.add({ .id = Actions::ColorEdit, .title = "Edit Color", .kind = ActionKind::Interface, .run = [this] {
         if (!isOpen()) ui().actions.run(toggleAction());   // opening is the View toggle's (logged)
         m_focus = true;
@@ -66,11 +55,11 @@ void ColorPanel::draw()
     if (std::exchange(m_focus, false)) ImGui::SetNextWindowFocus();
     const Widgets::PanelWindow window(*this, actions);
     if (!window) return;
-    const float* fg = m_editSecondary ? colors.background : colors.foreground;   // the colour being edited
+    const float* fg = m_editSecondary ? colors.background : colors.foreground;   // the color being edited
     if (std::memcmp(fg, m_last, sizeof m_last) != 0) syncFrom(fg);
 
     // The wheel as large as the panel allows, leaving the swatches' corner free at the side and
-    // room below for a gap, the codes row, a gap and the three sliders.
+    // room below for a gap, the codes row, a gap and the four sliders.
     const Style::ColorPickerStyle& style = Style::get().colorPicker;
     const ImGuiStyle& st = ImGui::GetStyle();
     const float rowsBelow = Widgets::stackHeight(5, 0, 2) + st.ItemSpacing.y;
@@ -84,7 +73,7 @@ void ColorPanel::draw()
     ImGui::SetCursorScreenPos(top);   // the swatches sit in the corner beside the wheel
     drawSwatches(colors, actions, block);
     ImGui::SetCursorScreenPos(below);
-    if (const float* now = m_editSecondary ? colors.background : colors.foreground; now != fg) {   // switched to the other colour
+    if (const float* now = m_editSecondary ? colors.background : colors.foreground; now != fg) {   // switched to the other color
         fg = now;
         syncFrom(fg);
         h0 = m_h, s0 = m_s, v0 = m_v;
@@ -96,7 +85,7 @@ void ColorPanel::draw()
     drawSliders(alpha);
 
     const char* target = m_editSecondary ? "secondary" : "primary";
-    if (m_h != h0 || m_s != s0 || m_v != v0) {   // a control changed the colour: its action writes it
+    if (m_h != h0 || m_s != s0 || m_v != v0) {   // a control changed the color: its action writes it
         float rgb[3];
         writeTo(rgb);
         actions.run(Actions::ColorSet, { { ColorArgs::kTarget, target }, { ColorArgs::kR, rgb[0] }, { ColorArgs::kG, rgb[1] },
@@ -125,17 +114,19 @@ void ColorPanel::drawSwatches(const ToolColors& colors, ActionRegistry& actions,
         else if (inside(back0, back1))   m_editSecondary = true;
     }
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip(overSwap ? "Swap colors (X)" : "Primary (front) paints, secondary waits\nClick one to edit it here");
+        ImGui::SetTooltip("%s", overSwap ? actions.describe({ "Swap colors (", Actions::ColorSwap, ")" }).c_str()
+                                         : "Primary (front) paints, secondary waits\nClick one to edit it here");
 
     const Painter draw = Painter::window();
-    const float r = style.swatchRounding, gap = style.swatchGap;
+    const float r = style.swatchRounding, gap = style.swatchGap, rim = style.swatchRimWidth, out = style.editedOffset;
     const auto swatch = [&](ImVec2 a, ImVec2 b, const float* rgba, bool edited) {
-        draw.fillRect(ImVec2(a.x - gap, a.y - gap), ImVec2(b.x + gap, b.y + gap), style.gap, r + 1.0f);   // apart from what's behind
+        draw.fillRect(ImVec2(a.x - gap, a.y - gap), ImVec2(b.x + gap, b.y + gap), style.gap, style.swatchOuterRounding);   // apart from what's behind
         if (rgba[3] < 1.0f) Skin::checker(draw, a, b, style.checkerCell, style.checkerA, style.checkerB);   // see-through
-        draw.fillRect(a, b, ImGui::ColorConvertFloat4ToU32(ImVec4(rgba[0], rgba[1], rgba[2], rgba[3])), r);
-        draw.strokeRect(a, b, style.rim, r, 1.0f);
-        draw.strokeRect(ImVec2(a.x + 1.0f, a.y + 1.0f), ImVec2(b.x - 1.0f, b.y - 1.0f), style.lightRim, r - 1.0f);   // a black one still shows
-        if (edited) draw.strokeRect(ImVec2(a.x - 1.5f, a.y - 1.5f), ImVec2(b.x + 1.5f, b.y + 1.5f), style.edited, r + 1.0f, style.editedWidth);
+        const float color[4] = { rgba[0], rgba[1], rgba[2], rgba[3] };
+        draw.fillRect(a, b, Color8::fromUnit(color).packed(), r);
+        draw.strokeRect(a, b, style.rim, r, rim);
+        draw.strokeRect(ImVec2(a.x + rim, a.y + rim), ImVec2(b.x - rim, b.y - rim), style.lightRim, r - rim, rim);   // a black one still shows
+        if (edited) draw.strokeRect(ImVec2(a.x - out, a.y - out), ImVec2(b.x + out, b.y + out), style.edited, style.swatchOuterRounding, style.editedWidth);
     };
     swatch(back0, back1, colors.background, m_editSecondary);
     swatch(front0, front1, colors.foreground, !m_editSecondary);
@@ -186,7 +177,7 @@ void ColorPanel::drawWheel(float size)
     const int segments = style.ringSegments;
     for (int i = 0; i < segments; ++i) {
         const float a0 = kTau * float(i) / float(segments), a1 = kTau * float(i + 1) / float(segments);
-        const ImU32 c0 = hsv(hueAt(a0), 1.0f, 1.0f), c1 = hsv(hueAt(a1), 1.0f, 1.0f);
+        const ImU32 c0 = Hsv::packed(hueAt(a0), 1.0f, 1.0f), c1 = Hsv::packed(hueAt(a1), 1.0f, 1.0f);
         const ImVec2 d0(std::cos(a0), std::sin(a0)), d1(std::cos(a1), std::sin(a1));
         const ImVec2 corners[4] = { ImVec2(c.x + d0.x * inner, c.y + d0.y * inner), ImVec2(c.x + d0.x * outer, c.y + d0.y * outer),
                                     ImVec2(c.x + d1.x * outer, c.y + d1.y * outer), ImVec2(c.x + d1.x * inner, c.y + d1.y * inner) };
@@ -197,9 +188,9 @@ void ColorPanel::drawWheel(float size)
     draw.strokeCircle(c, outer + 0.5f, style.ringEdge, style.ringEdgeWidth, segments);
     draw.strokeCircle(c, inner - 0.5f, style.ringEdge, style.ringEdgeWidth, segments);
 
-    // The square, and the markers: rings, light inside dark, readable on any colour.
+    // The square, and the markers: rings, light inside dark, readable on any color.
     const float ringMid = (inner + outer) * 0.5f, ringR = (outer - inner) * style.hueMarker;
-    Skin::colorSquare(draw, style, q0, q1, hsv(m_h, 1.0f, 1.0f), m_s, m_v, std::max(style.squareMarkerMin, ringR * style.squareMarker));
+    Skin::colorSquare(draw, style, q0, q1, Hsv::packed(m_h, 1.0f, 1.0f), m_s, m_v, std::max(style.squareMarkerMin, ringR * style.squareMarker));
     Skin::colorMarker(draw, style, ImVec2(c.x + std::cos(angleOf(m_h)) * ringMid, c.y + std::sin(angleOf(m_h)) * ringMid), ringR);
 }
 
@@ -239,16 +230,16 @@ void ColorPanel::drawSliders(float& alpha)
         ImGui::PopID();
     };
 
-    ImU32 hue[7];   // the full circle at full saturation and brightness
-    for (int i = 0; i < 7; ++i) hue[i] = hsv(float(i) / 6.0f, 1.0f, 1.0f);
-    row("H", "hue", m_h, hue, 7, 360.0f, "%.0f°");
+    ImU32 hue[Hsv::kHueStops];
+    Hsv::hueStops(hue);
+    row("H", "hue", m_h, hue, Hsv::kHueStops, 360.0f, "%.0f°");
 
-    const ImU32 sat[2] = { hsv(m_h, 0.0f, m_v), hsv(m_h, 1.0f, m_v) };   // grey -> the full colour
+    const ImU32 sat[2] = { Hsv::packed(m_h, 0.0f, m_v), Hsv::packed(m_h, 1.0f, m_v) };   // grey -> the full color
     row("S", "saturation", m_s, sat, 2, 100.0f, "%.0f%%");
 
-    const ImU32 bri[2] = { hsv(m_h, m_s, 0.0f), hsv(m_h, m_s, 1.0f) };   // black -> the full colour
+    const ImU32 bri[2] = { Hsv::packed(m_h, m_s, 0.0f), Hsv::packed(m_h, m_s, 1.0f) };   // black -> the full color
     row("B", "brightness", m_v, bri, 2, 100.0f, "%.0f%%");
 
-    const ImU32 opacity[2] = { hsv(m_h, m_s, m_v, 0.0f), hsv(m_h, m_s, m_v, 1.0f) };   // see-through -> solid
+    const ImU32 opacity[2] = { Hsv::packed(m_h, m_s, m_v, 0.0f), Hsv::packed(m_h, m_s, m_v, 1.0f) };   // see-through -> solid
     row("A", "alpha", alpha, opacity, 2, 100.0f, "%.0f%%");
 }

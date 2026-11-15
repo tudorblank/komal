@@ -6,11 +6,6 @@
 
 PanelInfo ToolPropertiesPanel::info() const { return { Actions::ViewToolProperties, "Tool Properties", DockSlot::RightLower }; }
 
-bool ToolPropertiesPanel::init()
-{
-    return true;
-}
-
 void ToolPropertiesPanel::draw()
 {
     if (!isOpen()) return;
@@ -18,8 +13,8 @@ void ToolPropertiesPanel::draw()
     const Widgets::PanelWindow window(*this, ui().actions);
     if (!window) return;
     Tool& tool = tools.selected();
-    ImGui::SeparatorText(tool.name());
-    ToolContext ctx{ ui().workspace(), ui().actions, tools };
+    Widgets::heading(tool.name());
+    ToolContext ctx{ ui().workspace(), ui().actions };
     ImGui::PushID(&tool);
     tool.drawProperties(ctx);
     ImGui::PopID();

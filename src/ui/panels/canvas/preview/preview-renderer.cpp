@@ -1,6 +1,6 @@
 #include "ui/panels/canvas/preview/preview-renderer.hpp"
 #include "ui/panels/canvas/preview/preview.hpp"
-#include "document/workspace.hpp"
+#include "project/workspace.hpp"
 #include "gpu/render-pass.hpp"
 #include "node/node-kinds.hpp"
 
@@ -95,7 +95,7 @@ int PreviewRenderer::build(int node, Vec2 offset)
     for (const Built& b : m_built)   // reached twice: built once per offset, shared
         if (b.node == node && b.offset == offset) return b.op;
 
-    const PreviewPlan::Node& s = m_preview->plan().nodes()[size_t(node)];
+    const PreviewPlan::Planned& s = m_preview->plan().nodes()[size_t(node)];
     const Node& n = *s.node;
 
     int wet = -1, dry = -1;
@@ -259,13 +259,7 @@ void PreviewRenderer::drawLeaf(WGPURenderPassEncoder pass, int leaf, Vec2 offset
     if (!slot) slot = std::make_unique<LeafDraw>();
     LeafDraw& d = *slot;
     if (d.placed != tiles.revision(L)) {
-        const float size = float(Tile::kSize << L);
-        d.draw.begin(tiles.atlas(L));
-        for (TileKey key : tiles.footprint(L)) {
-            const auto t = TileUtils::unpackKey(key);
-            d.draw.add(key, float(t.x) * size, float(t.y) * size, size);   // empty tiles aren't in the atlas: skipped
-        }
-        d.draw.end(p, 1.0f);
+        tiles.drawLevel(d.draw, L, p);
         d.placed = tiles.revision(L);
     }
     if (d.draw.empty()) return;
@@ -288,12 +282,7 @@ void PreviewRenderer::drawFill(WGPURenderPassEncoder pass, const PreviewPlan::Fi
     const Mat4 viewProj = space.camera.viewProj(space.viewW, space.viewH, offset);
     camera->write(p.ctx.queue, viewProj.m, sizeof(viewProj.m));
     const BoundsI& b = fill.rect;
-    const float w = float(b.maxX - b.minX + 1), h = float(b.maxY - b.minY + 1);
-    const Mat4 model = Mat4::translateScale(float(b.minX) + w * 0.5f, float(b.minY) + h * 0.5f, w, h);
-    RectParams params{};
-    std::copy(std::begin(model.m), std::end(model.m), std::begin(params.model));
-    const auto color = fill.color.floats();   // straight
-    std::copy(color.begin(), color.end(), std::begin(params.color));
+    const RectParams params = rectParams(float(b.minX), float(b.minY), float(b.maxX - b.minX + 1), float(b.maxY - b.minY + 1), fill.color);
     rect->write(p.ctx.queue, &params, sizeof(params));
     wgpuRenderPassEncoderSetPipeline(pass, p.colorPipeline);
     wgpuRenderPassEncoderSetBindGroup(pass, 0, camera->group, 0, nullptr);
@@ -441,5 +430,5 @@ void PreviewRenderer::release()
         pool->items.clear();
         pool->used = 0;
     }
-    m_empty.reset();
+    m_empty.release();
 }

@@ -27,7 +27,6 @@ TEST_CASE("a capture follows the press that began it, to its release")
     CHECK(c.feed(event(Type::Down), false) == Step::Ignored);          // the caller said no
     CHECK_FALSE(c.held());
     REQUIRE(c.feed(event(Type::Down, PointerDevice::Pen), true) == Step::Began);
-    CHECK(c.pen());
     CHECK(c.feed(event(Type::Move, PointerDevice::Mouse), true) == Step::Ignored);   // the other device
     CHECK(c.feed(event(Type::Move, PointerDevice::Eraser), true) == Step::Moved);    // the pen's other end: the pen
     CHECK(c.feed(event(Type::Down, PointerDevice::Pen, PointerButton::Secondary), true) == Step::Ignored);

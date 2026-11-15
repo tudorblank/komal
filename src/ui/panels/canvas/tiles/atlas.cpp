@@ -98,12 +98,6 @@ void TileAtlas::clear()
     m_chunks.clear();
 }
 
-void TileAtlas::release()
-{
-    clear();
-    m_own.release();
-}
-
 // ---------------------------------------------------------------- draw lists
 
 void TileDrawList::begin(const TileAtlas& atlas)
@@ -133,7 +127,7 @@ bool TileDrawList::add(TileKey key, float x, float y, float size, float subX, fl
     return true;
 }
 
-bool TileDrawList::end(const CanvasPipelines& p, float opacity)
+bool TileDrawList::end(const CanvasPipelines& p)
 {
     const size_t pages = m_atlas ? m_atlas->m_pages->pageCount() : 0;
     m_building.resize(pages);
@@ -143,7 +137,6 @@ bool TileDrawList::end(const CanvasPipelines& p, float opacity)
         Page& page = m_pages[i];
         std::vector<ChunkInstance> none;
         std::vector<ChunkInstance>& inst = i < pages ? m_building[i] : none;   // pages gone with a release: nothing
-        for (ChunkInstance& c : inst) c.opacity = opacity;
         const bool same = inst.size() == page.instances.size() &&
                           std::memcmp(inst.data(), page.instances.data(), inst.size() * sizeof(ChunkInstance)) == 0;
         if (same) continue;

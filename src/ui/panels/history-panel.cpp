@@ -1,7 +1,7 @@
 #include "ui/panels/history-panel.hpp"
-#include "document/document-actions.hpp"
+#include "project/project-actions.hpp"
 #include "command/actions.hpp"
-#include "document/workspace.hpp"
+#include "project/workspace.hpp"
 #include "ui/render/painter.hpp"
 #include "input/input-frame.hpp"
 #include "ui/input-owner.hpp"
@@ -69,14 +69,14 @@ bool HistoryPanel::init()
                        .scope = ActionScope::History, .enabled = [this] { return !m_picked.empty(); }, .run = [this] {
         const std::vector<StepId> steps = std::exchange(m_picked, {});
         m_anchor = kNoStep;
-        return bool(ui().actions.run(Actions::HistoryDelete, { { DocArgs::kSteps, steps } }));
+        return bool(ui().actions.run(Actions::HistoryDelete, { { ProjectArgs::kSteps, steps } }));
     } });
     return true;
 }
 
-void HistoryPanel::documentsChanged(const DocumentsEvent& e)
+void HistoryPanel::projectsChanged(const ProjectsEvent& e)
 {
-    if (e.type != DocumentsEvent::Type::Activated) return;
+    if (e.type != ProjectsEvent::Type::Activated) return;
     m_laidOut = 0;
     m_shownCurrent = kNoStep;
     m_picked.clear();
@@ -91,10 +91,10 @@ bool HistoryPanel::picked(StepId step) const
 void HistoryPanel::pick(StepId step, bool add, bool range)
 {
     if (range && m_anchor != kNoStep) {
-        const uint32_t a = uint32_t(m_anchor), b = uint32_t(step);
+        const uint32_t a = rowOf(m_anchor), b = rowOf(step);
         const uint32_t lo = std::min(a, b), hi = std::max(a, b);
         m_picked.clear();
-        for (uint32_t s = lo; s <= hi; ++s) m_picked.push_back(StepId(s));
+        for (uint32_t row = lo; row <= hi; ++row) m_picked.push_back(stepAt(row));
         return;   // the anchor stays: the range can change its other end
     }
     if (add) {
@@ -120,13 +120,9 @@ void HistoryPanel::draw()
     const uint32_t count   = uint32_t(history.size());
     const uint32_t current = rowOf(history.current());
     const float font  = ImGui::GetFontSize();
-    const float rowH  = style.rowHeight;
-    const float laneW = style.laneWidth;
-    const float dot   = style.dot;
-    const float line  = style.line;
-    const float ring  = style.ring;   // the current step's dot, the biggest thing drawn
-    // Lane 0's dot sits half a lane in: the graph moves right by what the ring needs beyond that.
-    const float inset = std::max(2.0f, std::ceil(ring - laneW * 0.5f) + 2.0f);
+    // Lane 0's dot sits half a lane in: the graph moves right by what the ring (the current step's
+    // dot, the biggest thing drawn) needs beyond that.
+    const float inset = std::max(2.0f, std::ceil(style.ring - style.laneWidth * 0.5f) + 2.0f);
 
     // Where you are, the way back to the start, and redo's way on.
     std::vector<uint8_t> onPath(count, 0), onRedo(count, 0);
@@ -140,51 +136,46 @@ void HistoryPanel::draw()
     std::snprintf(widest, sizeof widest, "%u", count - 1);
     const float numbersW = ImGui::CalcTextSize(widest).x + style.numberPadding * 2.0f;
     const float graphX = origin.x + numbersW + inset;
-    const float labelX = graphX + float(m_lanes) * laneW + style.labelGap;
+    const float labelX = graphX + float(m_lanes) * style.laneWidth + style.labelGap;
     const float width  = std::max(ImGui::GetContentRegionAvail().x, labelX - origin.x + style.labelRoom);
 
     // One item over every row: the row under the mouse is the step to go to.
-    ImGui::InvisibleButton("##steps", ImVec2(width, rowH * float(count)));
+    ImGui::InvisibleButton("##steps", ImVec2(width, style.rowHeight * float(count)));
     const bool hovered = ImGui::IsItemHovered();
     // Its shortcuts next frame (Del): the pointer over it, or the focus.
     if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows)) ui().owner.claim(ActionScope::History, InputOwner::Claim::Pointer);
     else if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) ui().owner.claim(ActionScope::History, InputOwner::Claim::Focus);
-    const int hoveredRow = hovered ? int((ImGui::GetIO().MousePos.y - origin.y) / rowH) : -1;
+    const int hoveredRow = hovered ? int((ImGui::GetIO().MousePos.y - origin.y) / style.rowHeight) : -1;
     if (ImGui::IsItemClicked() && hoveredRow >= 0 && hoveredRow < int(count)) {
         const bool add = ui().input.mods & ModPrimary, range = ui().input.mods & ModShift;
-        pick(StepId(hoveredRow), add, range);
-        if (!add && !range && uint32_t(hoveredRow) != current) actions.run(Actions::HistoryGoTo, { { DocArgs::kStep, StepId(hoveredRow) } });
+        pick(stepAt(uint32_t(hoveredRow)), add, range);
+        if (!add && !range && uint32_t(hoveredRow) != current) actions.run(Actions::HistoryGoTo, { { ProjectArgs::kStep, stepAt(uint32_t(hoveredRow)) } });
     }
 
     // The current step stays in view when it changes (an undo, a jump, a new step).
     if (history.current() != m_shownCurrent) {
-        const float top = float(current) * rowH, view = ImGui::GetWindowHeight();
-        if (top < ImGui::GetScrollY() || top + rowH > ImGui::GetScrollY() + view)
-            ImGui::SetScrollY(std::max(0.0f, top - (view - rowH) * 0.5f));
+        const float top = float(current) * style.rowHeight, view = ImGui::GetWindowHeight();
+        if (top < ImGui::GetScrollY() || top + style.rowHeight > ImGui::GetScrollY() + view)
+            ImGui::SetScrollY(std::max(0.0f, top - (view - style.rowHeight) * 0.5f));
         m_shownCurrent = history.current();
     }
 
     // Only the rows on screen (and the links passing through them).
     const float scroll = ImGui::GetScrollY(), view = ImGui::GetWindowHeight();
-    const uint32_t first = uint32_t(std::max(0.0f, std::floor(scroll / rowH)));
-    const uint32_t last  = std::min(count - 1, uint32_t(std::ceil((scroll + view) / rowH)));
+    const uint32_t first = uint32_t(std::max(0.0f, std::floor(scroll / style.rowHeight)));
+    const uint32_t last  = std::min(count - 1, uint32_t(std::ceil((scroll + view) / style.rowHeight)));
 
     const Painter draw = Painter::window();
-    const ImU32 accent  = style.here;
-    const ImU32 ahead   = style.ahead;
-    const ImU32 other   = style.other;
-    const ImU32 text    = style.text;
-    const ImU32 dimText = style.textDim;
     const auto at = [&](uint32_t id) {
-        return ImVec2(graphX + (float(m_lane[id]) + 0.5f) * laneW, origin.y + (float(id) + 0.5f) * rowH);
+        return ImVec2(graphX + (float(m_lane[id]) + 0.5f) * style.laneWidth, origin.y + (float(id) + 0.5f) * style.rowHeight);
     };
-    const auto tone = [&](uint32_t id) { return onPath[id] ? accent : onRedo[id] ? ahead : other; };
+    const auto tone = [&](uint32_t id) { return onPath[id] ? style.here : onRedo[id] ? style.ahead : style.other; };
 
     for (uint32_t id = first; id <= last; ++id)
-        if (picked(StepId(id)))
-            draw.fillRect(ImVec2(origin.x, origin.y + float(id) * rowH), ImVec2(origin.x + width, origin.y + float(id + 1) * rowH), style.rowPicked, style.rounding);
+        if (picked(stepAt(id)))
+            draw.fillRect(ImVec2(origin.x, origin.y + float(id) * style.rowHeight), ImVec2(origin.x + width, origin.y + float(id + 1) * style.rowHeight), style.rowPicked, style.rounding);
     if (hoveredRow >= int(first) && hoveredRow <= int(last))
-        draw.fillRect(ImVec2(origin.x, origin.y + float(hoveredRow) * rowH), ImVec2(origin.x + width, origin.y + float(hoveredRow + 1) * rowH), style.rowHot, style.rounding);
+        draw.fillRect(ImVec2(origin.x, origin.y + float(hoveredRow) * style.rowHeight), ImVec2(origin.x + width, origin.y + float(hoveredRow + 1) * style.rowHeight), style.rowHot, style.rounding);
 
     // Links: from each step's parent, straight down its own lane, or curving out into a branch's.
     for (uint32_t id = 1; id < count; ++id) {
@@ -193,11 +184,11 @@ void HistoryPanel::draw()
         const ImVec2 a = at(p), b = at(id);
         const ImU32 col = tone(id);
         if (m_lane[p] == m_lane[id]) {
-            draw.line(a, b, col, line);
+            draw.line(a, b, col, style.line);
         } else {
-            const ImVec2 turn(b.x, a.y + rowH * 0.8f);
-            draw.bezier(a, ImVec2(b.x, a.y), turn, col, line);
-            draw.line(turn, b, col, line);
+            const ImVec2 turn(b.x, a.y + style.bend);
+            draw.bezier(a, ImVec2(b.x, a.y), turn, col, style.line);
+            draw.line(turn, b, col, style.line);
         }
     }
 
@@ -205,23 +196,23 @@ void HistoryPanel::draw()
     for (uint32_t id = first; id <= last; ++id) {
         const ImVec2 c = at(id);
         if (id == current) {
-            draw.fillCircle(c, ring, accent);
-            draw.fillCircle(c, dot, text);
+            draw.fillCircle(c, style.ring, style.here);
+            draw.fillCircle(c, style.dot, style.text);
         } else if (onPath[id]) {
-            draw.fillCircle(c, dot, accent);
+            draw.fillCircle(c, style.dot, style.here);
         } else if (onRedo[id]) {
-            draw.fillCircle(c, dot, style.hollow);
-            draw.strokeCircle(c, dot, ahead, line * 1.5f);
+            draw.fillCircle(c, style.dot, style.hollow);
+            draw.strokeCircle(c, style.dot, style.ahead, style.aheadRing);
         } else {
-            draw.fillCircle(c, dot * 0.85f, other);
+            draw.fillCircle(c, style.otherDot, style.other);
         }
         const HistoryStep& s = history.step(stepAt(id));
         const float ty = c.y - font * 0.5f;
-        draw.text(ImVec2(labelX, ty), id == current || onPath[id] ? text : dimText, s.label.c_str());
+        draw.text(ImVec2(labelX, ty), id == current || onPath[id] ? style.text : style.textDim, s.label.c_str());
         char num[16];
         std::snprintf(num, sizeof num, "%u", id);
         const float nw = ImGui::CalcTextSize(num).x;
-        draw.text(ImVec2(origin.x + numbersW - nw - style.numberPadding, ty), dimText, num);   // right-aligned in its column
+        draw.text(ImVec2(origin.x + numbersW - nw - style.numberPadding, ty), style.textDim, num);   // right-aligned in its column
     }
     ImGui::EndChild();
 }

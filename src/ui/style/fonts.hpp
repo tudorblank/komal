@@ -10,7 +10,6 @@ struct ImFont;
 namespace Fonts {
 
 void    load();
-ImFont* numbers();        // values in fields
 ImFont* graph();          // the graph's labels
 ImFont* graphNumbers();   // ... and its values
 

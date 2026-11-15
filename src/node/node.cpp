@@ -1,4 +1,4 @@
-#include "node.hpp"
+#include "node/node.hpp"
 
 #include <algorithm>
 #include <iterator>
@@ -119,7 +119,7 @@ bool NodeLinks::empty() const
 // ============================ NODE ============================
 Node::Node(Ports ports) : m_ports(ports)
 {
-    m_signals[int(NodeSignal::Dry)].scale[int(NodeChannel::A)] = 0.0f;   // dry is off by default
+    m_signals[size_t(NodeSignal::Dry)].scale[int(NodeChannel::A)] = 0.0f;   // dry is off by default
 }
 
 const Tile* Node::fetch(int tx, int ty, RenderCtx& ctx)
@@ -164,7 +164,7 @@ BoundsI Node::bounds() const
 bool Node::signalIsIdentity(NodeSignal s) const
 {
     for (int c = 0; c < kChannelCount; ++c)
-        if (m_signals[int(s)].scale[c] != 1.0f || m_links.masks[int(s)][c]) return false;
+        if (m_signals[size_t(s)].scale[c] != 1.0f || m_links.masks[int(s)][c]) return false;
     return true;
 }
 
@@ -172,13 +172,13 @@ void Node::setScale(GraphKey, NodeSignal sig, NodeChannel ch, float v)
 {
     if (!hasSignal(sig)) return;
     v = std::clamp(v, 0.0f, 1.0f);
-    float& slot = m_signals[int(sig)].scale[int(ch)];
+    float& slot = m_signals[size_t(sig)].scale[int(ch)];
     if (slot == v) return;
 
     // Turning Wet or Dry on/off changes bounds and footprint; anything else reshapes the same tiles.
-    const bool flips = ch == NodeChannel::A && (gainByte(slot) != 0) != (gainByte(v) != 0);
-    if (flips && sig != NodeSignal::Main) change([&] { slot = v; }, Evict::Output);
-    else changeKnown(footprint(), Bounds::Keep, Evict::Output, [&] { slot = v; });
+    const bool flips = ch == NodeChannel::A && signalOn(slot) != signalOn(v);
+    if (flips && sig != NodeSignal::Main) change([&] { slot = v; }, Evict::None);
+    else changeKnown(footprint(), Bounds::Keep, Evict::None, [&] { slot = v; });
 }
 
 // ---------------------------------------------------------------- links
@@ -227,7 +227,7 @@ void Node::link(GraphKey key, const NodePtr& source, const InputSlot& slot)
         TileSet dirty;
         at->addFootprint(dirty);
         source->addFootprint(dirty);
-        changeKnown(std::move(dirty), Bounds::Recompute, Evict::All, [&] {
+        changeKnown(dirty, Bounds::Recompute, Evict::Raw, [&] {
             at = source;
             layersEdited(LayerReplaced{ layer->index });
         });
@@ -242,13 +242,13 @@ void Node::link(GraphKey key, const NodePtr& source, const InputSlot& slot)
         TileSet dirty;
         source->addFootprint(dirty);
         const size_t at = std::min<size_t>(pos->at, layers.size());
-        changeKnown(std::move(dirty), Bounds::Recompute, Evict::All, [&] {
+        changeKnown(dirty, Bounds::Recompute, Evict::Raw, [&] {
             layers.insert(layers.begin() + std::ptrdiff_t(at), source);
             layersEdited(LayerInserted{ at });
         });
     } else if (const auto* m = slot.as<InputSlot::Mask>()) {
         NodePtr& held = m_links.masks[int(m->signal)][int(m->channel)];
-        if (held != source) changeKnown(footprint(), Bounds::Keep, Evict::Output, [&] { held = source; });
+        if (held != source) changeKnown(footprint(), Bounds::Keep, Evict::None, [&] { held = source; });
     }
 }
 
@@ -261,13 +261,13 @@ void Node::unlink(GraphKey, const InputSlot& slot)
         if (layer->index >= layers.size()) return;
         TileSet dirty;
         layers[layer->index]->addFootprint(dirty);
-        changeKnown(std::move(dirty), Bounds::Recompute, Evict::All, [&] {
+        changeKnown(dirty, Bounds::Recompute, Evict::Raw, [&] {
             layers.erase(layers.begin() + std::ptrdiff_t(layer->index));
             layersEdited(LayerRemoved{ layer->index });
         });
     } else if (const auto* m = slot.as<InputSlot::Mask>()) {
         NodePtr& held = m_links.masks[int(m->signal)][int(m->channel)];
-        if (held) changeKnown(footprint(), Bounds::Keep, Evict::Output, [&] { held = nullptr; });
+        if (held) changeKnown(footprint(), Bounds::Keep, Evict::None, [&] { held = nullptr; });
     }   // a new layer is a position: nothing feeds it
 }
 
@@ -283,7 +283,7 @@ void Node::moveLayer(GraphKey, size_t from, size_t to)
     TileSet dirty;
     for (TileKey k : moved) if (others.contains(k)) dirty.insert(k);
     movedLayerTiles(from, to, moved, dirty);
-    changeKnown(std::move(dirty), Bounds::Recompute, Evict::All, [&] {
+    changeKnown(dirty, Bounds::Recompute, Evict::Raw, [&] {
         NodePtr n = std::move(layers[from]);
         layers.erase(layers.begin() + std::ptrdiff_t(from));
         layers.insert(layers.begin() + std::ptrdiff_t(to), std::move(n));
@@ -384,21 +384,18 @@ void Node::receive(const Node& from, const TileSet& tiles, Incoming& in) const
 
 // ---------------------------------------------------------------- change propagation
 
-TileSet Node::change(const std::function<void()>& mutate, Evict e)
+void Node::change(const std::function<void()>& mutate, Evict e)
 {
     TileSet d = footprint();
     mutate();
-    TileSet after = footprint();
-    d.insert(after.begin(), after.end());
+    addFootprint(d);
     finishChange(d, Bounds::Recompute, e);
-    return d;
 }
 
-TileSet Node::changeKnown(TileSet dirty, Bounds b, Evict e, const std::function<void()>& mutate)
+void Node::changeKnown(const TileSet& dirty, Bounds b, Evict e, const std::function<void()>& mutate)
 {
     mutate();
     finishChange(dirty, b, e);
-    return dirty;
 }
 
 void Node::finishChange(const TileSet& d, Bounds b, Evict e)
@@ -420,11 +417,11 @@ void Node::takeDirty(const TileSet& tiles, Evict e)
     for (const auto& w : m_watches)
         if (auto watch = w.lock()) watch->add(tiles);
     std::erase_if(m_watches, [](const std::weak_ptr<TileWatch>& w) { return w.expired(); });
-    for (TileKey k : tiles) {
-        const auto p = TileUtils::unpackKey(k);
-        evictOutputTile(p.x, p.y);                    // always
-        if (e == Evict::All) evictRawTile(p.x, p.y);  // only when what it reads changed
-    }
+    if (e == Evict::Raw)   // only when what it reads changed
+        for (TileKey k : tiles) {
+            const auto p = TileUtils::unpackKey(k);
+            evictRawTile(p.x, p.y);
+        }
 }
 
 const Node::Downstream& Node::downstreamOrder()
@@ -504,7 +501,7 @@ void Node::emitDirty(const TileSet& tiles, Evict e)
         if (!nodes[i] || incoming[i].tiles.empty()) continue;
         Node& n = *nodes[i];
         const TileSet in = std::move(incoming[i].tiles);
-        n.takeDirty(in, incoming[i].raw ? Evict::All : Evict::Output);
+        n.takeDirty(in, incoming[i].raw ? Evict::Raw : Evict::None);
         send(n, in);
     }
 }
@@ -568,7 +565,7 @@ bool Node::planGains(NodeSignal sig, int tx, int ty, RenderCtx& ctx, Gain (&g)[4
 {
     const SignalChannels& s = signal(sig);
     for (int c = 0; c < kChannelCount; ++c) {
-        g[c].k = gainByte(s.scale[c]);
+        g[c].k = unitToByte(s.scale[c]);
         g[c].perPixel = nullptr;
         const NodePtr& maskNode = mask(sig, NodeChannel(c));
         if (g[c].k != 0 && maskNode) {
@@ -616,7 +613,7 @@ const Tile* Node::blendOver(const Tile* top, const Tile* bottom, RenderCtx& ctx)
 
 CompositorSettings stackSettings(const Node& n)
 {
-    const NodeSettings s = n.settings();
-    if (const auto* c = std::get_if<CompositorSettings>(&s)) return *c;
+    NodeSettings s = n.settings();
+    if (auto* c = std::get_if<CompositorSettings>(&s)) return std::move(*c);
     return {};
 }

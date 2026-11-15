@@ -1,7 +1,13 @@
-#include "checker.hpp"
+#include "ui/panels/canvas/items/checker.hpp"
 
 #include <cmath>
 #include <cstring>
+
+CheckerParams pictureChecker(float originX, float originY)
+{
+    const Style::CanvasStyle& style = Style::canvas();
+    return checkerParams(style.pictureCheckerA, style.pictureCheckerB, originX, originY, style.pictureCheckerCell);
+}
 
 void CheckerItem::setCellScale(float scale)
 {
@@ -21,17 +27,12 @@ bool CheckerItem::prepare(CanvasFrame& frame)
 
     // In target pixels: the origin moves with the camera, the square size is fixed on screen.
     const float pixelsPerPoint = frame.pixelsPerPoint();
-    CheckerParams u{};
     const Style::CanvasStyle& style = Style::canvas();
     const bool canvas = m_kind == Kind::Canvas;
-    const auto a = (canvas ? style.checkerA : style.pictureCheckerA).floats();
-    const auto b = (canvas ? style.checkerB : style.pictureCheckerB).floats();
     const float cell = (canvas ? style.checkerCell : style.pictureCheckerCell) * m_cellScale;
-    for (size_t i = 0; i < 3; ++i) { u.colorA[i] = a[i]; u.colorB[i] = b[i]; }
-    u.colorA[3] = u.colorB[3] = 1.0f;
-    u.origin[0] = frame.camera.pan.x * pixelsPerPoint;
-    u.origin[1] = frame.camera.pan.y * pixelsPerPoint;
-    u.cell      = std::max(1.0f, std::round(cell * pixelsPerPoint));
+    const CheckerParams u = checkerParams(canvas ? style.checkerA : style.pictureCheckerA, canvas ? style.checkerB : style.pictureCheckerB,
+                                          frame.camera.pan.x * pixelsPerPoint, frame.camera.pan.y * pixelsPerPoint,
+                                          std::max(1.0f, std::round(cell * pixelsPerPoint)));
     if (!m_dirty && std::memcmp(&u, &m_uploaded, sizeof u) == 0) return false;
     m_uniform.write(p.ctx.queue, &u, sizeof u);
     m_uploaded = u;

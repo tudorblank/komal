@@ -1,19 +1,18 @@
-#include "device.hpp"
+#include "gpu/device.hpp"
 #include "base/dev-switches.hpp"
 #include "base/log.hpp"
+#include "gpu/handles.hpp"
 
 #include <webgpu/wgpu.h>
 #include <atomic>
-#include <cstring>
-#include <cstdlib>
+#include <string_view>
+#include <vector>
 
 namespace {
 
-    void logSv(const char* tag, WGPUStringView m)
+    void logFailure(const char* what, WGPUStringView message)
     {
-        if (!m.data) return;
-        if (m.length == WGPU_STRLEN) Log::info("wgpu", "%s: %s", tag, m.data);
-        else Log::info("wgpu", "%s: %.*s", tag, int(m.length), m.data);
+        if (const std::string_view m = text(message); !m.empty()) Log::error("gpu", "%s: %.*s", what, int(m.size()), m.data());
     }
 
     struct AdapterRequest { WGPUAdapter adapter = nullptr; };
@@ -24,7 +23,7 @@ namespace {
         if (status == WGPURequestAdapterStatus_Success)
             static_cast<AdapterRequest*>(u1)->adapter = adapter;
         else
-            logSv("RequestAdapter failed", msg);
+            logFailure("RequestAdapter failed", msg);
     }
 
     void onDevice(WGPURequestDeviceStatus status, WGPUDevice device, WGPUStringView msg, void* u1, void*)
@@ -32,17 +31,17 @@ namespace {
         if (status == WGPURequestDeviceStatus_Success)
             static_cast<DeviceRequest*>(u1)->device = device;
         else
-            logSv("RequestDevice failed", msg);
+            logFailure("RequestDevice failed", msg);
     }
 
     void onUncapturedError(const WGPUDevice*, WGPUErrorType, WGPUStringView msg, void*, void*)
-    { logSv("error", msg); }
+    { logFailure("error", msg); }
     // Lost for good (a driver reset, a GPU removed): the app makes everything again. Releasing it
     // ourselves (Destroyed, InstanceDropped) isn't a loss.
     void onDeviceLost(const WGPUDevice*, WGPUDeviceLostReason reason, WGPUStringView msg, void* lost, void*)
     {
         if (reason == WGPUDeviceLostReason_Destroyed || reason == WGPUDeviceLostReason_InstanceDropped) return;
-        logSv("device lost", msg);
+        logFailure("device lost", msg);
         static_cast<std::atomic<bool>*>(lost)->store(true);
     }
     bool isSrgb(WGPUTextureFormat f)
@@ -109,10 +108,7 @@ bool GpuDevice::init(const SurfaceMaker& makeSurface, int pixelW, int pixelH)
             case WGPUAdapterType_CPU:           type = "CPU (SOFTWARE!)"; break;
             default: break;
         }
-        std::string dev(info.device.data ? info.device.data : "",
-                        info.device.data ? (info.device.length == WGPU_STRLEN
-                                            ? std::strlen(info.device.data) : info.device.length) : 0);
-        m_adapterInfo = dev + " | " + backend + " | " + type;
+        m_adapterInfo = std::string(text(info.device)) + " | " + backend + " | " + type;
         wgpuAdapterInfoFreeMembers(info);
     }
 
@@ -140,7 +136,7 @@ bool GpuDevice::init(const SurfaceMaker& makeSurface, int pixelW, int pixelH)
     for (size_t i = 0; i < caps.formatCount; ++i) {
         if (!isSrgb(caps.formats[i])) { m_format = caps.formats[i]; break; }
     }
-    m_supportedModes.assign(caps.presentModes, caps.presentModes + caps.presentModeCount);
+    const std::vector<WGPUPresentMode> supportedModes(caps.presentModes, caps.presentModes + caps.presentModeCount);
     wgpuSurfaceCapabilitiesFreeMembers(caps);
 
     // Present mode: Fifo (vsync), unless a developer switch asks for another (base/dev-switches).
@@ -150,7 +146,7 @@ bool GpuDevice::init(const SurfaceMaker& makeSurface, int pixelW, int pixelH)
         if      (dev.presentMode == "mailbox")      want = WGPUPresentMode_Mailbox;
         else if (dev.presentMode == "immediate")    want = WGPUPresentMode_Immediate;
         else if (dev.presentMode == "fifo_relaxed") want = WGPUPresentMode_FifoRelaxed;
-        for (WGPUPresentMode m : m_supportedModes)
+        for (WGPUPresentMode m : supportedModes)
             if (m == want) m_presentMode = want;
     }
     if (dev.frameLatency >= 1 && dev.frameLatency <= 3) m_frameLatency = uint32_t(dev.frameLatency);

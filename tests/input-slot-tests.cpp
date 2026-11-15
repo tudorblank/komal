@@ -16,5 +16,4 @@ TEST_CASE("text that isn't a slot is refused")
 {
     for (const char* bad : { "", "inputs", "layer:", "layer:x", "layer:-1", "new:2a", "mask:main", "mask:main.x", "mask:blur.a", "mask:.a" })
         CHECK_FALSE(InputSlot::parse(bad));
-    CHECK(InputSlot::valid("mask:dry.b"));
 }

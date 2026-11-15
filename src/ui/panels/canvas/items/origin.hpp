@@ -7,10 +7,8 @@
 
 class OriginItem : public CanvasItem {
 public:
-    OriginItem();   // in the canvas style's colour, read as it draws
+    OriginItem();   // in the canvas style's color, read as it draws
     ~OriginItem() override { releaseGpu(); }
-
-    void setArm(float points);   // from the centre to each end, on screen
 
     bool prepare(CanvasFrame& frame) override;
     void drawGpu(WGPURenderPassEncoder pass, CanvasFrame& frame) override;
@@ -18,5 +16,5 @@ public:
 
 private:
     RectItem m_horizontal, m_vertical;   // not in the scene: drawn through this item
-    float    m_arm = 8.0f;
+    static constexpr float kArm = 8.0f;   // from the centre to each end, points on screen
 };

@@ -1,8 +1,8 @@
 #pragma once
-// An artboard on the canvas: its rect's edge and its name above it. Its colour is in the picture
+// An artboard on the canvas: its rect's edge and its name above it. Its color is in the picture
 // (the master draws it); this shows where it is, even while it's transparent or hidden.
 
-#include "document/artboard.hpp"
+#include "project/artboard.hpp"
 #include "ui/panels/canvas/canvas-item.hpp"
 
 #include <string>

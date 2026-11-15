@@ -1,5 +1,6 @@
 #include "ui/panels/graph/internal/hit.hpp"
 #include "ui/panels/graph/minimap.hpp"
+#include "ui/panels/graph/internal/layout.hpp"
 #include "ui/panels/graph/internal/scene.hpp"
 
 #include <algorithm>
@@ -15,6 +16,21 @@ bool within(ImVec2 a, ImVec2 b, float r)
 float portReach(const GraphCamera& camera, float contentScale)
 {
     return std::max(HitReach::kPort, HitReach::kPortPx * contentScale / camera.scale());
+}
+
+// Its ports, widgets, boxes.
+GraphHit hitNodeItem(NodeId id, const NodeItem& item, ImVec2 p, float reach)
+{
+    ImRect around = item.bounds;
+    around.Expand(reach);
+    if (!around.Contains(p)) return {};
+    // Ports first: they straddle the box edges.
+    for (size_t i = 0; i < item.ports.size(); ++i)
+        if (within(p, item.ports[i].pos, reach)) return PortHit{ id, int(i) };
+    for (size_t i = 0; i < item.widgets.size(); ++i)
+        if (item.widgets[i].rect.Contains(p)) return WidgetHit{ id, int(i) };
+    if (item.bounds.Contains(p)) return NodeHit{ id };   // its boxes, and the gaps between them
+    return {};
 }
 
 }
@@ -51,20 +67,6 @@ ImVec2 insertPoint(const LinkCurve& c, ImVec2 mouse)
     return linkPoint(c, std::clamp(linkNearest(c, mouse), 0.06f, 0.94f));
 }
 
-GraphHit hitNodeItem(NodeId id, const NodeItem& item, ImVec2 p, float reach)
-{
-    ImRect around = item.bounds;
-    around.Expand(reach);
-    if (!around.Contains(p)) return {};
-    // Ports first: they straddle the box edges.
-    for (size_t i = 0; i < item.ports.size(); ++i)
-        if (within(p, item.ports[i].pos, reach)) return PortHit{ id, int(i) };
-    for (size_t i = 0; i < item.widgets.size(); ++i)
-        if (item.widgets[i].rect.Contains(p)) return WidgetHit{ id, int(i) };
-    if (item.bounds.Contains(p)) return NodeHit{ id };   // its boxes, and the gaps between them
-    return {};
-}
-
 GraphHit hitTest(const HitView& v, ImVec2 mouse)
 {
     if (const NodeItem* s = v.scene.item(v.pinned)) {
@@ -95,6 +97,19 @@ GraphHit hitTest(const HitView& v, ImVec2 mouse)
         if (d < bestDist) { bestDist = d; best = int(i); }
     }
     if (best >= 0) return LinkHit{ best };
+    return {};
+}
+
+LinkZone linkZoneAt(const NodeItem& item, ImVec2 p)
+{
+    if (item.stackArea) {
+        ImRect area = *item.stackArea;
+        area.Expand(ImVec2(0.0f, GraphLayout::kStackBleed));
+        if (area.Contains(p)) return { LinkZone::Kind::Stack };
+    }
+    for (const NodeItemChannelRow& row : item.channels)
+        if (row.rect.Contains(p)) return { LinkZone::Kind::Channel, &row };
+    if (!item.boxes.empty() && item.boxes.front().rect.Contains(p)) return { LinkZone::Kind::Body };
     return {};
 }
 

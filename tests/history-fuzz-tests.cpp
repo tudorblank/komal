@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <map>
-#include <random>
 #include <string>
 
 namespace {
@@ -37,7 +36,7 @@ std::string fingerprint(Workspace& p)
         if (const auto* m = std::get_if<MoveSettings>(&settings)) out += " move " + std::to_string(m->x) + "," + std::to_string(m->y);
         if (const auto* r = std::get_if<RasterSettings>(&settings)) out += " locks " + std::to_string(r->locked) + std::to_string(r->alphaLocked);
         for (int s = 0; s < kSignalCount; ++s)
-            for (int c = 0; c < kChannelCount; ++c) out += " " + std::to_string(Node::gainByte(n->signal(NodeSignal(s)).scale[c]));
+            for (int c = 0; c < kChannelCount; ++c) out += " " + std::to_string(unitToByte(n->signal(NodeSignal(s)).scale[c]));
         if (const auto* c = std::get_if<CompositorSettings>(&settings)) {
             for (NodeId id : c->muted) out += " muted " + std::to_string(uint32_t(id));
             for (const StackGroup& g : c->groups)
@@ -65,13 +64,11 @@ std::string fingerprint(Workspace& p)
     return out;
 }
 
-class Fuzzer {
+class Fuzzer : public RandomEdits {
 public:
-    Fuzzer(Workspace& p, uint32_t seed) : m_p(p), m_rng(seed) {}
+    Fuzzer(Workspace& p, uint32_t seed) : RandomEdits(seed), m_p(p) {}
 
-    int pick(int n) { return std::uniform_int_distribution<int>(0, n - 1)(m_rng); }
-    float unit() { return std::uniform_real_distribution<float>(0.0f, 1.0f)(m_rng); }
-    NodeId anyNode() { return m_p.nodes()[size_t(pick(int(m_p.nodes().size())))]->id(); }
+    NodeId anyNode() { return RandomEdits::anyNode(m_p); }
 
     // One random edit, as one step (it may change nothing: then there's no step).
     void edit()
@@ -79,18 +76,13 @@ public:
         Workspace& p = m_p;
         switch (pick(14)) {
         case 0: {
-            const NodeType type = NodeType(pick(4));
-            step(p, "Add", [&] { p.addNode(type, unit() * 500.0f, unit() * 500.0f, { .from = unit() < 0.5f ? anyNode() : kNoNodeId, .into = kNoNodeId, .slot = {} }); });
+            const float x = unit() * 500.0f, y = unit() * 500.0f;
+            addNode(p, x, y, 0.5f);
             break;
         }
-        case 1: {   // a link, wherever it may go
-            const NodeId from = anyNode(), to = anyNode();
-            const InputSlot slots[] = { InputSlot::input(), InputSlot::newLayer(uint32_t(pick(3))), InputSlot::stackLayer(uint32_t(pick(3))),
-                                        InputSlot::mask(NodeSignal(pick(3)), NodeChannel(pick(4))) };
-            const InputSlot slot = slots[pick(4)];
-            if (p.canConnect(from, to, slot)) step(p, "Connect", [&] { p.connect(from, to, slot); });
+        case 1:   // a link, wherever it may go
+            connect(p, true);
             break;
-        }
         case 2: {   // a link off
             const NodeId to = anyNode();
             const auto into = p.find(to)->links().all();
@@ -150,10 +142,11 @@ public:
         }
         case 10: {   // a layer muted, or shown again, in its compositor
             const NodeId id = anyNode();
-            const auto* c = dynamic_cast<const CompositorNode*>(p.find(id));
-            if (!c || c->layers().empty()) break;
-            const NodeId layer = c->layers()[size_t(pick(int(c->layers().size())))]->id();
-            const bool muted = !c->muted(*p.find(layer));
+            const Node* c = p.find(id);
+            const auto& layers = c->links().layers;
+            if (c->ports().inputs != InputShape::Stack || layers.empty()) break;
+            const NodeId layer = layers[size_t(pick(int(layers.size())))]->id();
+            const bool muted = !stackSettings(*c).mutes(layer);
             step(p, "Mute", [&] { p.setLayerMuted(id, layer, muted); });
             break;
         }
@@ -200,7 +193,6 @@ public:
     }
 
     Workspace& m_p;
-    std::mt19937 m_rng;
 };
 
 }

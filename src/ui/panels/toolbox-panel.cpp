@@ -1,18 +1,13 @@
-#include "toolbox-panel.hpp"
+#include "ui/panels/toolbox-panel.hpp"
 #include "command/actions.hpp"
 #include "ui/tools/tool-manager.hpp"
 #include "ui/render/skins.hpp"
 #include "ui/style/ui-style.hpp"
+#include "ui/widgets/widgets.hpp"
 
 #include <imgui.h>
-#include <imgui_internal.h>   // BeginViewportSideBar
 
-PanelInfo ToolboxPanel::info() const { return { Actions::ViewTools, "Toolbar", DockSlot::Toolbar }; }
-
-bool ToolboxPanel::init()
-{
-    return true;
-}
+PanelInfo ToolboxPanel::info() const { return { Actions::ViewToolbox, "Toolbox", DockSlot::Toolbar }; }
 
 void ToolboxPanel::draw()
 {
@@ -20,18 +15,10 @@ void ToolboxPanel::draw()
     ToolManager& tools = ui().tools;
     ActionRegistry& actions = ui().actions;
     const Style::ToolButtonStyle& style = Style::get().toolButton;
-    // A viewport side bar under the menu bar: the dockspace lays out below it.
     const float size = style.size, pad = style.padding;
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad * 2.0f, pad));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(pad, 0.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, style.bar);   // one header with the menu bar
-    const bool shown = ImGui::BeginViewportSideBar("##toolbar", ImGui::GetMainViewport(), ImGuiDir_Up, size + 2.0f * pad,
-                                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
-                                                   ImGuiWindowFlags_NoSavedSettings);
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar(3);
-    if (shown) {
+    // One band with the menu bar.
+    const Widgets::BarWindow bar(*this, size + 2.0f * pad, ImVec2(pad * 2.0f, pad), style.bar);
+    if (bar) {
         const Painter draw = Painter::window();
         for (const auto& t : tools.tools()) {
             ImGui::PushID(t.get());
@@ -43,8 +30,7 @@ void ToolboxPanel::draw()
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))   // the label is looked up only when shown
                 ImGui::SetTooltip("%s (%s)", t->name(), actions.shortcutLabel(t->pickAction()).c_str());   // as bound
             ImGui::PopID();
-            ImGui::SameLine();
+            ImGui::SameLine(0.0f, style.gap);
         }
     }
-    ImGui::End();   // a side bar is a window: always ended
 }

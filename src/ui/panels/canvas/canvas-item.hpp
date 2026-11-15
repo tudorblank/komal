@@ -12,10 +12,8 @@
 #include "base/clock.hpp"
 #include "ui/panels/canvas/fit.hpp"
 #include "ui/panels/canvas/pipelines.hpp"
-#include "document/canvas-camera.hpp"
+#include "project/canvas-camera.hpp"
 
-#include <algorithm>
-#include <cmath>
 #include <cstdint>
 
 class Painter;
@@ -38,7 +36,6 @@ public:
     const Target           target;   // prepare() may record its own passes into target.encoder
 
     // CPU time left for prepare() work this frame, shared by every item.
-    bool inBudget() const { return !m_budget.expired(); }
     const Deadline& budget() const { return m_budget; }
 
     float pixelsPerPoint() const { return target.viewW > 0.0f ? float(target.pixelW) / target.viewW : 1.0f; }
@@ -78,6 +75,8 @@ struct OverlayContext {
         const Vec2 s = camera.worldToScreen({ wx, wy });
         return { originX + s.x, originY + s.y };
     }
+    // Inclusive pixel bounds' edge: pixel-snapped, or a quad while the view is rotated.
+    void strokeBounds(const Painter& draw, const BoundsI& bounds, Color8 color, float thickness) const;
 };
 
 class CanvasItem {
@@ -86,8 +85,6 @@ public:
     virtual ~CanvasItem() = default;
     CanvasItem(const CanvasItem&) = delete;
     CanvasItem& operator=(const CanvasItem&) = delete;
-
-    CanvasScene* scene() const { return m_scene; }
 
     float z() const { return m_z; }
     void  setZ(float z);

@@ -1,5 +1,5 @@
 #include "ui/panels/graph/internal/scene.hpp"
-#include "document/workspace.hpp"
+#include "project/workspace.hpp"
 
 #include <algorithm>
 
@@ -10,12 +10,6 @@ void GraphScene::init(const Workspace& workspace)
     // The ones made before it listened: every item first, then the links between them.
     for (const NodePtr& n : workspace.nodes()) addItem(n->id(), false);
     for (const NodePtr& n : workspace.nodes()) addLinksInto(n->id());
-}
-
-void GraphScene::shutdown()
-{
-    m_workspaceEvents.disconnect();
-    m_workspace = nullptr;
 }
 
 const NodeItem* GraphScene::item(NodeId id) const

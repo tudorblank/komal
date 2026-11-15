@@ -1,5 +1,5 @@
 #include "ui/panels/graph/minimap.hpp"
-#include "document/workspace.hpp"
+#include "project/workspace.hpp"
 #include "ui/panels/graph/internal/layout.hpp"
 #include "ui/style/graph-style.hpp"
 #include "ui/panels/graph/internal/painter.hpp"
@@ -18,7 +18,7 @@ constexpr float kMinW = 60.0f, kMaxW = 200.0f, kMinH = 45.0f, kMaxH = 150.0f;   
 
 }
 
-void GraphMinimap::layout(const Items& items, NodeId skip, ImVec2 canvasMin, ImVec2 canvasMax, const ImRect& avoid, float uiScale)
+void GraphMinimap::layout(const GraphScene::Items& items, NodeId skip, ImVec2 canvasMin, ImVec2 canvasMax, const ImRect& avoid, float uiScale)
 {
     m_items  = &items;
     m_skip    = skip;
@@ -90,7 +90,7 @@ void GraphMinimap::paint(const Painter& draw, const Workspace& workspace, const 
     for (const Edge& e : edges)
         draw.line(toMap(e.from), toMap(e.to), e.mask ? colors().mapMaskEdge : colors().mapEdge, 1.0f);
 
-    // Each node as a little node: its box, its header band in its colour.
+    // Each node as a little node: its box, its header band in its color.
     const NodeId hovered = hoverable && m_rect.Contains(mouse) ? nodeAt(mouse) : kNoNodeId;
     for (const auto& [id, s] : *m_items) {
         if (id == m_skip) continue;

@@ -1,4 +1,5 @@
-#include "document/graph-state.hpp"
+#include "project/fits.hpp"
+#include "project/graph-state.hpp"
 #include "node/node-kinds.hpp"
 #include "helpers.hpp"
 
@@ -55,7 +56,7 @@ TEST_CASE("undo and redo restore the graph and its settings")
     CHECK(p.undo());
     CHECK(p.find(s.paint)->signal(NodeSignal::Main).scale[0] == 1.0f);
     CHECK(p.undo());
-    CHECK(static_cast<const MoveNode*>(p.find(move))->offsetX() == 0);
+    CHECK(std::get<MoveSettings>(p.find(move)->settings()).x == 0);
     CHECK(p.undo());
     CHECK_FALSE(p.find(move));
     CHECK_FALSE(p.undo());   // at the start
@@ -63,7 +64,7 @@ TEST_CASE("undo and redo restore the graph and its settings")
     REQUIRE(p.find(move));
     CHECK(p.inputAt(move, InputSlot::input())->id() == s.background);   // back as itself, linked
     CHECK(p.goToHistory(StepId(3)));
-    CHECK(static_cast<const MoveNode*>(p.find(move))->offsetX() == 30);
+    CHECK(std::get<MoveSettings>(p.find(move)->settings()).x == 30);
     CHECK(p.find(s.paint)->signal(NodeSignal::Main).scale[0] == 0.25f);
 }
 
@@ -89,7 +90,7 @@ TEST_CASE("a graph snapshot restores what changed since")
     CHECK(p.undo());
     const Node& m = *p.find(move);
     CHECK(m.x() == 0.0f);
-    CHECK(static_cast<const MoveNode&>(m).offsetX() == 0);
+    CHECK(std::get<MoveSettings>(m.settings()).x == 0);
     CHECK_FALSE(static_cast<const RasterRootNode*>(p.find(s.background))->locked());
     CHECK_FALSE(p.inputAt(move, InputSlot::input()));
 }
@@ -228,8 +229,8 @@ TEST_CASE("a dragged offset is the edit's alone: the Move keeps its own until ap
     REQUIRE(p.connect(s.background, move, InputSlot::input()));
     const BoundsI before = p.find(move)->bounds();
     CHECK(p.previewEdit(OffsetEdit{ move, 100, 0 }));
-    CHECK(static_cast<const MoveNode*>(p.find(move))->offsetX() == 0);
-    CHECK(p.find(move)->bounds() == before);                  // the document waits, bounds too
+    CHECK(std::get<MoveSettings>(p.find(move)->settings()).x == 0);
+    CHECK(p.find(move)->bounds() == before);                  // the project waits, bounds too
     const EditPreview* pv = p.preview();
     REQUIRE(pv);
     const OffsetEdit* dragged = pv->offsetOf(move);
@@ -237,11 +238,11 @@ TEST_CASE("a dragged offset is the edit's alone: the Move keeps its own until ap
     CHECK(dragged->x == 100);
     CHECK_FALSE(pv->offsetOf(s.background));
     p.applyPreview();
-    CHECK(static_cast<const MoveNode*>(p.find(move))->offsetX() == 100);
+    CHECK(std::get<MoveSettings>(p.find(move)->settings()).x == 100);
     CHECK(p.find(move)->bounds() == before.offsetBy(100, 0));
 }
 
-TEST_CASE("an edit that doesn't fit the document is refused")
+TEST_CASE("an edit that doesn't fit the project is refused")
 {
     StarterWorkspace s;
     Workspace& p = s.workspace;
@@ -319,9 +320,9 @@ TEST_CASE("links into a node: inputs, layers and masks, each with its slot")
     REQUIRE(layers.size() == 2);
     CHECK(layers[1].second == InputSlot::stackLayer(1));
     InputSlot slot;
-    CHECK(p.preferredInput(s.master, slot));
+    CHECK(Links::preferredInput(*p.find(s.master), slot));
     CHECK(slot == InputSlot::newLayer(2));
-    CHECK_FALSE(p.preferredInput(s.paint, slot));   // a raster takes no input
+    CHECK_FALSE(Links::preferredInput(*p.find(s.paint), slot));   // a raster takes no input
 }
 
 TEST_CASE("deleting a chain heals through every deleted node with one input")
@@ -373,7 +374,7 @@ TEST_CASE("an imported image is part of its step: undo takes it away, redo bring
     StarterWorkspace s;
     Workspace& p = s.workspace;
     TileGrid tiles;
-    TileEdit::fill(tiles.writeOrCreateTile(10, 10), RGBA{ 10, 20, 30, 255 });
+    fillTile(tiles.writeOrCreateTile(10, 10), RGBA{ 10, 20, 30, 255 });
     NodeId imported = kNoNodeId;
     step(p, "Import", [&] { imported = p.importTiles(tiles, "photo", {}); });
     REQUIRE(p.find(imported));
@@ -546,4 +547,18 @@ TEST_CASE("history steps deleted: the rest restore exactly; the current one move
     REQUIRE(p.deleteHistory(old));                      // all but Start and the last
     CHECK(p.history().size() == 2);
     CHECK(p.pixelBytes().history < overpainted);
+}
+
+TEST_CASE("a name is refused if it's empty or too long for a .komal file to hold")
+{
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
+    CHECK_FALSE(p.setNodeLabel(s.paint, ""));
+    CHECK_FALSE(p.setNodeLabel(s.paint, std::string(kMaxName + 1, 'a')));
+    CHECK(p.setNodeLabel(s.paint, std::string(kMaxName, 'a')));
+    const ArtboardId board = p.addArtboard({ 0, 0, 99, 99 });
+    REQUIRE(board != kNoArtboard);
+    Artboard a = *p.artboard(board);
+    a.name = std::string(kMaxName + 1, 'a');
+    CHECK_FALSE(p.setArtboard(a));
 }

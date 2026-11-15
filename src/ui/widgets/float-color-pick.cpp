@@ -2,6 +2,7 @@
 #include "ui/render/painter.hpp"
 #include "ui/render/skins.hpp"
 #include "ui/style/ui-style.hpp"
+#include "ui/widgets/hsv.hpp"
 #include "ui/widgets/widgets.hpp"
 
 #include <imgui.h>
@@ -9,21 +10,10 @@
 #include <cmath>
 #include <utility>
 
-namespace {
-
-ImU32 hsv(float h, float s, float v, float a = 1.0f)
-{
-    float r, g, b;
-    ImGui::ColorConvertHSVtoRGB(h, s, v, r, g, b);
-    return ImGui::ColorConvertFloat4ToU32(ImVec4(r, g, b, a));
-}
-
-}
-
 void FloatColorPick::open(Color8 color)
 {
     const auto f = color.floats();
-    ImGui::ColorConvertRGBtoHSV(f[0], f[1], f[2], m_h, m_s, m_v);
+    Hsv::follow(f.data(), m_h, m_s, m_v);
     m_a = f[3];
     m_pending = true;
 }
@@ -43,7 +33,7 @@ FloatColorPick::Result FloatColorPick::draw(const char* id)
 
     // The square: saturation across, brightness down.
     const ImVec2 p = ImGui::GetCursorScreenPos();
-    const ImVec2 size(width, std::round(width * 0.7f));
+    const ImVec2 size(width, std::round(width * style.floatSquare));
     ImGui::InvisibleButton("##square", size);
     if (ImGui::IsItemActive()) {
         const ImVec2 mouse = ImGui::GetIO().MousePos;
@@ -51,18 +41,18 @@ FloatColorPick::Result FloatColorPick::draw(const char* id)
         m_v = 1.0f - std::clamp((mouse.y - p.y) / size.y, 0.0f, 1.0f);
     }
     finished();
-    Skin::colorSquare(Painter::window(), style, p, ImVec2(p.x + size.x, p.y + size.y), hsv(m_h, 1.0f, 1.0f), m_s, m_v, style.squareMarkerMin + 1.0f);
+    Skin::colorSquare(Painter::window(), style, p, ImVec2(p.x + size.x, p.y + size.y), Hsv::packed(m_h, 1.0f, 1.0f), m_s, m_v, style.floatMarker);
 
     // Hue and alpha: [letter] [gradient].
     const float track = width - m.shortLabelWidth - m.spacing;
-    ImU32 hue[7];
-    for (int i = 0; i < 7; ++i) hue[i] = hsv(float(i) / 6.0f, 1.0f, 1.0f);
+    ImU32 hue[Hsv::kHueStops];
+    Hsv::hueStops(hue);
     rowLabel("H", m.shortLabelWidth);
-    gradientSlider("##hue", m_h, hue, 7, track);
+    gradientSlider("##hue", m_h, hue, Hsv::kHueStops, track);
     finished();
-    // A colour picked while it's fully see-through: solid, so it shows.
+    // A color picked while it's fully see-through: solid, so it shows.
     if (m_a == 0.0f && (m_h != h0 || m_s != s0 || m_v != v0)) m_a = 1.0f;
-    const ImU32 alpha[2] = { hsv(m_h, m_s, m_v, 0.0f), hsv(m_h, m_s, m_v, 1.0f) };   // see-through -> solid
+    const ImU32 alpha[2] = { Hsv::packed(m_h, m_s, m_v, 0.0f), Hsv::packed(m_h, m_s, m_v, 1.0f) };   // see-through -> solid
     rowLabel("A", m.shortLabelWidth);
     gradientSlider("##alpha", m_a, alpha, 2, track);
     finished();
@@ -71,11 +61,7 @@ FloatColorPick::Result FloatColorPick::draw(const char* id)
     float rgb[3];
     ImGui::ColorConvertHSVtoRGB(m_h, m_s, m_v, rgb[0], rgb[1], rgb[2]);
     if (hexField("##hex", rgb, width - m.fieldWidth - m.spacing)) {
-        float h, s, v;
-        ImGui::ColorConvertRGBtoHSV(rgb[0], rgb[1], rgb[2], h, s, v);
-        if (v > 0.0f && s > 0.0f) m_h = h;   // grey or black has no hue: keep the one it had
-        if (v > 0.0f) m_s = s;
-        m_v = v;
+        Hsv::follow(rgb, m_h, m_s, m_v);
         if (m_a == 0.0f) m_a = 1.0f;          // typed while fully see-through: solid
         result.done = true;
     }

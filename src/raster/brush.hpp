@@ -26,10 +26,10 @@ struct BrushParams {
     float         flow      = 1.0f;    // coverage each dab adds (builds up within the stroke)
     float         spacing   = 0.15f;   // distance between dabs, as a fraction of the diameter
     bool          antialias = true;    // off: hard pixel edges (pixel art; diameter 1 = single pixels)
-    Color8        color     = { 255, 255, 255, 255 };   // straight (as from a colour picker)
+    Color8        color     = { 255, 255, 255, 255 };   // straight (as from a color picker)
     uint8_t       opacity   = 255;     // applied once to the whole stroke
     CompositeMode mode      = CompositeMode::Over;      // Over paints, Erase erases
-    bool          keepAlpha = false;   // lock transparency: colour changes, alpha never (Erase does nothing)
+    bool          keepAlpha = false;   // lock transparency: color changes, alpha never (Erase does nothing)
     bool          pressureSize = true;    // pressure scales the diameter
     bool          pressureFlow = false;   // pressure scales the flow
 
@@ -69,7 +69,7 @@ private:
     };
 
     int   sizeLevel(float pressure) const;
-    float diameterAt(float pressure) const;
+    float diameterOf(int level) const;   // a size level's dab diameter
     const DabShape& dabShape(int level);
     void  stampDab(float cx, float cy, float pressure);
     float coverage(float distance, float diameter) const;   // 0..1 at a pixel centre this far from the dab centre
@@ -77,7 +77,7 @@ private:
     BrushParams m_params;
     std::vector<std::unique_ptr<DabShape>> m_shapes;   // by size level
     uint8_t  m_flowK = 0;
-    RGBA     m_color{};          // premultiplied stroke colour
+    RGBA     m_color{};          // premultiplied stroke color
     TileGrid m_scratch;          // the stroke so far
     TileSet  m_dirty;
     StrokePoint m_last;

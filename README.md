@@ -69,7 +69,7 @@ The source folders are layers, lowest first. A folder only includes the ones bel
 | `src/raster` | Pixels, tiles, tile grids, brush strokes, tiles as compressed binary |
 | `src/node` | The node graph: nodes, signals, masks, rendering |
 | `src/command` | The actions that input and menus trigger |
-| `src/document` | The workspace (nodes, rasters, history), the open documents, `.komal` files, and their actions |
+| `src/project` | The workspace (nodes, rasters, history), the open projects, `.komal` files, and their actions |
 | `src/gpu` | The GPU: device, buffers, textures, render passes |
 | `src/ui` | The interface: its look (`style`), drawing (`render`), controls (`widgets`), panels and tools |
 | `src/app` | The window, the main loop, startup |
@@ -78,9 +78,8 @@ The source folders are layers, lowest first. A folder only includes the ones bel
 
 The code's words for what you work on:
 
-- **Workspace** (`document/workspace.hpp`): everything one piece of work holds: its nodes and their pixels, its history, its canvas view. Edited only through actions.
-- **Document** (`document/document.hpp`): one open workspace, with its own actions and its file. The app holds the open ones (`Documents`); each is a tab.
-- **Project**: what a user calls a `.komal` file. In the code it's only ever the file (`document/workspace-file.hpp`), never an object.
+- **Workspace** (`project/workspace.hpp`): everything one piece of work holds: its nodes and their pixels, its history, its canvas view. Edited only through actions.
+- **Project** (`project/project.hpp`): one open workspace, with its own actions and its file, a `.komal` (`project/workspace-file.hpp`). The app holds the open ones (`ProjectsManager`, `project/projects-manager.hpp`); each is a tab.
 
 ## Credits
 

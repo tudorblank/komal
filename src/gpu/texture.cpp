@@ -6,7 +6,7 @@
 
 bool GpuTexture::create(WGPUDevice device, const Desc& desc)
 {
-    reset();
+    release();
     WGPUTextureDescriptor td{};
     td.label         = sv(desc.label);
     td.dimension     = WGPUTextureDimension_2D;
@@ -20,7 +20,7 @@ bool GpuTexture::create(WGPUDevice device, const Desc& desc)
     if (m_texture) m_view.reset(wgpuTextureCreateView(m_texture, nullptr));
     const std::string what = std::string(desc.label) + ": a " + std::to_string(desc.width) + "x" + std::to_string(desc.height) + " texture";
     if (scope.failed(what.c_str()) || !m_view) {   // out of memory, or too big: what it was for shows nothing
-        reset();
+        release();
         return false;
     }
     m_width  = desc.width;
@@ -28,7 +28,7 @@ bool GpuTexture::create(WGPUDevice device, const Desc& desc)
     return true;
 }
 
-void GpuTexture::reset()
+void GpuTexture::release()
 {
     m_view.reset();
     m_texture.reset();

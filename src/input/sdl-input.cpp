@@ -77,6 +77,7 @@ void SdlInput::beginFrame()
     if (!m_consumed) return;   // the last frame wasn't drawn: its input waits for the next one
     m_frame.pointer.clear();
     m_frame.keys.clear();
+    m_frame.wheelX = m_frame.wheelY = 0.0f;
     m_consumed = false;
 }
 
@@ -105,7 +106,6 @@ void SdlInput::push(PointerEvent ev)
             return;
         }
     }
-    m_frame.lastDevice = ev.device;
     m_frame.pointer.push_back(ev);
 }
 
@@ -135,7 +135,6 @@ void SdlInput::handle(const SDL_Event& e)
         k.mods   = keyMods(e.key.mod);
         k.down   = e.key.down;
         k.repeat = e.key.repeat;
-        k.timeNs = e.key.timestamp;
         m_frame.keys.push_back(k);
         // From SDL's keyboard state: an event's `mod` can predate its own key (Ctrl alone).
         m_frame.mods = keyMods(SDL_GetModState());
@@ -169,6 +168,10 @@ void SdlInput::handle(const SDL_Event& e)
         push(ev);
         break;
     }
+    case SDL_EVENT_MOUSE_WHEEL:
+        m_frame.wheelX -= e.wheel.x;
+        m_frame.wheelY += e.wheel.y;
+        break;
     // ---- pen
     case SDL_EVENT_PEN_PROXIMITY_IN:
         pen.present = true;

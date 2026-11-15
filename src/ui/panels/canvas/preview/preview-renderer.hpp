@@ -19,7 +19,7 @@
 // leaf pass whose texture already shows it is skipped.
 
 #include "ui/panels/canvas/canvas-item.hpp"
-#include "document/preview-plan.hpp"
+#include "project/preview-plan.hpp"
 #include "ui/panels/canvas/tiles/atlas.hpp"
 #include "gpu/texture.hpp"
 
@@ -130,6 +130,6 @@ private:
     UniformPool m_cameras;                // atlas pipeline group 0, per leaf drawn
     UniformPool m_signalParams;
     UniformPool m_strokeParams;
-    UniformPool m_fills;                  // a fill's rect and colour
+    UniformPool m_fills;                  // a fill's rect and color
     GpuTexture  m_empty;                  // 1x1 transparent, for unused texture slots
 };

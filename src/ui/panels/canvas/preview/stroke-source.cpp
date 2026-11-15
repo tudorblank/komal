@@ -1,5 +1,5 @@
 #include "ui/panels/canvas/preview/stroke-source.hpp"
-#include "document/workspace.hpp"
+#include "project/workspace.hpp"
 
 const Tile* StrokeSource::tile(int tx, int ty, RenderCtx&)
 {

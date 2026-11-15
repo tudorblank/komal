@@ -27,4 +27,37 @@ constexpr float kRoomH      = 14.0f;
 constexpr float kIconSize   = 14.0f;
 constexpr float kGrid       = 32.0f;
 
+// inside a node's rows
+constexpr float kStackInset     = 6.0f;    // a stack's rows inside the node's edges (their ports on the edge)
+constexpr float kPropertyPad    = 4.0f;    // above and below a node's property rows
+constexpr float kStackPad       = 4.0f;    // ... a stack's rows
+constexpr float kSignalsPad     = 3.0f;    // ... the signals box's sections
+constexpr float kSectionInset   = 4.0f;    // a section's fold widget inside the node's edges
+constexpr float kIoLabelInset   = 4.0f;    // "Input" / "Output" this far past kPad
+constexpr float kLockGap        = 6.0f;    // between the lock and the alpha lock
+constexpr float kArrowSize      = 7.0f;    // a section's or an artboard's fold arrow
+constexpr float kPropertyLabelW = 56.0f;   // a property's label, before its value
+constexpr float kValueInset     = 2.0f;    // a value inside its row, top and bottom
+constexpr float kTrackLeft      = 16.0f;   // a channel's slider track from the node's left edge (its mask port there)
+constexpr float kTrackRight     = 50.0f;   // ... and from its right edge (the value and the channel's letter there)
+constexpr float kTrackInset     = 3.0f;    // ... inside its row, top and bottom
+constexpr float kTrackReach     = 5.0f;    // the track's widget, past each end of it
+constexpr float kRowEndInset    = 2.0f;    // the channel value's widget, before the node's right edge
+constexpr float kSectionArrowX  = 12.0f;   // a section's arrow centre, from its left
+constexpr float kSectionLabelX  = 21.0f;   // ... its name
+constexpr float kChannelValueX  = 20.0f;   // a channel row's value ends this far from its right ...
+constexpr float kChannelLetterX = 13.0f;   // ... its letter starts this far
+constexpr float kRowPad         = 6.0f;    // a stack row's content ends this far before its right edge
+constexpr float kChipW          = 46.0f;   // a layer row's blend chip, at its right
+constexpr float kChipHalfH      = 8.0f;
+constexpr float kChipGap        = 4.0f;    // a layer's name stops this far before the chip
+constexpr float kRowNameGap     = 6.0f;    // ... starts this far after its thumbnail
+constexpr float kArtboardNameGap = 7.0f;   // an artboard's name after its color
+constexpr float kLayerEyeX      = 6.0f;    // a layer row's eye from its left
+constexpr float kLayerThumbGap  = 5.0f;    // ... its thumbnail after the eye
+constexpr float kLayerThumbInset = 3.0f;   // ... and inside the row, top and bottom
+constexpr float kArtboardFoldX  = 3.0f;    // an artboard row's fold arrow from its left
+constexpr float kArtboardEyeGap = 4.0f;    // ... its eye after the arrow
+constexpr float kArtboardColorGap = 6.0f;  // ... its color after the eye
+
 }

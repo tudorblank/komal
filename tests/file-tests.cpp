@@ -1,5 +1,5 @@
 #include "base/file.hpp"
-#include "document/image-load.hpp"
+#include "project/image-load.hpp"
 
 #include <doctest/doctest.h>
 #include <filesystem>
@@ -27,7 +27,7 @@ std::vector<uint8_t> tga(uint16_t w, uint16_t h, const std::vector<uint8_t>& bgr
 
 }
 
-TEST_CASE("files: a path that isn't ASCII reads and writes, a missing one says why")
+TEST_CASE("files: a path that isn't ASCII reads and writes, a missing one says what went wrong")
 {
     const std::string path = scratchDir() + "/fïle.txt";
     std::string error;
@@ -39,6 +39,16 @@ TEST_CASE("files: a path that isn't ASCII reads and writes, a missing one says w
     CHECK(File::stem(path) == "fïle");
     CHECK_FALSE(File::read(scratchDir() + "/none.txt", bytes, error));
     CHECK_FALSE(error.empty());
+}
+
+TEST_CASE("files: an extension matches in any case, and only the last one counts")
+{
+    CHECK(File::hasExtension("poster.komal", ".komal"));
+    CHECK(File::hasExtension("dir/Poster.KOMAL", ".komal"));
+    CHECK(File::hasExtension("a.b.toml", ".TOML"));
+    CHECK_FALSE(File::hasExtension("poster.komal.bak", ".komal"));
+    CHECK_FALSE(File::hasExtension("poster", ".komal"));
+    CHECK_FALSE(File::hasExtension("komal", ".komal"));
 }
 
 TEST_CASE("an image file decodes premultiplied; one too big is refused before decoding")

@@ -16,7 +16,7 @@ public:
     };
 
     bool create(WGPUDevice device, const Desc& desc);   // replaces what it held; false on failure (logged)
-    void reset();
+    void release();
 
     WGPUTexture     texture() const { return m_texture; }
     WGPUTextureView view()    const { return m_view; }

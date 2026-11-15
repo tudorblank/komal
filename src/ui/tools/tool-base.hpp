@@ -2,7 +2,7 @@
 // Canvas tools (Photoshop style): the Toolbox picks one, Tool Properties shows its settings, the
 // canvas hands it the pointer. A tool draws nothing on the canvas itself; what it changes shows
 // through the workspace: a stroke, or the canvas camera (the hand). It changes the workspace and its
-// own settings only through actions: the document's and the canvas's (document/document-actions)
+// own settings only through actions: the project's and the canvas's (project/project-actions)
 // and its own, which it registers itself (registerActions). Picking it is ToolManager's, by its
 // pickAction().
 
@@ -12,8 +12,6 @@
 #include "ui/render/painter.hpp"
 
 #include <imgui.h>
-#include <cctype>
-#include <functional>
 #include <span>
 #include <string>
 #include <utility>
@@ -21,7 +19,7 @@
 class Workspace;
 class ToolManager;
 
-// The colours tools share: the primary paints, the secondary waits; X swaps them.
+// The colors tools share: the primary paints, the secondary waits; color.swap swaps them.
 struct ToolColors {
     float foreground[4] = { 1.0f, 1.0f, 1.0f, 1.0f };   // primary, straight alpha
     float background[4] = { 0.0f, 0.0f, 0.0f, 1.0f };   // secondary
@@ -42,12 +40,9 @@ struct CanvasPointer {
 struct CanvasInput {
     const Workspace&  workspace;
     ActionRegistry& actions;
-    Vec2 mouse;      // where the pointer is now, viewport-local points
-    Vec2 world;      // ... in canvas pixels
     // Every pointer event of the frame, in order, while the canvas has the pointer or the tool is busy.
     std::span<const CanvasPointer> pointer;
     const InputFrame& input;   // the frame as a whole (pen state)
-    bool hovered;    // the mouse is over the canvas
     bool active;     // a button went down on the canvas and is held
 };
 
@@ -55,7 +50,6 @@ struct CanvasInput {
 struct ToolContext {
     const Workspace&  workspace;   // to read (the canvas camera too): changes go through actions
     ActionRegistry& actions;
-    ToolManager&    tools;
 };
 
 class Tool {

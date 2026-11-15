@@ -33,5 +33,29 @@ struct Color8 {
 
 constexpr Color8 grey8(uint8_t v, uint8_t a = 255) { return { v, v, v, a }; }
 
-// packed colour (ImU32) with its alpha replaced
-constexpr uint32_t withAlpha(uint32_t packed, uint8_t alpha) { return (packed & 0x00FFFFFFu) | uint32_t(alpha) << 24; }
+// a hex digit's value, either case; -1 if it isn't one
+constexpr int hexDigit(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return -1;
+}
+
+// "#RRGGBB" as an opaque color, worked out while compiling: a typo is a build error
+//   constexpr Color8 sky = hex("#8CB4F5");
+consteval Color8 hex(const char (&text)[8])
+{
+    const auto digit = [](char c) {
+        const int v = hexDigit(c);
+        if (v < 0) throw "not a hex digit";
+        return v;
+    };
+    if (text[0] != '#') throw "a color starts with #";
+    const auto byte = [&](int at) { return uint8_t(digit(text[at]) * 16 + digit(text[at + 1])); };
+    return { byte(1), byte(3), byte(5), 255 };
+}
+
+// true white and black, never themed: a picker's corners, a marker's inner ring
+constexpr Color8 kPureWhite = grey8(255);
+constexpr Color8 kPureBlack = grey8(0);

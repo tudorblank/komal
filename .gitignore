@@ -1,6 +1,7 @@
 ref/
 build/
 .cache/
+.idea/
 compile_commands.json
 imgui.ini
 node-editor.json

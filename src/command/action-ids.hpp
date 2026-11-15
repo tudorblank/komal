@@ -18,7 +18,7 @@ private:
 
 namespace Actions {
 
-// ---- the document (document/document-actions)
+// ---- the project (project/project-actions)
 inline constexpr ActionId EditUndo{ "edit.undo" };
 inline constexpr ActionId EditRedo{ "edit.redo" };
 inline constexpr ActionId HistoryGoTo{ "history.goTo" };
@@ -48,7 +48,7 @@ inline constexpr ActionId MoveScrub{ "move.scrub" };
 inline constexpr ActionId ImageImport{ "image.import" };
 inline constexpr ActionId BrushStroke{ "brush.stroke" };
 
-// ---- what views share, kept in the workspace (document/document-actions): never undone
+// ---- what views share, kept in the workspace (project/project-actions): never undone
 inline constexpr ActionId SelectionSet{ "selection.set" };
 inline constexpr ActionId CanvasViewport{ "canvas.viewport" };
 inline constexpr ActionId CanvasPan{ "canvas.pan" };
@@ -58,25 +58,26 @@ inline constexpr ActionId CanvasCenterOn{ "canvas.centerOn" };
 inline constexpr ActionId CanvasFrame{ "canvas.frame" };
 inline constexpr ActionId CanvasFrameAll{ "canvas.frameAll" };
 
-// ---- the open documents (document/documents-actions): logged, never undone
-inline constexpr ActionId DocNew{ "doc.new" };
-inline constexpr ActionId DocClose{ "doc.close" };
-inline constexpr ActionId DocActivate{ "doc.activate" };
-inline constexpr ActionId DocSave{ "doc.save" };
-inline constexpr ActionId DocOpen{ "doc.open" };
+// ---- the open projects (project/projects-manager-actions): logged, never undone
+inline constexpr ActionId ProjectNew{ "project.new" };
+inline constexpr ActionId ProjectClose{ "project.close" };
+inline constexpr ActionId ProjectActivate{ "project.activate" };
+inline constexpr ActionId ProjectSave{ "project.save" };
+inline constexpr ActionId ProjectOpen{ "project.open" };
 
 // ---- the app (ui/app-actions)
 inline constexpr ActionId AppQuit{ "app.quit" };
 inline constexpr ActionId FileImport{ "file.import" };
-inline constexpr ActionId FileClose{ "file.close" };   // asks first if it's unsaved, then doc.close
-inline constexpr ActionId FileOpen{ "file.open" };     // the OS's dialog, then doc.open
-inline constexpr ActionId FileSave{ "file.save" };     // doc.save to its file, else file.saveAs
-inline constexpr ActionId FileSaveAs{ "file.saveAs" }; // the OS's dialog, then doc.save there
+inline constexpr ActionId FileClose{ "file.close" };   // asks first if it's unsaved, then project.close
+inline constexpr ActionId FileOpen{ "file.open" };     // the OS's dialog, then project.open
+inline constexpr ActionId FileSave{ "file.save" };     // project.save to its file, else file.saveAs
+inline constexpr ActionId FileSaveAs{ "file.saveAs" }; // the OS's dialog, then project.save there
+inline constexpr ActionId DialogCancel{ "dialog.cancel" };   // polled: the dialog in front closes, as if cancelled
 inline constexpr ActionId ViewResetLayout{ "view.resetLayout" };
 inline constexpr ActionId ViewCanvas{ "view.canvas" };   // each panel's toggle (PanelInfo::toggle)
 inline constexpr ActionId ViewGraph{ "view.graph" };
-inline constexpr ActionId ViewTools{ "view.tools" };
-inline constexpr ActionId ViewDocuments{ "view.documents" };
+inline constexpr ActionId ViewToolbox{ "view.toolbox" };
+inline constexpr ActionId ViewProjects{ "view.projects" };
 inline constexpr ActionId ViewNavigator{ "view.navigator" };
 inline constexpr ActionId ViewColor{ "view.color" };
 inline constexpr ActionId ViewToolProperties{ "view.toolProperties" };
@@ -87,6 +88,7 @@ inline constexpr ActionId ViewInfo{ "view.info" };
 inline constexpr ActionId ToolBrush{ "tool.brush" };   // each tool's pick (Tool::pickAction)
 inline constexpr ActionId ToolHand{ "tool.hand" };
 inline constexpr ActionId ToolEraser{ "tool.eraser" };
+inline constexpr ActionId ToolHandHold{ "tool.handHold" };   // polled: the hand while held, from any tool
 inline constexpr ActionId BrushSize{ "brush.size" };
 inline constexpr ActionId BrushHardness{ "brush.hardness" };
 inline constexpr ActionId BrushOpacity{ "brush.opacity" };
@@ -110,6 +112,11 @@ inline constexpr ActionId GraphSelectAll{ "graph.selectAll" };
 inline constexpr ActionId GraphAddNode{ "graph.addNode" };
 inline constexpr ActionId GraphShowInCanvas{ "graph.showInCanvas" };
 inline constexpr ActionId GraphRename{ "graph.rename" };
+inline constexpr ActionId GraphArtboardColor{ "graph.artboardColor" };
+inline constexpr ActionId GraphArtboardRename{ "graph.artboardRename" };
+inline constexpr ActionId MenuUp{ "menu.up" };         // polled: the add menu's highlight moves
+inline constexpr ActionId MenuDown{ "menu.down" };
+inline constexpr ActionId MenuAccept{ "menu.accept" }; // polled: ... and is picked
 
 // ---- the History Tree's (ui/panels/history-panel)
 inline constexpr ActionId HistoryTreeDelete{ "historyTree.delete" };   // the steps picked: history.delete

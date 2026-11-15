@@ -1,13 +1,6 @@
 #include "gpu/slot-pages.hpp"
 
 #include <algorithm>
-#include <cassert>
-
-void SlotPages::configure(const Config& config)
-{
-    assert(m_pages.empty() && "configure before the first allocate()");
-    m_config = config;
-}
 
 bool SlotPages::makeTexture(WGPUDevice device, Page& page) const
 {
@@ -61,7 +54,7 @@ void SlotPages::recycle()
             continue;
         }
         if (page.emptySince == Clock::TimePoint{}) page.emptySince = now;
-        else if (Clock::between(page.emptySince, now) >= m_config.keepEmpty) page.texture.reset();   // nothing drew it since it emptied
+        else if (Clock::between(page.emptySince, now) >= m_config.keepEmpty) page.texture.release();   // nothing drew it since it emptied
     }
 }
 

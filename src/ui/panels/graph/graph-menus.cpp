@@ -1,17 +1,15 @@
 #include "ui/panels/graph/graph-menus.hpp"
 #include "ui/style/ui-style.hpp"
-#include "document/document-actions.hpp"
-#include "document/workspace.hpp"
+#include "project/project-actions.hpp"
+#include "project/workspace.hpp"
 #include "ui/panels/graph/internal/layout.hpp"
-#include "ui/style/graph-style.hpp"
 #include "ui/widgets/widgets.hpp"
 
 #include <cmath>
 #include <cstdio>
 
 using namespace GraphLayout;
-using namespace GraphStyle;
-using namespace DocArgs;
+using namespace ProjectArgs;
 
 namespace {
 
@@ -20,22 +18,31 @@ constexpr const char* kArtboardMenu = "##artboard-context";
 constexpr const char* kColorPopup = "##artboard-color";
 constexpr const char* kValuePopup = "##value-edit";
 
+// The top of `stack`'s rows, as a place among the rows left once `leaving` is out of its own.
+size_t stackTop(const Node& stack, NodeId leaving)
+{
+    const std::vector<NodePtr>& layers = stack.links().layers;
+    size_t top = 0;
+    for (const StackGroups::Entry& e : StackGroups::entries(stackSettings(stack).groups, layers.size()))
+        if (e.group != kNoGroup || layers[e.begin]->id() != leaving) ++top;
+    return top;
 }
 
-void GraphMenus::init(const Workspace& workspace, ActionRegistry& actions)
+}
+
+void GraphMenus::init(const Workspace& workspace, ActionRegistry& actions, const InputFrame& input)
 {
     m_workspace = &workspace;
     m_actions = &actions;
+    m_input = &input;
 }
 
 void GraphMenus::openAdd(Wiring wiring, ImVec2 graphPos)
 {
-    const NodeMenu::Fit fit = std::holds_alternative<ToInput>(wiring) ? NodeMenu::Fit::NeedsOutput
-                            : std::holds_alternative<Free>(wiring)    ? NodeMenu::Fit::Any
-                                                                       : NodeMenu::Fit::NeedsInput;
+    const bool fed = std::holds_alternative<FromOutput>(wiring) || std::holds_alternative<Insert>(wiring);
     m_wiring = std::move(wiring);
     m_addAt  = graphPos;
-    m_addMenu.open(fit);
+    m_addMenu.open(fed);
 }
 
 void GraphMenus::openContext(NodeId node)
@@ -94,7 +101,7 @@ bool GraphMenus::openValue(Value value)
 void GraphMenus::draw()
 {
     NodeType picked;
-    if (m_addMenu.draw(picked)) add(picked);
+    if (m_addMenu.draw(picked, *m_actions, *m_input)) add(picked);
     drawContext();
     drawArtboard();
     drawColor();
@@ -123,7 +130,7 @@ void GraphMenus::add(NodeType type)
     args.append(wired);
     const ActionResult r = m_actions->run(Actions::NodeAdd, std::move(args));
     if (!r) return;
-    m_actions->run(Actions::SelectionSet, selectionArgs(NodeSelection::only(NodeId(r.made))));   // in front already: it's the newest
+    m_actions->run(Actions::SelectionSet, selectionArgs(NodeSelection::only(r.madeAs<NodeId>())));   // in front already: it's the newest
 }
 
 void GraphMenus::drawContext()
@@ -148,13 +155,12 @@ void GraphMenus::drawContext()
             actionMenuItem(actions, Actions::RasterLockAlpha, { { kNode, id }, { kOn, !raster->alphaLocked } }, { .checked = raster->alphaLocked });
         }
         if (!master) {
-            const NodeId out = m_workspace->master().id();
-            const InputSlot top = InputSlot::newLayer(uint32_t(m_workspace->master().layers().size()));
-            actionMenuItem(actions, Actions::LinkConnect, { { kFrom, id }, { kTo, out }, { kSlot, top } },
-                           { .label = "Add to Master", .enabled = m_workspace->canConnect(id, out, top) });
+            const Node& out = m_workspace->master();
+            actionMenuItem(actions, Actions::LayerAdd, { { kFrom, id }, { kNode, out.id() }, { kPlaceAt, stackTop(out, id) } },
+                           { .label = "Add to Master", .enabled = m_workspace->canConnect(id, out.id(), InputSlot::newLayer(uint32_t(out.links().layers.size()))) });
             if (const ActionResult ref = actionMenuItem(actions, Actions::NodeReference, { { kNode, id }, { kX, n->x() + 30.0f }, { kY, n->y() + 30.0f } },
                                                         { .label = "Reference it" }))
-                actions.run(Actions::SelectionSet, selectionArgs(NodeSelection::only(NodeId(ref.made))));
+                actions.run(Actions::SelectionSet, selectionArgs(NodeSelection::only(ref.madeAs<NodeId>())));
         }
         // A right click selects the node unless it's already in the selection: then it's all of it.
         const NodeSelection& selection = m_workspace->selection();
@@ -169,9 +175,9 @@ void GraphMenus::drawContext()
                 actions.run(Actions::GraphShowInCanvas, { { kNodes, std::vector<NodeId>{ id } } });
         }
         if (master) {
-            // A new one over what the canvas shows (or a 1920 x 1080 from the origin while it's hidden).
+            // A new one over what the canvas shows (the default while it's hidden).
             const Vec2 view = m_workspace->canvasViewport();
-            BoundsI rect{ 0, 0, 1919, 1079 };
+            BoundsI rect = kDefaultArtboardRect;
             if (view.x > 0.0f && view.y > 0.0f) {
                 const ViewRect v = m_workspace->canvasCamera().visibleWorld(view.x, view.y);
                 rect = { int(std::floor(v.minX)), int(std::floor(v.minY)), int(std::ceil(v.maxX)) - 1, int(std::ceil(v.maxY)) - 1 };
@@ -197,8 +203,8 @@ void GraphMenus::drawArtboard()
         ImGui::Separator();
         actionMenuItem(*m_actions, Actions::ArtboardSet, { { kArtboard, a->id }, { kVisible, !a->visible } },
                        { .label = "Shown", .checked = a->visible });
-        if (ImGui::MenuItem("Color...")) openColor(a->id);
-        if (ImGui::MenuItem("Rename")) openValue(RenameArtboard{ a->id });
+        actionMenuItem(*m_actions, Actions::GraphArtboardColor, { { kArtboard, a->id } }, { .label = "Color..." });
+        actionMenuItem(*m_actions, Actions::GraphArtboardRename, { { kArtboard, a->id } }, { .label = "Rename" });
         ImGui::Separator();
         actionMenuItem(*m_actions, Actions::ArtboardDelete, { { kArtboard, a->id } });
     } else {

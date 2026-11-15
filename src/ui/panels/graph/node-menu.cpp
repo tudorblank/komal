@@ -1,6 +1,6 @@
 #include "ui/panels/graph/node-menu.hpp"
+#include "command/actions.hpp"
 #include "ui/style/ui-style.hpp"
-
 #include "ui/widgets/widgets.hpp"
 
 #include <imgui.h>
@@ -25,16 +25,16 @@ bool matches(const char* name, const char* search)
 
 }
 
-void NodeMenu::open(Fit fit)
+void NodeMenu::open(bool needsInput)
 {
-    m_fit        = fit;
+    m_needsInput = needsInput;
     m_search[0]  = 0;
     m_highlight  = 0;
     m_open       = true;
     m_justOpened = true;   // the popup opens in draw(), inside the graph's window (its ID stack)
 }
 
-bool NodeMenu::draw(NodeType& picked)
+bool NodeMenu::draw(NodeType& picked, const ActionRegistry& actions, const InputFrame& input)
 {
     if (!m_open) return false;
     if (m_justOpened) ImGui::OpenPopup(kPopup);
@@ -47,12 +47,12 @@ bool NodeMenu::draw(NodeType& picked)
 
     std::vector<const NodeKind*> items;
     for (const NodeKind& k : nodeKinds()) {
-        if (m_fit == Fit::NeedsInput && k.ports.inputs == InputShape::None) continue;   // every kind has an output
+        if (m_needsInput && k.ports.inputs == InputShape::None) continue;
         if (matches(k.label, m_search)) items.push_back(&k);
     }
-    // ImGui's keys: the search field owns the text focus.
-    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) ++m_highlight;
-    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))   --m_highlight;
+    // Polled: the search field has the keyboard.
+    if (actions.pressed(Actions::MenuDown, input)) ++m_highlight;
+    if (actions.pressed(Actions::MenuUp, input))   --m_highlight;
     m_highlight = items.empty() ? 0 : (m_highlight + int(items.size())) % int(items.size());
 
     ImGui::Separator();
@@ -63,11 +63,11 @@ bool NodeMenu::draw(NodeType& picked)
         ImGui::SameLine(style.hintColumn);
         ImGui::TextDisabled("%s", items[i]->hint);
     }
-    if (!done && !items.empty() && (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter))) {
+    if (!done && !items.empty() && actions.pressed(Actions::MenuAccept, input)) {
         picked = items[size_t(m_highlight)]->type;
         done = true;
     }
-    if (done || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+    if (done || actions.pressed(Actions::DialogCancel, input)) {
         ImGui::CloseCurrentPopup();
         m_open = false;
     }

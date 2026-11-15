@@ -5,13 +5,11 @@ struct InstanceIn {
     @location(1) scale    : vec2f,   // world size (64 x 64)
     @location(2) uvOffset : vec2f,   // chunk origin in the atlas page, normalized
     @location(3) uvScale  : vec2f,   // chunk size in the atlas page, normalized
-    @location(4) opacity  : f32,
 };
 
 struct VertexOut {
     @builtin(position) clipPos : vec4f,
     @location(0) uv            : vec2f,
-    @location(1) opacity       : f32,
 };
 
 struct Camera {
@@ -33,11 +31,10 @@ fn vs_main(@builtin(vertex_index) vi : u32, inst : InstanceIn) -> VertexOut {
     var out : VertexOut;
     out.clipPos = uCamera.viewProj * vec4f(worldPos, 0.0, 1.0);
     out.uv      = corner * inst.uvScale + inst.uvOffset;
-    out.opacity = inst.opacity;
     return out;
 }
 
 @fragment
 fn fs_main(in : VertexOut) -> @location(0) vec4f {
-    return textureSample(uTexture, uSampler, in.uv) * in.opacity;   // premultiplied: scale everything
+    return textureSample(uTexture, uSampler, in.uv);
 }

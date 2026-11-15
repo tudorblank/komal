@@ -5,8 +5,5 @@
 class ToolboxPanel : public Panel {
 public:
     PanelInfo info() const override;
-    bool init() override;
     void draw() override;   // before the dockspace (DockSlot::Toolbar)
-
-private:
 };

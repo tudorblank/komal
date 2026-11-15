@@ -17,7 +17,7 @@
 // Laid out again only when a step is added. A step continues its parent's lane if it's the first
 // step made from there; every later one starts a branch in the lowest lane free from that row down.
 
-#include "document/history.hpp"
+#include "project/history.hpp"
 #include "ui/panels/panel-base.hpp"
 
 #include <cstdint>
@@ -28,7 +28,7 @@ class HistoryPanel : public Panel {
 public:
     PanelInfo info() const override;
     bool init() override;
-    void documentsChanged(const DocumentsEvent& e) override;   // another document's history: laid out anew
+    void projectsChanged(const ProjectsEvent& e) override;   // another project's history: laid out anew
     void draw() override;
 
 private:
@@ -40,6 +40,6 @@ private:
     int      m_lanes = 1;
     size_t   m_laidOut = 0;               // steps when last laid out (history only grows)
     StepId   m_shownCurrent = kNoStep;    // the current step when last scrolled to
-    std::vector<StepId> m_picked;         // the steps picked (view state: never the document's), sorted
+    std::vector<StepId> m_picked;         // the steps picked (view state: never the project's), sorted
     StepId   m_anchor = kNoStep;          // where a Shift+click range starts
 };

@@ -2,10 +2,10 @@
 // The UI's controls and the one layout standard they follow. Panels use these instead of
 // ImGui's own sliders, fields, buttons and toggles, so everything matches.
 //
-// A control is three parts, each in its own place: its style (ui/style: colours and sizes, from
+// A control is three parts, each in its own place: its style (ui/style: colors and sizes, from
 // the palette), what it does (here: the mouse, the keyboard, its value, where it goes on its row),
 // and how it's drawn (its skin, ui/render). A control borrows its style and hands it to its
-// skin; it never holds a colour or a size of its own.
+// skin; it never holds a color or a size of its own.
 //
 // Tool windows open with PanelWindow: panelPadding on every side, sectionGap between sections.
 // Every row is rowHeight tall; every box (field, button, swatch) is boxHeight tall, centred in
@@ -22,6 +22,7 @@
 
 #include <imgui.h>
 #include <cstddef>
+#include <initializer_list>
 #include <limits>
 #include <optional>
 #include <string_view>
@@ -48,13 +49,27 @@ public:
 private:
     bool m_shown = false;
 };
+// A bar under the menu bar (the Toolbox, the projects' strip), open for the scope: `height` tall,
+// `padding` inside, on `back`. The dockspace lays out below it. Its items space themselves
+// (SameLine with their style's gap).
+class BarWindow {
+public:
+    BarWindow(const Panel& panel, float height, ImVec2 padding, ImU32 back);
+    ~BarWindow();
+    BarWindow(const BarWindow&) = delete;
+    BarWindow& operator=(const BarWindow&) = delete;
+    explicit operator bool() const { return m_shown; }
+
+private:
+    bool m_shown = false;
+};
 void  sectionGap();
-// The height `rows` control rows, `headings` heading lines and `gaps` section gaps take, spacing
+void  heading(const char* text);   // a titled section's start: its title between two lines
+// The height `rows` control rows, `headings` headings and `gaps` section gaps take, spacing
 // included: what a panel that fills its height (a map, a wheel) leaves for them.
 float stackHeight(int rows, int headings = 0, int gaps = 0);
 
 // ---- layout
-void  heading(const char* text);                        // a label on its own line
 void  rowLabel(const char* text, float width = 0.0f);   // the label column (0: labelWidth); controls follow
 void  sameRow();                                        // the next control on this row, a standard gap away
 void  nextGroup();                                      // the next option of a group (toggles), a wider gap away
@@ -65,12 +80,15 @@ void  alignRight(float width);                          // the next control on t
 using Icon = Skin::Icon;   // an icon button's icon: Minus, Plus, RotateLeft, RotateRight
 
 bool button(const char* label, float width = 0.0f);     // 0: fits the label
+// Buttons alike, centred on the rest of the row: `width` each (0: the widest label's, with the
+// style's room), `gap` apart (0: the style's). The one clicked, else -1.
+int  buttonRow(std::initializer_list<const char*> labels, float width = 0.0f, float gap = 0.0f);
 bool iconButton(const char* id, Icon icon);             // a square box
-bool swatch(const char* id, const float rgba[4]);       // a square box showing a colour; true when clicked
+bool swatch(const char* id, const float rgba[4]);       // a square box showing a color; true when clicked
 
 // A thin slider. True while it changes `v`; double-click sets `defaultValue` (if not kNoDefault).
 bool slider(const char* id, float& v, float min, float max, float width, bool logarithmic = false, float defaultValue = kNoDefault);
-// A slider whose track shows `stops` (evenly spaced colours); `v` in 0..1.
+// A slider whose track shows `stops` (evenly spaced colors); `v` in 0..1.
 bool gradientSlider(const char* id, float& v, const ImU32* stops, int count, float width);
 // A thick slider (Clip Studio's navigator): a field's box with a filled figure inside showing how
 // the value runs, the part the value covers in the slider blue, under a box-tall grab. Ramp: a
@@ -84,7 +102,7 @@ bool figureSlider(const char* id, float& v, float min, float max, float width, S
 // when left. True then. Width 0: fieldWidth.
 bool numberField(const char* id, float& v, float min, float max, const char* format, float width = 0.0f,
                  const char* prefix = nullptr);
-// An RGB colour as #RRGGBB, typed the same way. True when a new colour was typed.
+// An RGB color as #RRGGBB, typed the same way. True when a new color was typed.
 bool hexField(const char* id, float rgb[3], float width);
 // Text in a box, typed the same way. True when new text was typed into `buf`.
 bool textField(const char* id, char* buf, size_t size, float width);

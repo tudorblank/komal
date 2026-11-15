@@ -1,6 +1,6 @@
-#include "brush-tool.hpp"
-#include "document/document-actions.hpp"
-#include "document/workspace.hpp"
+#include "ui/tools/brush-tool.hpp"
+#include "project/project-actions.hpp"
+#include "project/workspace.hpp"
 #include "ui/panels/canvas/scene.hpp"
 #include "ui/style/ui-style.hpp"
 #include "ui/tools/tool-manager.hpp"
@@ -51,7 +51,7 @@ void BrushTool::drawProperties(ToolContext& ctx)
     row("Flow", Actions::BrushFlow, m_params.flow, BrushParams::kMinFlow, 1.0f, "%.2f");
     row("Spacing", Actions::BrushSpacing, m_params.spacing, BrushParams::kMinSpacing, 1.0f, "%.2f");
 
-    // The primary colour: swatch (opens the Color panel), hex, alpha.
+    // The primary color: swatch (opens the Color panel), hex, alpha.
     const float* fg = m_colors.foreground;
     const auto setColor = [&](const float (&c)[4]) {
         using namespace ColorArgs;
@@ -80,7 +80,7 @@ void BrushTool::drawProperties(ToolContext& ctx)
     nextGroup();
     toggle("Flow", Actions::BrushPressureFlow, m_params.pressureFlow, "Pen pressure scales how much each dab adds.");
 
-    ImGui::Spacing();
+    sectionGap();
     hint(actions, { "LMB / pen paint   RMB / pen eraser erase   ", Actions::BrushSmaller, " ", Actions::BrushBigger, " size" });
 }
 
@@ -146,7 +146,7 @@ void BrushTool::canvasInput(const CanvasInput& in)
             brush.color = Color8::fromUnit(m_colors.foreground);
             const bool erase = m_erase || ev.button == PointerButton::Secondary || ev.device == PointerDevice::Eraser;
             brush.mode = erase ? CompositeMode::Erase : CompositeMode::Over;
-            if (!in.actions.beginGesture(Actions::BrushStroke, strokeArgs(in.workspace.activeRasterId(), brush, at, m_stroke.pen())))
+            if (!in.actions.beginGesture(Actions::BrushStroke, strokeArgs(in.workspace.activeRasterId(), brush, at)))
                 m_stroke.release();   // refused (a locked raster): nothing to follow
             m_strokePoints = 1;
             break;
@@ -173,5 +173,5 @@ void BrushTool::finish(ActionRegistry& actions)
 
 void BrushTool::endStroke(ActionRegistry& actions)
 {
-    actions.endGesture(Actions::BrushStroke, { { DocArgs::kPoints, m_strokePoints } });
+    actions.endGesture(Actions::BrushStroke, { { ProjectArgs::kPoints, m_strokePoints } });
 }

@@ -31,7 +31,6 @@ void load()
     g_graphNumbers = atlas->AddFontFromMemoryTTF(const_cast<unsigned char*>(kFontNumbers), int(kFontNumbersSize), 0.0f, &heavy);
 }
 
-ImFont* numbers()      { return g_numbers; }
 ImFont* graph()        { return g_graph; }
 ImFont* graphNumbers() { return g_graphNumbers; }
 

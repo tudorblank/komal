@@ -125,8 +125,6 @@ set(GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
 set(ASSETS_DIR ${CMAKE_SOURCE_DIR}/assets)
 embed_file(${GENERATED_DIR}/font-ui.cpp      ${ASSETS_DIR}/fonts/Manrope-Regular.ttf     kFontUi)
 embed_file(${GENERATED_DIR}/font-numbers.cpp ${ASSETS_DIR}/fonts/JetBrainsMono-Light.ttf kFontNumbers)
-embed_file(${GENERATED_DIR}/theme-main-dark.cpp  ${ASSETS_DIR}/themes/main-dark.toml  kThemeMainDark)
-embed_file(${GENERATED_DIR}/theme-main-light.cpp ${ASSETS_DIR}/themes/main-light.toml kThemeMainLight)
 embed_file(${GENERATED_DIR}/app-icon.cpp     ${ASSETS_DIR}/icons/komal-icon-256.png      kAppIcon)
 embed_file(${GENERATED_DIR}/komal-face.cpp   ${ASSETS_DIR}/icons/komal-face.png          kKomalFace)   # the intro's
 # WGSL compiled into the binary: no shader files to ship or find relative to the working dir.
@@ -142,8 +140,6 @@ set(GENERATED_SOURCES
     ${GENERATED_DIR}/font-numbers.cpp
     ${GENERATED_DIR}/app-icon.cpp
     ${GENERATED_DIR}/komal-face.cpp
-    ${GENERATED_DIR}/theme-main-dark.cpp
-    ${GENERATED_DIR}/theme-main-light.cpp
     ${GENERATED_DIR}/shader-texture.cpp
     ${GENERATED_DIR}/shader-color.cpp
     ${GENERATED_DIR}/shader-preview-signal.cpp
@@ -182,10 +178,10 @@ function(komal_warnings target)
 endfunction()
 
 # ---------------------------------------------------------------- the core
-# The layers below the GPU and the UI (base, input, raster, node, command, document): the document and
+# The layers below the GPU and the UI (base, input, raster, node, command, project): the project and
 # everything it's made of. The app and the tests both link it; it runs without a window or a GPU
 # (no SDL, no ImGui, no wgpu: cmake/check-layers.cmake holds every layer to what it may include).
-set(CORE_LAYERS base input raster node command document)
+set(CORE_LAYERS base input raster node command project)
 set(CORE_SOURCES)
 foreach(layer ${CORE_LAYERS})
     file(GLOB_RECURSE layer_sources CONFIGURE_DEPENDS src/${layer}/*.cpp src/${layer}/*.hpp)
@@ -202,9 +198,23 @@ komal_warnings(komal-core)
 
 # ---------------------------------------------------------------- the app
 file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS src/*.cpp src/*.hpp)
-list(FILTER APP_SOURCES EXCLUDE REGEX "/src/(base|input|raster|node|command|document)/")
+list(FILTER APP_SOURCES EXCLUDE REGEX "/src/(base|input|raster|node|command|project)/")
 list(APPEND APP_SOURCES ${CMAKE_SOURCE_DIR}/src/input/sdl-input.cpp ${CMAKE_SOURCE_DIR}/src/input/sdl-input.hpp)
 add_executable(${PROJECT_NAME} ${APP_SOURCES} ${GENERATED_SOURCES})
+# The extra themes: assets/themes/*.toml, copied beside the program on every build, where
+# ThemeList finds them (Komal's own themes are C++: Theme::defaults() in src/ui/style/theme.cpp). In a macOS
+# app bundle that's Contents/Resources/themes, elsewhere bin/themes. Edited, added or removed
+# files show on the next build (cmake/sync-themes.cmake).
+if(APPLE)
+    set(THEMES_DIR $<TARGET_BUNDLE_CONTENT_DIR:${PROJECT_NAME}>/Resources/themes)
+else()
+    set(THEMES_DIR $<TARGET_FILE_DIR:${PROJECT_NAME}>/themes)
+endif()
+add_custom_target(themes ALL
+    COMMAND ${CMAKE_COMMAND} -DFROM=${ASSETS_DIR}/themes -DTO=${THEMES_DIR} -P ${CMAKE_SOURCE_DIR}/cmake/sync-themes.cmake
+    COMMENT "Copying the extra themes beside the program"
+    VERBATIM)
+add_dependencies(themes ${PROJECT_NAME})   # after the program: on macOS its bundle has to exist first
 target_include_directories(${PROJECT_NAME} PRIVATE src)
 target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${stb_SOURCE_DIR}    # the window icon
                                                           ${tomlplusplus_SOURCE_DIR}/include)   # theme files
@@ -229,15 +239,21 @@ if(KOMAL_TESTS)
     # the graph lays a node out and where a drop on a stack lands.
     file(GLOB UI_TEST_SOURCES CONFIGURE_DEPENDS tests/ui/*.cpp tests/ui/*.hpp)
     add_executable(komal-ui-tests ${UI_TEST_SOURCES}
-        src/ui/style/theme.cpp src/ui/style/palette.cpp src/ui/style/ui-style.cpp src/ui/style/graph-style.cpp
-        src/ui/panels/graph/internal/node-item.cpp src/ui/panels/graph/internal/stack-drop.cpp
-        ${GENERATED_DIR}/theme-main-dark.cpp ${GENERATED_DIR}/theme-main-light.cpp)
+        src/ui/style/theme.cpp src/ui/style/theme-list.cpp
+        src/ui/style/palette.cpp src/ui/style/ui-style.cpp src/ui/style/graph-style.cpp
+        src/ui/panels/graph/internal/node-item.cpp src/ui/panels/graph/internal/stack-drop.cpp)
     target_include_directories(komal-ui-tests PRIVATE src)
     target_include_directories(komal-ui-tests SYSTEM PRIVATE ${doctest_SOURCE_DIR} ${tomlplusplus_SOURCE_DIR}/include)
     target_link_libraries(komal-ui-tests PRIVATE komal-core imgui)
     komal_warnings(komal-ui-tests)
     add_test(NAME komal-ui-tests COMMAND komal-ui-tests)
     add_custom_command(TARGET komal-ui-tests POST_BUILD COMMAND komal-ui-tests --minimal COMMENT "Running the UI tests" VERBATIM)
+
+    # Clang only: doctest includes <ciso646> there, which newer standard libraries #warning about
+    # in C++20 (no longer a standard header). Not ours, and an error under KOMAL_WERROR.
+    foreach(target komal-tests komal-ui-tests)
+        target_compile_options(${target} PRIVATE $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Wno-cpp>)
+    endforeach()
 endif()
 
 # The source folders are layers: includes only go down, and each layer includes only the libraries

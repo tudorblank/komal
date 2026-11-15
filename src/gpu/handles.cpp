@@ -1,7 +1,7 @@
-#include "handles.hpp"
+#include "gpu/handles.hpp"
 #include "gpu/error-scope.hpp"
 
-WGPUShaderModule createShaderModule(const GpuHandles& ctx, const char* wgsl, const char* label)
+WGPUShaderModule createShaderModule(WGPUDevice device, const char* wgsl, const char* label)
 {
     WGPUShaderSourceWGSL src{};
     src.chain.sType = WGPUSType_ShaderSourceWGSL;
@@ -10,7 +10,7 @@ WGPUShaderModule createShaderModule(const GpuHandles& ctx, const char* wgsl, con
     WGPUShaderModuleDescriptor desc{};
     desc.nextInChain = &src.chain;
     desc.label       = sv(label);
-    return wgpuDeviceCreateShaderModule(ctx.device, &desc);
+    return wgpuDeviceCreateShaderModule(device, &desc);
 }
 
 bool GpuUniform::create(WGPUDevice device, WGPUBindGroupLayout layout, uint64_t size, const char* label)

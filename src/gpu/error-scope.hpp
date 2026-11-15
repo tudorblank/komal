@@ -9,8 +9,6 @@
 
 #include <webgpu/webgpu.h>
 
-#include <string>
-
 class GpuErrorScope {
 public:
     explicit GpuErrorScope(WGPUDevice device);
@@ -18,7 +16,7 @@ public:
     GpuErrorScope(const GpuErrorScope&) = delete;
     GpuErrorScope& operator=(const GpuErrorScope&) = delete;
 
-    // Closes the scope (once): true if anything failed in it, with why (logged as `what`).
+    // Closes the scope (once): true if anything failed in it (logged, with `what`).
     bool failed(const char* what = nullptr);
 
 private:

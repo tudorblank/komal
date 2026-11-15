@@ -48,8 +48,8 @@ Styles build(const Metrics& m)
     const float u = m.unit, font = m.font;
     Styles s{};
     s.metrics = m;
-    s.text = { packed(pal.text), packed(pal.textDim) };
-    s.box  = { packed(pal.field), packed(pal.fieldHot), packed(pal.text), packed(pal.textDim), m.rounding, m.framePadding };
+    s.box    = { packed(pal.field), packed(pal.fieldHot), packed(pal.text), packed(pal.textDim), m.rounding, m.framePadding };
+    s.button = { packed(pal.button), packed(pal.buttonHot), packed(pal.text), packed(pal.textDim), m.rounding, m.framePadding };
     s.icon = { packed(pal.text), 0.22f, 0.08f, 1.25f };
     s.swatch = { packed(pal.darkRim), packed(pal.toggleHot), m.rounding };
 
@@ -76,8 +76,14 @@ Styles build(const Metrics& m)
     s.gradientSlider = { s.slider, std::round(8.0f * u), packed(pal.panel), 2.0f, packed(pal.pictureCheckerA), packed(pal.pictureCheckerB),
                          std::round(4.0f * u) };
 
+    s.buttonRow = { 2.0f * m.framePadding, m.spacing };
+
+    const ImGuiStyle& st = ImGui::GetStyle();
+    s.heading = { packed(pal.text), packed(pal.border), st.SeparatorTextBorderSize, st.SeparatorTextPadding, st.ItemSpacing.x };
+
     s.toolButton.size         = std::round(font * 1.75f);
     s.toolButton.padding      = std::round(font * 0.25f);
+    s.toolButton.gap          = m.spacing;
     s.toolButton.bar          = packed(pal.bar);
     s.toolButton.fillHot      = packed(pal.buttonHot);
     s.toolButton.fillSelected = packed(pal.buttonActive);
@@ -87,12 +93,12 @@ Styles build(const Metrics& m)
     s.toolButton.rounding     = m.frameRounding;
     s.toolButton.iconSize     = 0.62f;
 
-    DocumentTabStyle& d = s.documentTab;
+    ProjectTabStyle& d = s.projectTab;
     d.tabHeight = std::round(font * 1.65f);
     d.height    = d.tabHeight + 2.0f * std::round(font * 0.25f);
     d.margin    = s.toolButton.padding * 2.0f;
     d.padding   = std::round(font * 0.7f);
-    d.gap       = std::round(font * 0.15f);
+    d.gap       = m.spacing;
     d.mark      = std::round(font * 1.1f);
     d.minWidth  = font * 4.0f;
     d.maxWidth  = font * 16.0f;
@@ -107,13 +113,17 @@ Styles build(const Metrics& m)
     s.intro = { std::round(font * 13.0f), std::round(font * 1.6f), std::round(font * 6.0f), 0.15f, packed(pal.introBack), packed(pal.introFace) };
 
     s.notice = { font * 0.6f, font * 0.4f, font * 28.0f, font * 0.3f, font * 0.2f, packed(pal.noticeBack), packed(pal.noticeMark), packed(pal.hudText) };
-    s.hud    = { ImVec2(8.0f, 6.0f), ImVec2(4.0f, 2.0f), 3.0f, packed(pal.hudBack), packed(pal.hudText) };
+    s.hud    = { ImVec2(std::round(8.0f * u), std::round(6.0f * u)), ImVec2(std::round(4.0f * u), std::round(2.0f * u)), 3.0f * u,
+                 packed(pal.hudBack), packed(pal.hudText) };
 
     s.history.rowHeight     = std::round(font * 1.55f);
     s.history.laneWidth     = std::round(font * 0.95f);
     s.history.dot           = std::max(3.0f, std::round(font * 0.24f));
     s.history.line          = std::max(1.0f, std::round(font * 0.1f));
     s.history.ring          = s.history.dot + s.history.line * 2.5f;
+    s.history.otherDot      = s.history.dot * 0.85f;
+    s.history.aheadRing     = s.history.line * 1.5f;
+    s.history.bend          = s.history.rowHeight * 0.8f;
     s.history.labelGap      = std::round(font * 0.5f);
     s.history.labelRoom     = font * 12.0f;
     s.history.numberPadding = font * 0.4f;
@@ -127,44 +137,50 @@ Styles build(const Metrics& m)
     s.history.rowPicked     = packed(pal.row);
     s.history.hollow        = packed(pal.panel);
 
-    s.map = { 6.0f * u, 60.0f, m.frameRounding, packed(pal.bar), packed(pal.emptyArea), packed(pal.viewOutline), packed(pal.textDim), 1.5f, 2.5f * u, 2.0f };
+    // The view's outline (1.5) is pixels at any scale, like a rim.
+    s.map = { 6.0f * u, 60.0f * u, m.frameRounding, packed(pal.bar), packed(pal.emptyArea), packed(pal.viewOutline), packed(pal.textDim), 1.5f, 2.5f * u, 2.0f * u };
 
     ColorPickerStyle& c = s.colorPicker;
     c.block          = std::round(font * 2.6f);
     c.swatchShare    = 0.64f;
-    c.swatchRounding = 3.0f;
-    c.swatchGap      = 2.0f;
+    c.swatchRounding = std::round(3.0f * u);
+    c.swatchGap      = std::round(2.0f * u);
+    c.swatchOuterRounding = c.swatchRounding + 1.0f;
+    c.swatchRimWidth = 1.0f;   // pixels, at any scale
     c.rim            = packed(pal.darkRim);
     c.lightRim       = packed(pal.lightRim);
     c.gap            = packed(pal.panel);
     c.edited         = packed(pal.accent);
     c.editedWidth    = 1.5f;
+    c.editedOffset   = 1.5f;
     c.swap           = packed(pal.textDim);
     c.swapHot        = packed(pal.text);
-    c.swapStroke     = 1.5f;
-    c.swapHeadMin    = 2.5f;
+    c.swapStroke     = 1.5f * u;
+    c.swapHeadMin    = 2.5f * u;
     c.swapHead       = 0.16f;
     c.ringSegments   = 96;
     c.ringInner      = 0.80f;
     c.square         = 0.70f;
     c.ringEdge       = packed(pal.panel);
-    c.ringEdgeWidth  = 1.5f;
+    c.ringEdgeWidth  = 1.5f;   // pixels, at any scale (it sits half a pixel off the ring)
     c.white          = packed(pal.white);
     c.black          = packed(pal.black);
     c.clear          = packed(pal.clear);
     c.markerRim      = packed(pal.darkRim);
     c.marker         = packed(pal.marker);
-    c.markerRimWidth = 2.0f;
-    c.markerWidth    = 1.5f;
+    c.markerRimWidth = 2.0f;   // pixels, at any scale (the rim is a pixel outside)
+    c.markerWidth    = 1.5f;   // pixels, at any scale
     c.hueMarker       = 0.30f;
     c.squareMarker    = 0.8f;
-    c.squareMarkerMin = 4.0f;
+    c.squareMarkerMin = 4.0f * u;
     c.maxSize        = 320.0f * u;
-    c.minSize        = 80.0f;
+    c.minSize        = 80.0f * u;
     c.checkerA       = packed(pal.pictureCheckerA);
     c.checkerB       = packed(pal.pictureCheckerB);
     c.checkerCell    = std::round(5.0f * u);
     c.floatWidth     = std::round(font * 13.0f);
+    c.floatSquare    = 0.7f;
+    c.floatMarker    = c.squareMarkerMin + 1.0f;
 
     s.menu = { font * 10.0f, font * 12.0f, font * 7.0f };
     return s;
@@ -172,11 +188,10 @@ Styles build(const Metrics& m)
 
 }
 
-const std::vector<std::string_view>& themes() { return Palette::themes(); }
-bool useTheme(std::string_view name, std::string& why)
+bool useTheme(std::string_view name)
 {
-    if (!Palette::useTheme(name, why)) return false;
-    if (g_appliedScale > 0.0f) apply(g_appliedScale);   // ImGui's colours too, once it's styled
+    if (!Palette::useTheme(name)) return false;
+    if (g_appliedScale > 0.0f) apply(g_appliedScale);   // ImGui's colors too, once it's styled
     return true;
 }
 
@@ -189,9 +204,9 @@ const CanvasStyle& canvas()
     if (madeFor == Palette::revision()) return style;
     madeFor = Palette::revision();
     const Palette& pal = Palette::current();
-    style = { pal.canvasBackground, pal.canvasCheckerA, pal.canvasCheckerB, pal.canvasChecker, pal.pictureCheckerA, pal.pictureCheckerB,
-              pal.pictureChecker, pal.originMark, pal.accent, 1.0f, pal.faintOutline, pal.accent, 1.5f,
-              pal.artboardFrame, pal.artboardLabel };
+    style = { pal.canvasBackground, pal.canvasCheckerA, pal.canvasCheckerB, 8.0f, pal.pictureCheckerA, pal.pictureCheckerB,
+              8.0f, pal.originMark, pal.accent, 1.0f, pal.faintOutline, pal.accent, 1.5f,
+              pal.artboardFrame, pal.artboardLabel, 110, 0.85f, 3.0f };
     return style;
 }
 
@@ -258,10 +273,10 @@ void apply(float scale)
     c[ImGuiCol_Text]                      = floats(pal.text);
     c[ImGuiCol_TextDisabled]              = floats(pal.textDim);
     c[ImGuiCol_WindowBg]                  = floats(pal.panel);
-    c[ImGuiCol_ChildBg]                   = floats(pal.none);
+    c[ImGuiCol_ChildBg]                   = floats(pal.clear);
     c[ImGuiCol_PopupBg]                   = floats(pal.popup);
     c[ImGuiCol_Border]                    = floats(pal.border);
-    c[ImGuiCol_BorderShadow]              = floats(pal.none);
+    c[ImGuiCol_BorderShadow]              = floats(pal.clear);
     c[ImGuiCol_FrameBg]                   = floats(pal.field);
     c[ImGuiCol_FrameBgHovered]            = floats(pal.fieldHot);
     c[ImGuiCol_FrameBgActive]             = floats(pal.fieldActive);
@@ -269,7 +284,7 @@ void apply(float scale)
     c[ImGuiCol_TitleBgActive]             = floats(pal.bar);
     c[ImGuiCol_TitleBgCollapsed]          = floats(pal.bar);
     c[ImGuiCol_MenuBarBg]                 = floats(pal.bar);
-    c[ImGuiCol_ScrollbarBg]               = floats(pal.none);
+    c[ImGuiCol_ScrollbarBg]               = floats(pal.clear);
     c[ImGuiCol_ScrollbarGrab]             = floats(pal.scrollGrab);
     c[ImGuiCol_ScrollbarGrabHovered]      = floats(pal.scrollGrabHot);
     c[ImGuiCol_ScrollbarGrabActive]       = floats(pal.scrollGrabActive);
@@ -295,7 +310,7 @@ void apply(float scale)
     c[ImGuiCol_TabSelectedOverline]       = accent;
     c[ImGuiCol_TabDimmed]                 = c[ImGuiCol_Tab];
     c[ImGuiCol_TabDimmedSelected]         = c[ImGuiCol_TabSelected];
-    c[ImGuiCol_TabDimmedSelectedOverline] = floats(pal.none);
+    c[ImGuiCol_TabDimmedSelectedOverline] = floats(pal.clear);
     c[ImGuiCol_DockingPreview]            = tint(0.40f);
     c[ImGuiCol_DockingEmptyBg]            = floats(pal.windowBackground);
     c[ImGuiCol_PlotLines]                 = floats(pal.plot);
@@ -305,7 +320,7 @@ void apply(float scale)
     c[ImGuiCol_TableHeaderBg]             = floats(pal.tableHeader);
     c[ImGuiCol_TableBorderStrong]         = floats(pal.tableBorder);
     c[ImGuiCol_TableBorderLight]          = floats(pal.tableLine);
-    c[ImGuiCol_TableRowBg]                = floats(pal.none);
+    c[ImGuiCol_TableRowBg]                = floats(pal.clear);
     c[ImGuiCol_TableRowBgAlt]             = floats(pal.rowAlt);
     c[ImGuiCol_TextLink]                  = accent;
     c[ImGuiCol_TextSelectedBg]            = tint(0.30f);

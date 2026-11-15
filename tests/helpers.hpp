@@ -1,14 +1,17 @@
 #pragma once
-// What several test files share: a project with a starter graph, and reading its pixels.
+// What several test files share: a workspace with a starter graph, reading its pixels, and
+// random edits.
 
 #include "base/log.hpp"
-#include "document/workspace.hpp"
+#include "project/workspace.hpp"
 
 #include <doctest/doctest.h>
+#include <algorithm>
+#include <random>
 #include <string>
 #include <vector>
 
-// Catches what's logged while it lives (instead of stderr): a test can check a refusal said why.
+// Catches what's logged while it lives (instead of stderr): a test can check what a refusal said.
 struct LogCapture {
     LogCapture() { lines().clear(); Log::setSink([](const char* line) { lines().push_back(line); }); }
     ~LogCapture() { Log::setSink(nullptr); }
@@ -20,17 +23,30 @@ struct LogCapture {
     }
 };
 
+// The pixel at world (x, y) of `tiles`: anything with getReadTile (a raster, a grid).
+template <class Tiles> RGBA pixelAt(const Tiles& tiles, int x, int y)
+{
+    const Tile* t = tiles.getReadTile(TileUtils::worldToTile(x), TileUtils::worldToTile(y));
+    return t ? t->getReadPx(TileUtils::worldToLocal(x), TileUtils::worldToLocal(y)) : transparent();
+}
+
 inline RGBA pixelOf(const Workspace& p, NodeId raster, int x, int y)
 {
-    const auto* r = dynamic_cast<const RasterRootNode*>(p.find(raster));
-    REQUIRE(r);
-    const Tile* t = r->raster().getReadTile(TileUtils::worldToTile(x), TileUtils::worldToTile(y));
-    return t ? t->getReadPx(TileUtils::worldToLocal(x), TileUtils::worldToLocal(y)) : transparent();
+    const Node* n = p.find(raster);
+    REQUIRE((n && n->type() == NodeType::Raster));
+    return pixelAt(static_cast<const RasterRootNode*>(n)->raster(), x, y);
 }
 
 inline void fillPixel(TileGrid& g, int x, int y, RGBA c)
 {
     g.writeOrCreateTile(TileUtils::worldToTile(x), TileUtils::worldToTile(y)).setPx(TileUtils::worldToLocal(x), TileUtils::worldToLocal(y), c);
+}
+
+inline void fillTile(Tile& t, RGBA c)
+{
+    Tile::BulkWrite w(t, Tile::BulkWrite::Untrusted);
+    std::fill(w.data(), w.data() + Tile::kPixels, c);
+    w.markChanged();
 }
 
 // The tests' starter project: a master over two rasters, seeded (no undo steps). "Raster 1" the
@@ -84,7 +100,43 @@ inline RGBA rendered(const Workspace& p, NodeId id, int x, int y)
 {
     Node* n = p.find(id);
     REQUIRE(n);
-    RenderCtx ctx;
-    const Tile* t = renderTile(*n, TileUtils::worldToTile(x), TileUtils::worldToTile(y), ctx);
-    return t ? t->getReadPx(TileUtils::worldToLocal(x), TileUtils::worldToLocal(y)) : transparent();
+    struct Render {
+        Node& node;
+        mutable RenderCtx ctx;
+        const Tile* getReadTile(int tx, int ty) const { return renderTile(node, tx, ty, ctx); }
+    };
+    return pixelAt(Render{ *n, {} }, x, y);
 }
+
+// Random picks for the tests that grow graphs at random, and the edits they share (each one undo
+// step; it may change nothing).
+class RandomEdits {
+public:
+    explicit RandomEdits(uint32_t seed) : m_rng(seed) {}
+
+    int    pick(int n) { return std::uniform_int_distribution<int>(0, n - 1)(m_rng); }
+    float  unit() { return std::uniform_real_distribution<float>(0.0f, 1.0f)(m_rng); }
+    NodeId anyNode(const Workspace& p) { return p.nodes()[size_t(pick(int(p.nodes().size())))]->id(); }
+
+    // A node of any kind at (x, y), fed from any node `fed` of the time.
+    void addNode(Workspace& p, float x, float y, float fed)
+    {
+        const NodeType type = NodeType(pick(4));
+        step(p, "Add", [&] { p.addNode(type, x, y, { .from = unit() < fed ? anyNode(p) : kNoNodeId, .into = kNoNodeId, .slot = {} }); });
+    }
+
+    // A link from any node into any node, if it can be: its input, a new layer, a mask, or (`rows`)
+    // a layer's row.
+    void connect(Workspace& p, bool rows)
+    {
+        const NodeId from = anyNode(p), to = anyNode(p);
+        std::vector<InputSlot> slots{ InputSlot::input(), InputSlot::newLayer(uint32_t(pick(3))) };
+        if (rows) slots.push_back(InputSlot::stackLayer(uint32_t(pick(3))));
+        slots.push_back(InputSlot::mask(NodeSignal(pick(3)), NodeChannel(pick(4))));
+        const InputSlot slot = slots[size_t(pick(int(slots.size())))];
+        if (p.canConnect(from, to, slot)) step(p, "Connect", [&] { p.connect(from, to, slot); });
+    }
+
+private:
+    std::mt19937 m_rng;
+};

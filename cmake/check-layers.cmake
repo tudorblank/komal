@@ -8,17 +8,17 @@
 #   raster     pixels, tiles, grids, rasters, brush strokes                + abseil
 #   node       the node graph: signals, masks, the render path             + abseil
 #   command    the actions input and menus trigger (the one way in)        + abseil
-#   document   the Project: nodes, rasters, history, the document's actions + abseil, stb_image
+#   project    the Project: nodes, rasters, history, its actions           + abseil, stb_image
 #   gpu        the GPU: device, objects, pages of slots                    + abseil, webgpu
 #   ui         the interface: its look, widgets, panels (the canvas and the graph among them), tools
 #                                                                          + webgpu, ImGui (and its internals), toml++
 #   app        the platform: the window, the loop, frames; main            anything (SDL lives here)
-#   tests      the core (base .. document) only                            + doctest
+#   tests      the core (base .. project) only                             + doctest
 #   tests/ui   the UI's blocks that need no window or GPU (its look)       + doctest, the UI's libraries
 #
 #   cmake -DSRC=<src dir> -DTESTS=<tests dir> -P check-layers.cmake
 
-set(LAYERS base input raster node command document gpu ui app)
+set(LAYERS base input raster node command project gpu ui app)
 
 # What each layer may include with <...>, as regexes; a standard header is a bare name.
 set(STD "^[a-z_0-9]+$")
@@ -27,7 +27,7 @@ set(LIBS_input    "${STD}")
 set(LIBS_raster   "${STD}" "^absl/")
 set(LIBS_node     ${LIBS_raster})
 set(LIBS_command  ${LIBS_raster})
-set(LIBS_document ${LIBS_raster} "^stb_image\\.h$")
+set(LIBS_project  ${LIBS_raster} "^stb_image\\.h$")
 set(LIBS_gpu      ${LIBS_raster} "^webgpu/")
 set(LIBS_ui       ${LIBS_gpu} "^imgui\\.h$" "^imgui_internal\\.h$" "^toml\\+\\+/")
 set(LIBS_app      ".*")
@@ -41,19 +41,19 @@ set(FILE_LIBS
 
 # Headers private to a folder: only files inside it (and the header's own .cpp) may include them.
 # "header|folder/" (a folder, or any path prefix).
-#   the theme: only the palette reads it (it gives each colour a role)
+#   the theme: only the style folder reads it (the palette gives each colour a role)
 #   the palette: only the styles read colour tokens; everything else borrows a style
 #   the widgets' internals: panels use widgets.hpp
 #   SDL's input: only the app sees it (the core never includes SDL)
 set(PRIVATE
     "input/sdl-input.hpp|app/"
     "ui/style/palette.hpp|ui/style/"
-    "ui/style/theme.hpp|ui/style/palette."
+    "ui/style/theme.hpp|ui/style/"
     "ui/widgets/interaction.hpp|ui/widgets/")
 
 set(problems "")
 
-# rank: a layer's place in LAYERS; tests rank as the top of the core (document).
+# rank: a layer's place in LAYERS; tests rank as the top of the core (project).
 function(check_file path rel layer rank)
     file(STRINGS "${path}" lines REGEX "^[ \t]*#[ \t]*include")
     foreach(line IN LISTS lines)
@@ -123,7 +123,7 @@ foreach(path IN LISTS sources)
 endforeach()
 
 if(TESTS)
-    list(FIND LAYERS document core_top)
+    list(FIND LAYERS project core_top)
     file(GLOB_RECURSE tests LIST_DIRECTORIES false "${TESTS}/*.hpp" "${TESTS}/*.cpp")
     list(SORT tests)
     list(FIND LAYERS ui ui_rank)

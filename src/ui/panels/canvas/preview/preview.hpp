@@ -10,12 +10,12 @@
 //               and the master in the navigator (preview-picture.hpp)
 //
 // The rule: while an edit is in progress, its pictures are made on the GPU only; the CPU
-// changes the document once it ends, and the views follow that as usual. An edit of the graph
+// changes the project once it ends, and the views follow that as usual. An edit of the graph
 // alone (nodes or a link being moved) isn't planned: nothing's pixels change.
 
 #include "base/signal.hpp"
 #include "ui/panels/canvas/tiles/tile-cache.hpp"
-#include "document/preview-model.hpp"
+#include "project/preview-model.hpp"
 
 #include <memory>
 #include <optional>

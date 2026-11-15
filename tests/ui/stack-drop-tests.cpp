@@ -3,7 +3,7 @@
 // space); an open artboard holds its own array. A drop goes between rows (room there) or onto an
 // artboard's row (into it, nothing moving).
 
-#include "document/workspace.hpp"
+#include "project/workspace.hpp"
 #include "ui/panels/graph/internal/node-item.hpp"
 #include "ui/panels/graph/internal/stack-drop.hpp"
 #include "ui/panels/graph/internal/layout.hpp"

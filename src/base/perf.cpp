@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <cstdlib>
 #include <iterator>
 
 namespace Perf {

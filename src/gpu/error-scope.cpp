@@ -1,5 +1,8 @@
 #include "gpu/error-scope.hpp"
 #include "base/log.hpp"
+#include "gpu/handles.hpp"
+
+#include <string>
 
 namespace {
 
@@ -17,8 +20,7 @@ void pop(WGPUDevice device, Popped& out)
         auto& p = *static_cast<Popped*>(u);
         if (status != WGPUPopErrorScopeStatus_Success || type == WGPUErrorType_NoError) return;
         p.failed = true;
-        if (p.message.empty() && message.data)
-            p.message.assign(message.data, message.length == WGPU_STRLEN ? std::char_traits<char>::length(message.data) : message.length);
+        if (p.message.empty()) p.message = text(message);
     };
     wgpuDevicePopErrorScope(device, info);
 }

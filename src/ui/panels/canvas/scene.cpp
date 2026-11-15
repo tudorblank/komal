@@ -1,4 +1,4 @@
-#include "scene.hpp"
+#include "ui/panels/canvas/scene.hpp"
 
 #include <algorithm>
 

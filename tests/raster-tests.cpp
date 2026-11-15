@@ -2,6 +2,7 @@
 
 #include "raster/brush.hpp"
 #include "raster/raster-data.hpp"
+#include "helpers.hpp"
 
 #include <doctest/doctest.h>
 #include <random>
@@ -9,16 +10,14 @@
 
 namespace {
 
-RGBA pixel(const RasterData& r, int x, int y)
+// World pixel (x, y) through the editor, as `mode` puts a tile holding only it.
+bool apply(RasterEditor& ed, int x, int y, RGBA c, CompositeMode mode = CompositeMode::Over)
 {
-    const Tile* t = r.getReadTile(TileUtils::worldToTile(x), TileUtils::worldToTile(y));
-    return t ? t->getReadPx(TileUtils::worldToLocal(x), TileUtils::worldToLocal(y)) : transparent();
+    auto t = std::make_unique<Tile>();
+    t->setPx(TileUtils::worldToLocal(x), TileUtils::worldToLocal(y), c);
+    return ed.applyTile(TileUtils::worldToTile(x), TileUtils::worldToTile(y), *t, { 255, mode });
 }
-
-EditSummary edit(RasterData& r, const std::function<void(RasterEditor&)>& body)
-{
-    return r.edit(body);
-}
+bool erase(RasterEditor& ed, int x, int y) { return apply(ed, x, y, RGBA{ 255, 255, 255, 255 }, CompositeMode::Erase); }
 
 }
 
@@ -36,7 +35,7 @@ TEST_CASE("pixels: premultiplied over, scale and canonical")
 TEST_CASE("tile edits: over, erase and replace, with opacity")
 {
     Tile dst, src;
-    TileEdit::fill(dst, RGBA{ 0, 0, 255, 255 });
+    fillTile(dst, RGBA{ 0, 0, 255, 255 });
     src.setPx(1, 1, RGBA{ 255, 0, 0, 255 });
     src.setPx(2, 1, RGBA{ 0, 128, 0, 128 });   // half transparent green (premultiplied)
 
@@ -46,7 +45,7 @@ TEST_CASE("tile edits: over, erase and replace, with opacity")
     CHECK(dst.getReadPx(0, 0) == RGBA{ 0, 0, 255, 255 });     // where src is empty: untouched
 
     Tile erased;
-    TileEdit::fill(erased, RGBA{ 200, 200, 200, 255 });
+    fillTile(erased, RGBA{ 200, 200, 200, 255 });
     CHECK(TileEdit::apply(erased, src, { 255, CompositeMode::Erase }));
     CHECK(erased.getReadPx(1, 1) == transparent());            // an opaque eraser takes it all
     CHECK(erased.getReadPx(2, 1).a == 127);                    // a half one, half
@@ -56,7 +55,7 @@ TEST_CASE("tile edits: over, erase and replace, with opacity")
     CHECK(faint.getReadPx(1, 1) == RGBA{ 128, 0, 0, 128 });
 
     Tile replaced;
-    TileEdit::fill(replaced, RGBA{ 1, 2, 3, 255 });
+    fillTile(replaced, RGBA{ 1, 2, 3, 255 });
     CHECK(TileEdit::apply(replaced, src, { 255, CompositeMode::Replace }));
     CHECK(replaced.getReadPx(0, 0) == transparent());
     CHECK_FALSE(TileEdit::apply(replaced, src, { 255, CompositeMode::Replace }));   // the same again: no change
@@ -73,22 +72,21 @@ TEST_CASE("tile stats follow every write")
     CHECK(t.bounds() == BoundsI{ 3, 2, 60, 7 });
     t.erasePx(60, 2);
     CHECK(t.bounds() == BoundsI{ 3, 7, 3, 7 });
-    CHECK(TileEdit::fill(t, RGBA{ 1, 1, 1, 255 }));
+    fillTile(t, RGBA{ 1, 1, 1, 255 });
     CHECK(t.isFullyOpaque());
 }
 
-TEST_CASE("tile grid: tiles anywhere, pages that go when empty, readers across pages")
+TEST_CASE("tile grid: tiles anywhere, pages that go when empty")
 {
     TileGrid g;
-    TileEdit::fill(g.writeOrCreateTile(-1, -1), RGBA{ 1, 0, 0, 255 });
-    TileEdit::fill(g.writeOrCreateTile(16, 0), RGBA{ 0, 1, 0, 255 });   // another page
-    TileEdit::fill(g.writeOrCreateTile(-17, 40), RGBA{ 0, 0, 1, 255 });
+    fillTile(g.writeOrCreateTile(-1, -1), RGBA{ 1, 0, 0, 255 });
+    fillTile(g.writeOrCreateTile(16, 0), RGBA{ 0, 1, 0, 255 });   // another page
+    fillTile(g.writeOrCreateTile(-17, 40), RGBA{ 0, 0, 1, 255 });
     CHECK(g.size() == 3);
-    TileReader reader = g.reader();
-    CHECK(reader.pixel(-1, -1).r == 1);
-    CHECK(reader.pixel(16 * 64 + 5, 3).g == 1);
-    CHECK(reader.pixel(-17 * 64, 40 * 64 + 63).b == 1);
-    CHECK(reader.pixel(0, 0) == transparent());
+    CHECK(pixelAt(g, -1, -1).r == 1);
+    CHECK(pixelAt(g, 16 * 64 + 5, 3).g == 1);
+    CHECK(pixelAt(g, -17 * 64, 40 * 64 + 63).b == 1);
+    CHECK(pixelAt(g, 0, 0) == transparent());
     int visited = 0;
     g.forEachRead([&](int, int, const Tile&) { ++visited; });
     CHECK(visited == 3);
@@ -102,49 +100,53 @@ TEST_CASE("raster edits: bounds grow, shrink to what's left, and a snapshot rest
 {
     RasterData r(RasterId(0));
     CHECK(r.getBounds().empty());
-    edit(r, [](RasterEditor& ed) {
-        ed.setPixel(-5, 10, RGBA{ 255, 255, 255, 255 });
-        ed.setPixel(200, -70, RGBA{ 255, 255, 255, 255 });
-        ed.setPixel(30, 30, RGBA{ 255, 255, 255, 255 });
+    r.edit([](RasterEditor& ed) {
+        apply(ed, -5, 10, RGBA{ 255, 255, 255, 255 });
+        apply(ed, 200, -70, RGBA{ 255, 255, 255, 255 });
+        apply(ed, 30, 30, RGBA{ 255, 255, 255, 255 });
     });
     CHECK(r.getBounds() == BoundsI{ -5, -70, 200, 30 });
     const auto all = r.snapshot();
 
     // Erasing an extreme pixel shrinks the bounds to the pixels left (the recompute path).
-    const EditSummary s = edit(r, [](RasterEditor& ed) { ed.erasePixel(200, -70); });
+    const EditSummary s = r.edit([](RasterEditor& ed) { erase(ed, 200, -70); });
     CHECK(s.boundsChanged);
     CHECK(r.getBounds() == BoundsI{ -5, 10, 30, 30 });
     const auto erased = r.snapshot();
-    // Erasing inside changes nothing at the edges.
+    // Painting inside changes nothing at the edges.
     const uint64_t rev = r.revision();
-    edit(r, [](RasterEditor& ed) { ed.setPixel(10, 20, RGBA{ 9, 9, 9, 255 }); });
+    r.edit([](RasterEditor& ed) { apply(ed, 10, 20, RGBA{ 9, 9, 9, 255 }); });
     CHECK(r.getBounds() == BoundsI{ -5, 10, 30, 30 });
     CHECK(r.revision() == rev + 1);
 
     // An edit that changes nothing touches nothing and leaves the revision.
-    CHECK(edit(r, [](RasterEditor& ed) { ed.erasePixel(1000, 1000); }).touched.empty());
+    CHECK(r.edit([](RasterEditor& ed) { erase(ed, 1000, 1000); }).touched.empty());
     CHECK(r.revision() == rev + 1);
 
     // Back to before the erase: the corner comes back, bounds too; only the tiles that differ are told.
     const EditSummary back = r.restore(*all);
-    CHECK(pixel(r, 200, -70).a == 255);
-    CHECK(pixel(r, 10, 20).a == 0);
+    CHECK(pixelAt(r, 200, -70).a == 255);
+    CHECK(pixelAt(r, 10, 20).a == 0);
     CHECK(r.getBounds() == BoundsI{ -5, -70, 200, 30 });
     CHECK(back.boundsChanged);
     CHECK(back.touched.size() == 2);   // the corner's tile, and the tile painted after
     CHECK(r.restore(*all).touched.empty());   // already there: nothing
     r.restore(*erased);
-    CHECK(pixel(r, 200, -70).a == 0);
+    CHECK(pixelAt(r, 200, -70).a == 0);
     CHECK(r.getBounds() == BoundsI{ -5, 10, 30, 30 });
 
     // Clearing everything empties it; its snapshot from before brings every tile back.
     const auto beforeClear = r.snapshot();
-    edit(r, [](RasterEditor& ed) { ed.clearAll(); });
+    TileSet held;
+    r.forEachTile([&](int tx, int ty, const Tile&) { held.insert(TileUtils::packKey(tx, ty)); });
+    r.edit([&](RasterEditor& ed) {
+        for (TileKey k : held) ed.eraseTile(TileUtils::unpackKey(k).x, TileUtils::unpackKey(k).y);
+    });
     CHECK(r.getBounds().empty());
     CHECK(r.tileCount() == 0);
     r.restore(*beforeClear);
     CHECK(r.getBounds() == BoundsI{ -5, 10, 30, 30 });
-    CHECK(pixel(r, 30, 30).a == 255);
+    CHECK(pixelAt(r, 30, 30).a == 255);
 }
 
 TEST_CASE("history keeps cold what's far from it: snapshots' own tiles encoded, a little at a time")
@@ -152,10 +154,10 @@ TEST_CASE("history keeps cold what's far from it: snapshots' own tiles encoded, 
     RasterData r(RasterId(0));
     std::vector<std::shared_ptr<const RasterSnapshot>> steps;
     for (int i = 0; i < 8; ++i) {   // eight snapshots, each with a few tiles of its own
-        edit(r, [&](RasterEditor& ed) {
-            for (int t = 0; t < 4; ++t)
-                for (int y = 0; y < 64; y += 3) ed.setPixel(t * 64 + i, y, RGBA{ uint8_t(i * 30), 0, 0, 255 });
-        });
+        TileGrid dabs;
+        for (int t = 0; t < 4; ++t)
+            for (int y = 0; y < 64; y += 3) fillPixel(dabs, t * 64 + i, y, RGBA{ uint8_t(i * 30), 0, 0, 255 });
+        r.edit([&](RasterEditor& ed) { ed.applyTileGrid(dabs, { 255, CompositeMode::Over }); });
         steps.push_back(r.snapshot());
     }
     const size_t hot = r.historyBytes();
@@ -165,32 +167,12 @@ TEST_CASE("history keeps cold what's far from it: snapshots' own tiles encoded, 
 
     // Going back to a cold one: decoded, the same pixels.
     r.restore(*steps[2]);
-    CHECK(pixel(r, 2, 0) == RGBA{ 60, 0, 0, 255 });
-    CHECK(pixel(r, 7, 0).a == 0);
+    CHECK(pixelAt(r, 2, 0) == RGBA{ 60, 0, 0, 255 });
+    CHECK(pixelAt(r, 7, 0).a == 0);
     const RasterSnapshot* nowNear[] = { steps[2].get(), steps[3].get() };
     while (!r.keepWarm(nowNear, Deadline::in(Clock::Seconds(1.0)))) {}
     r.restore(*steps[3]);   // warm already
-    CHECK(pixel(r, 3, 3) == RGBA{ 90, 0, 0, 255 });
-}
-
-TEST_CASE("pasting with a shift: whole tiles, parts of tiles, negative ways")
-{
-    RasterData src(RasterId(0));
-    edit(src, [](RasterEditor& ed) {
-        for (int y = 0; y < 100; ++y)
-            for (int x = 0; x < 100; ++x)
-                if ((x + y) % 7 == 0) ed.setPixel(x, y, RGBA{ uint8_t(x), uint8_t(y), 0, 255 });
-    });
-    for (const auto [dx, dy] : { std::pair{ 64, -128 }, std::pair{ -3, 70 }, std::pair{ -65, -1 } }) {
-        RasterData dst(RasterId(1));
-        edit(dst, [&](RasterEditor& ed) {
-            TileReader reader = src.reader();
-            ed.paste(reader, src.getBounds(), dx, dy, { 255, CompositeMode::Over });
-        });
-        CHECK(dst.getBounds() == src.getBounds().offsetBy(dx, dy));
-        for (int y = 0; y < 100; y += 3)
-            for (int x = 0; x < 100; x += 5) CHECK(pixel(dst, x + dx, y + dy) == pixel(src, x, y));
-    }
+    CHECK(pixelAt(r, 3, 3) == RGBA{ 90, 0, 0, 255 });
 }
 
 TEST_CASE("an image placed anywhere: tiles where it lands, none where it's empty")
@@ -200,10 +182,9 @@ TEST_CASE("an image placed anywhere: tiles where it lands, none where it's empty
                                         0, 0, 0, 0,       0, 0, 0, 0,   0, 255, 0, 255 };
     TileGrid tiles;
     tilesFromImage(tiles, { rgba, 3, 2 }, -65, 63);   // across four tiles
-    TileReader r = tiles.reader();
-    CHECK(r.pixel(-65, 63) == RGBA{ 255, 0, 0, 255 });
-    CHECK(r.pixel(-63, 63) == RGBA{ 64, 64, 64, 128 });
-    CHECK(r.pixel(-63, 64) == RGBA{ 0, 255, 0, 255 });
+    CHECK(pixelAt(tiles, -65, 63) == RGBA{ 255, 0, 0, 255 });
+    CHECK(pixelAt(tiles, -63, 63) == RGBA{ 64, 64, 64, 128 });
+    CHECK(pixelAt(tiles, -63, 64) == RGBA{ 0, 255, 0, 255 });
     CHECK(tiles.getReadTile(-2, 1) == nullptr);   // (-65, 64): only a transparent pixel landed there
     CHECK(tiles.size() == 3);
 }
@@ -232,7 +213,7 @@ TEST_CASE("a stroke's cover bounds are what it composes over nothing")
     }
 }
 
-TEST_CASE("alpha lock: a stroke recolours, never changes alpha")
+TEST_CASE("alpha lock: a stroke recolors, never changes alpha")
 {
     Tile original;
     original.setPx(5, 5, RGBA{ 0, 0, 100, 100 });   // faint blue
@@ -252,14 +233,14 @@ TEST_CASE("alpha lock: a stroke recolours, never changes alpha")
 TEST_CASE("a grid's copy is a snapshot: shared until either writes, then only what's touched is copied")
 {
     TileGrid live;
-    for (int i = 0; i < 40; ++i) TileEdit::fill(live.writeOrCreateTile(i, 0), RGBA{ 1, 2, 3, 255 });
+    for (int i = 0; i < 40; ++i) fillTile(live.writeOrCreateTile(i, 0), RGBA{ 1, 2, 3, 255 });
     TilePool& pool = live.pool();
     CHECK(pool.liveCount() == 40);
 
     const TileGrid before = live;                 // shares every page and tile
     CHECK(pool.liveCount() == 40);
     CHECK(before.size() == 40);
-    TileEdit::fill(live.writeOrCreateTile(5, 0), RGBA{ 9, 9, 9, 255 });   // that one tile copied
+    fillTile(live.writeOrCreateTile(5, 0), RGBA{ 9, 9, 9, 255 });   // that one tile copied
     CHECK(pool.liveCount() == 41);
     CHECK(before.getReadTile(5, 0)->getReadPx(0, 0) == RGBA{ 1, 2, 3, 255 });   // the snapshot as it was
     CHECK(live.getReadTile(5, 0)->getReadPx(0, 0) == RGBA{ 9, 9, 9, 255 });
@@ -276,13 +257,13 @@ TEST_CASE("a grid's copy is a snapshot: shared until either writes, then only wh
     TileGrid empty;
     {
         TileGrid gone = before;                   // another snapshot, let go of
-        TileEdit::fill(gone.writeOrCreateTile(1, 0), RGBA{ 4, 4, 4, 255 });
+        fillTile(gone.writeOrCreateTile(1, 0), RGBA{ 4, 4, 4, 255 });
     }
     CHECK(before.getReadTile(1, 0)->getReadPx(0, 0) == RGBA{ 1, 2, 3, 255 });
 
     // A grid moved from is an empty one, ready to use.
     TileGrid moved = std::move(empty);
-    TileEdit::fill(empty.writeOrCreateTile(0, 0), RGBA{ 7, 7, 7, 255 });
+    fillTile(empty.writeOrCreateTile(0, 0), RGBA{ 7, 7, 7, 255 });
     CHECK(empty.size() == 1);
     CHECK(moved.size() == 0);
 }

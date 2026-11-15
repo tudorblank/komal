@@ -19,7 +19,7 @@
 // revisions to know when what they derive from them (screen curves, the minimap) is stale.
 
 #include "base/signal.hpp"
-#include "document/edit-preview.hpp"
+#include "project/edit-preview.hpp"
 #include "ui/panels/graph/internal/node-item.hpp"
 
 #include <absl/container/flat_hash_map.h>
@@ -45,7 +45,6 @@ public:
     using Items = absl::flat_hash_map<NodeId, NodeItem>;
 
     void init(const Workspace& workspace);   // items for what's there, then follows workspace.changed
-    void shutdown();
 
     const Items& items() const { return m_items; }
     const NodeItem* item(NodeId id) const;
@@ -55,7 +54,7 @@ public:
     uint64_t itemsRevision() const { return m_itemsRevision; }   // bumped whenever an item changes
     uint64_t linksRevision() const { return m_linksRevision; }   // ... whenever a link or one of its ends does
 
-    // The graph's own view state: not the document's, never undone. (Which nodes are selected is
+    // The graph's own view state: not the project's, never undone. (Which nodes are selected is
     // the workspace's: the canvas shows it too.)
     void bringToFront(NodeId id);
     void toggleSection(NodeId id, NodeSignal signal);   // a signal's section opened or closed

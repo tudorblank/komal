@@ -162,7 +162,7 @@ private:
 };
 
 enum class Bounds { Keep, Recompute };
-enum class Evict  { Output, All };
+enum class Evict  { None, Raw };   // Raw: caches derived from inputs go too (evictRawTile)
 
 // The right to change the graph: every call that edits a node takes one. Only the Workspace makes
 // them, and lends one to the blocks it edits the graph through. Anyone may read a node; nobody
@@ -180,7 +180,7 @@ public:
     Node(const Node&) = delete;
     Node& operator=(const Node&) = delete;
 
-    // ---------- identity: the document names and places nodes
+    // ---------- identity: the workspace names and places nodes
     virtual NodeType type() const = 0;
     NodeId id() const { return m_id; }
     const std::string& label() const { return m_label; }
@@ -214,15 +214,15 @@ public:
     TileSet footprint() { TileSet t; addFootprint(t); return t; }
 
     // ---------- caches (subclasses that keep any)
-    virtual void evictRawTile(int, int) {}      // caches derived from inputs
-    virtual void evictOutputTile(int, int) {}   // caches of post-signal output
+    virtual void evictRawTile(int, int) {}   // caches derived from inputs
 
     // ---------- signals
-    const SignalChannels& signal(NodeSignal s) const { return m_signals[int(s)]; }
+    const SignalChannels& signal(NodeSignal s) const { return m_signals[size_t(s)]; }
     bool hasDryWet() const { return m_ports.dryWet; }   // an effect
     bool hasSignal(NodeSignal s) const { return s == NodeSignal::Main || hasDryWet(); }
-    bool wetOn() const { return !hasDryWet() || gainByte(m_signals[int(NodeSignal::Wet)].scale[0]) != 0; }
-    bool dryOn() const { return hasDryWet() && gainByte(m_signals[int(NodeSignal::Dry)].scale[0]) != 0; }
+    static bool signalOn(float alphaScale) { return unitToByte(alphaScale) != 0; }   // a signal whose A scale is this shows
+    bool wetOn() const { return !hasDryWet() || signalOn(m_signals[size_t(NodeSignal::Wet)].scale[0]); }
+    bool dryOn() const { return hasDryWet() && signalOn(m_signals[size_t(NodeSignal::Dry)].scale[0]); }
     bool isPassthrough() const { return signalIsIdentity(NodeSignal::Main) && signalIsIdentity(NodeSignal::Wet) && !dryOn(); }
     void setScale(GraphKey, NodeSignal sig, NodeChannel ch, float v);   // ignored for a signal the node lacks
 
@@ -257,8 +257,6 @@ public:
 
     void removeFromGraph(GraphKey);   // when deleting: users drop it, it drops what fed it
 
-    static uint8_t gainByte(float v) { return unitToByte(v); }
-
 protected:
     // A stack's rows as they change (inside the edit, before what changed is told): what keeps
     // something per row, a compositor's mutes and groups, follows them.
@@ -273,9 +271,9 @@ protected:
     virtual void movedLayerTiles(size_t /*from*/, size_t /*to*/, const TileSet& /*moved*/, TileSet& /*dirty*/) const {}
 
     // Unknown change: dirty = footprint before + after.
-    TileSet change(const std::function<void()>& mutate, Evict e = Evict::All);
+    void change(const std::function<void()>& mutate, Evict e = Evict::Raw);
     // Known change: exactly `dirty`.
-    TileSet changeKnown(TileSet dirty, Bounds b, Evict e, const std::function<void()>& mutate);
+    void changeKnown(const TileSet& dirty, Bounds b, Evict e, const std::function<void()>& mutate);
 
     // Tiles of its output changed (raster edits enter the graph here): it, then everything
     // downstream, each once.

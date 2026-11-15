@@ -2,6 +2,7 @@
 #include "gpu/gpu-object.hpp"
 
 #include <cstdint>
+#include <string_view>
 
 // What GPU code needs from the GpuDevice, without owning anything.
 struct GpuHandles {
@@ -11,8 +12,14 @@ struct GpuHandles {
 };
 
 inline WGPUStringView sv(const char* s) { return WGPUStringView{ s, WGPU_STRLEN }; }
+// wgpu's text back (WGPU_STRLEN: up to its terminator; no data: empty)
+inline std::string_view text(WGPUStringView s)
+{
+    if (!s.data) return {};
+    return s.length == WGPU_STRLEN ? std::string_view(s.data) : std::string_view(s.data, s.length);
+}
 
-WGPUShaderModule createShaderModule(const GpuHandles& ctx, const char* wgsl, const char* label);
+WGPUShaderModule createShaderModule(WGPUDevice device, const char* wgsl, const char* label);
 
 // A uniform buffer bound alone at binding 0 of a bind group.
 struct GpuUniform {

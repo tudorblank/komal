@@ -3,17 +3,17 @@
 #include "app/window-surface.hpp"
 #include "base/clock.hpp"
 #include "base/frames.hpp"
-#include "document/documents.hpp"
+#include "project/projects-manager.hpp"
 #include "gpu/device.hpp"
 #include "input/sdl-input.hpp"
 #include "ui/ui-main.hpp"
 
 #include <SDL3/SDL_events.h>
-#include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
-#include <vector>
 
+struct SDL_DialogFileFilter;
 struct SDL_Window;
 
 // runs the frames - draws on demand + installs the main loop's waker
@@ -21,13 +21,13 @@ class Application {
 public:
     ~Application();
 
-    // theme: a built-in one (assets/themes/<theme>.toml); main-dark if it can't be read
-    bool init(const char* title, int width, int height, std::string_view theme = "main-dark");
+    // theme: one of Komal's own (written in C++) or an extra .toml in themes/ beside the program
+    // (ui/style/theme-list.hpp); none, or one that can't be had: Komal's first
+    bool init(const char* title, int width, int height, std::string_view theme);
     int  exec();
     void openFile(const char* path) { m_userInterface.openFile(path); } // imported once running
 
 private:
-    bool m_running = false;
     void shutdown();
 
     // window
@@ -35,7 +35,7 @@ private:
     int m_normalW = 0, m_normalH = 0;   // non-maximized size
     std::string m_prefDir;  // settings
 
-    Documents m_documents;   // the open projects (each its workspace + actions); one active
+    ProjectsManager m_projects;   // the open projects (each its workspace + actions); one active
 
     // input / events (from SDL)
     SdlInput    m_input;   // every event, into the InputFrame the UI reads (input/sdl-input.hpp)
@@ -51,11 +51,19 @@ private:
     int  m_gpuResetAt = 0;  // (KOMAL_GPU_RESET_AT=n) device lost at frame n (for rebuild)
 
     // ui
-    UserInterface m_userInterface;   // a shell over the documents
-    HostInfo m_host{ .uiScale = 0.0f, .gpu = {}, .showImportDialog = {}, .showOpenDialog = {}, .showSaveDialog = {} };   // what the interface reads about the window; scale 0: not styled yet
+    UserInterface m_userInterface;   // a shell over the projects
+
+    HostInfo m_host { // what the interface reads about the window; scale 0: not styled yet
+        .uiScale = 0.0f,
+        .gpu = {},
+        .showImportDialog = {},
+        .showOpenDialog = {},
+        .showSaveDialog = {}
+    };
     void showImportDialog();
     void showOpenDialog();
-    void showSaveDialog(DocumentId document, const std::string& suggested);
+    void showOpenFileDialog(std::span<const SDL_DialogFileFilter> filters);   // the files picked open (openFile)
+    void showSaveDialog(ProjectId project, const std::string& suggested);
     void applyContentScale();
     
     // render

@@ -1,4 +1,7 @@
 #pragma once
+// The Navigator: a map of the active project's picture with the canvas's view on it (drag it, or
+// press elsewhere to centre there), and zoom and rotation controls under it. Under an edit in
+// progress the map shows the preview's picture of the master.
 
 #include "ui/panels/canvas/items/checker.hpp"
 #include "ui/panels/canvas/items/raster.hpp"
@@ -8,20 +11,21 @@
 
 #include <imgui.h>
 
-class Navigator : public Panel {
+class NavigatorPanel : public Panel {
 public:
     PanelInfo info() const override;
     bool init() override;   // draws the engine's output tiles with its pipelines
     void shutdown() override;
     void releaseGpu() override;
     void restoreGpu() override;
-    void documentsChanged(const DocumentsEvent& e) override;   // shows the active document's picture
+    void projectsChanged(const ProjectsEvent& e) override;   // shows the active project's picture
 
     void draw() override;
     void renderGpu(WGPUCommandEncoder enc) override;
     Clock::Seconds nextFrameIn() const override;        // tiles of the picture (or the preview's) still coming in: now
 
 private:
+    bool initGpu();        // the scene and the view, on the engine's pipelines
     bool showsPreview();   // the preview's picture of the master, rather than the view's (draw time)
     void drawMap(ImVec2 size);
     void drawControls();
@@ -34,8 +38,6 @@ private:
     bool         m_ready = false;
     bool         m_pictureShown = false;   // drawn this frame: render it
 
-    const Preview*         m_preview   = nullptr;   // the engine's
-    const CanvasPipelines* m_pipelines = nullptr;
     PreviewPicture m_previewPicture;    // the master under the edit in progress
     uint32_t m_previewW = 0, m_previewH = 0;   // what it's fitted into, pixels (the map, as drawn)
     bool     m_previewWaiting = false;  // its leaves still coming in

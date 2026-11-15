@@ -1,16 +1,16 @@
-#include "ui-main.hpp"
+#include "ui/ui-main.hpp"
 #include "base/file.hpp"
 #include "base/log.hpp"
 #include "input/input-frame.hpp"
-#include "document/document-actions.hpp"
-#include "document/documents-actions.hpp"
-#include "document/workspace.hpp"
+#include "project/project-actions.hpp"
+#include "project/projects-manager-actions.hpp"
+#include "project/workspace.hpp"
 #include "ui/panels/canvas/canvas-panel.hpp"
-#include "ui/panels/document-tabs-panel.hpp"
+#include "ui/panels/project-tabs-panel.hpp"
 #include "ui/panels/graph/graph-panel.hpp"
 #include "ui/panels/history-panel.hpp"
 #include "ui/panels/info-panel.hpp"
-#include "ui/panels/intro-panel.hpp"
+#include "ui/panels/intro-screen.hpp"
 #include "ui/keymap.hpp"
 #include "ui/panels/navigator-panel.hpp"
 #include "ui/panels/color-panel.hpp"
@@ -22,7 +22,6 @@
 #include <imgui.h>
 #include <imgui_internal.h>   // FindHoveredWindowEx
 #include <algorithm>
-#include <cmath>
 #include <cstdio>
 
 UserInterface::UserInterface()
@@ -31,15 +30,16 @@ UserInterface::UserInterface()
     m_canvasPanel = addPanel<CanvasPanel>();
     m_graphPanel  = addPanel<GraphPanel>();
     addPanel<ToolboxPanel>();
-    addPanel<DocumentTabsPanel>();   // under the toolbar: bars stack in this order
-    addPanel<Navigator>();
+    addPanel<ProjectTabsPanel>();   // under the Toolbox: bars stack in this order
+    addPanel<NavigatorPanel>();
     addPanel<ColorPanel>();
     addPanel<ToolPropertiesPanel>();
     addPanel<HistoryPanel>();
     addPanel<InfoPanel>();
 
-    for (PanelEntry& e : m_panels) m_drawOrder.push_back(&e);
-    std::stable_partition(m_drawOrder.begin(), m_drawOrder.end(), [](const PanelEntry* e) { return e->info.phase == DrawPhase::Edit; });
+    for (const auto& p : m_panels) m_drawOrder.push_back(p.get());
+    std::stable_partition(m_drawOrder.begin(), m_drawOrder.end(), [](const Panel* p) { return p->m_info.phase == DrawPhase::Edit; });
+    m_dockspace.follow(m_panels);
 }
 
 template<class T>
@@ -47,102 +47,101 @@ T* UserInterface::addPanel()
 {
     auto panel = std::make_unique<T>();
     T* added = panel.get();
-    const PanelEntry& e = m_panels.emplace_back(PanelEntry{ std::move(panel), added->info() });
     Panel& base = *added;
-    base.m_open = e.info.openByDefault;
-    base.m_title  = e.info.title;
-    base.m_toggle = e.info.toggle;
-    m_dockspace.addPanel(e.info);
+    base.m_info = added->info();
+    base.m_open = base.m_info.openByDefault;
+    m_panels.push_back(std::move(panel));
     return added;
 }
 
-bool UserInterface::init(GpuDevice& gpu, Documents& documents, const InputFrame& input, const HostInfo& host)
+bool UserInterface::init(GpuDevice& gpu, ProjectsManager& projects, const InputFrame& input, const HostInfo& host)
 {
     m_input = &input;
     m_host  = &host;
-    m_documents = &documents;
-    // What a user can do to the app and the open documents; the active document's own come
+    m_projects = &projects;
+    // What a user can do to the app and the open projects; the active project's own come
     // through it. Panels add their own interface actions (framing, selecting, opening menus) as they init.
     registerAppActions();
-    registerDocumentsActions(m_documentActions, documents);
-    registerDocumentRequests();
+    registerProjectsManagerActions(m_projectActions, projects);
+    registerProjectRequests();
     bool ok = m_canvas.init(gpu);
     m_intro.init(gpu);
-    for (const auto& d : documents.all()) m_canvas.open(d->id(), d->workspace());
-    m_documentsEvents = documents.changed.connect([this](const DocumentsEvent& e) { documentsChanged(e); });
-    m_context.emplace(UiContext{ gpu, documents, m_actions, m_tools, input, m_owner, m_canvas, host });
-    for (PanelEntry& e : m_panels) {
-        e.panel->m_ui = &*m_context;
-        ok = e.panel->init() && ok;   // one failing leaves the rest working
+    for (const auto& d : projects.all()) m_canvas.open(d->id(), d->workspace());
+    m_projectsEvents = projects.changed.connect([this](const ProjectsEvent& e) { projectsChanged(e); });
+    m_context.emplace(UiContext{ gpu, projects, m_actions, m_tools, input, m_owner, m_canvas, host });
+    for (const auto& p : m_panels) {
+        p->m_ui = &*m_context;
+        ok = p->init() && ok;   // one failing leaves the rest working
     }
-    // Every action is there now; a document's through a stand-in, so their keys are bound with none open.
+    // Every action is there now; a project's through a stand-in, so their keys are bound with none open.
     {
-        Document keys;
+        Project keys;
         m_actions.delegateTo(&keys.actions());
         bindDefaultKeys(m_actions);
     }
-    m_actions.delegateTo(documents.empty() ? nullptr : &documents.active().actions());
-    m_canvas.activate(documents.activeId());
+    m_actions.delegateTo(projects.empty() ? nullptr : &projects.active().actions());
+    m_canvas.activate(projects.activeId());
     m_initialized = true;
     return ok;
 }
 
-void UserInterface::documentsChanged(const DocumentsEvent& e)
+void UserInterface::projectsChanged(const ProjectsEvent& e)
 {
     switch (e.type) {
-    case DocumentsEvent::Type::Opened:
-        m_canvas.open(e.id, m_documents->find(e.id)->workspace());
-        for (PanelEntry& p : m_panels) p.panel->documentsChanged(e);
+    case ProjectsEvent::Type::Opened:
+        m_canvas.open(e.id, m_projects->find(e.id)->workspace());
+        for (const auto& p : m_panels) p->projectsChanged(e);
         break;
-    case DocumentsEvent::Type::Closing:   // it's still there: everything lets go of it, the engine last
-        if (e.id == m_documents->active().id()) m_actions.delegateTo(nullptr);
-        for (auto p = m_panels.rbegin(); p != m_panels.rend(); ++p) p->panel->documentsChanged(e);
+    case ProjectsEvent::Type::Closing:   // it's still there: everything lets go of it, the engine last
+        if (e.id == m_projects->active().id()) m_actions.delegateTo(nullptr);
+        for (auto p = m_panels.rbegin(); p != m_panels.rend(); ++p) (*p)->projectsChanged(e);
         m_canvas.close(e.id);
-        if (m_saving && m_saving->document == e.id) m_saving.reset();
-        if (m_confirm && m_confirm->document == e.id) {   // gone without an answer: on to the next
+        if (m_saving && m_saving->project == e.id) m_saving.reset();
+        if (m_confirm && m_confirm->project == e.id) {   // gone without an answer: on to the next
             m_confirm.reset();
             if (m_quitting) askNextBeforeQuit();
         }
         break;
-    case DocumentsEvent::Type::Activated:
-        m_actions.delegateTo(&m_documents->find(e.id)->actions());
+    case ProjectsEvent::Type::Activated:
+        m_actions.delegateTo(&m_projects->find(e.id)->actions());
         m_canvas.activate(e.id);
-        for (PanelEntry& p : m_panels) p.panel->documentsChanged(e);
+        for (const auto& p : m_panels) p->projectsChanged(e);
         break;
     }
 }
 
-void UserInterface::registerDocumentRequests()
+void UserInterface::registerProjectRequests()
 {
-    for (const Action& a : m_documentActions.actions()) {
+    for (const Action& a : m_projectActions.actions()) {
         const ActionId id = a.id;
         m_actions.add({ .id = id, .title = a.title, .kind = ActionKind::Interface, .args = a.args,
-                        .enabled = [this, id] { return m_documentActions.find(id)->isEnabled(); },
+                        .enabled = [this, id] { return m_projectActions.find(id)->isEnabled(); },
                         .run = [this, id](const ActionArgs& args) {
-            m_documentRequests.push_back({ id, args });
+            m_projectRequests.push_back({ id, args });
             return true;
         } });
     }
 }
 
-void UserInterface::applyDocumentRequests()
+void UserInterface::applyProjectRequests()
 {
-    std::vector<std::pair<ActionId, ActionArgs>> requests = std::move(m_documentRequests);
-    m_documentRequests.clear();
+    std::vector<std::pair<ActionId, ActionArgs>> requests = std::move(m_projectRequests);
+    m_projectRequests.clear();
     for (auto& [id, args] : requests) {
-        const DocumentId document = args.get(DocArgs::kDocument, m_documents->activeId());
-        const std::string file = File::name(args.get(DocArgs::kPath, std::string()));
-        const ActionResult r = m_documentActions.run(id, std::move(args));
-        if (id == Actions::DocSave && m_saving && m_saving->document == document) answered(bool(r));   // the question's "Yes"
-        if (r || r.why.empty()) continue;
-        if (id == Actions::DocOpen) m_notices.post("Couldn't open " + file + ": " + r.why);
-        if (id == Actions::DocSave) m_notices.post("Couldn't save: " + r.why);
+        const Project* target = projectOf(args);
+        const ProjectId project = target ? target->id() : kNoProject;
+        const std::string file = File::name(args.get(ProjectArgs::kPath, std::string()));
+        const ActionResult r = m_projectActions.run(id, std::move(args));
+        if (id == Actions::ProjectSave && m_saving && m_saving->project == project) answered(bool(r));   // the question's "Yes"
+        if (r || r.error.empty()) continue;
+        if (id == Actions::ProjectOpen) m_notices.post("Couldn't open " + file + ": " + r.error);
+        if (id == Actions::ProjectSave) m_notices.post("Couldn't save: " + r.error);
     }
 }
 
 void UserInterface::openFile(std::string path)
 {
-    if (!Document::isFileName(path)) {
+    if (!Project::isFileName(path)) {
         m_importer.open(std::move(path));
         return;
     }
@@ -150,28 +149,28 @@ void UserInterface::openFile(std::string path)
     m_toOpen.push_back(std::move(path));
 }
 
-void UserInterface::saveTo(DocumentId document, std::string path)
+void UserInterface::saveTo(ProjectId project, std::string path)
 {
     const std::lock_guard lock(m_inboxLock);
-    m_toSave.push_back({ document, std::move(path) });
+    m_toSave.push_back({ project, std::move(path) });
 }
 
 void UserInterface::takeInbox()
 {
     std::vector<std::string> open;
-    std::vector<std::pair<DocumentId, std::string>> save;
+    std::vector<std::pair<ProjectId, std::string>> save;
     {
         const std::lock_guard lock(m_inboxLock);
         open.swap(m_toOpen);
         save.swap(m_toSave);
     }
-    for (std::string& path : open) m_actions.run(Actions::DocOpen, { { DocArgs::kPath, std::move(path) } });
-    for (auto& [document, path] : save) {
+    for (std::string& path : open) m_actions.run(Actions::ProjectOpen, { { ProjectArgs::kPath, std::move(path) } });
+    for (auto& [project, path] : save) {
         if (path.empty()) {   // the dialog was cancelled: not saved, so nothing closes
-            if (m_saving && m_saving->document == document) answered(false);
+            if (m_saving && m_saving->project == project) answered(false);
             continue;
         }
-        m_actions.run(Actions::DocSave, { { DocArgs::kDocument, document }, { DocArgs::kPath, std::move(path) } });
+        m_actions.run(Actions::ProjectSave, { { ProjectArgs::kProject, project }, { ProjectArgs::kPath, std::move(path) } });
     }
 }
 
@@ -183,22 +182,22 @@ void UserInterface::requestQuit()
 void UserInterface::shutdown()
 {
     if (!m_initialized) return;
-    m_documentsEvents.disconnect();
-    for (auto e = m_panels.rbegin(); e != m_panels.rend(); ++e) e->panel->shutdown();
+    m_projectsEvents.disconnect();
+    for (auto p = m_panels.rbegin(); p != m_panels.rend(); ++p) (*p)->shutdown();
     m_canvas.shutdown();   // after every view of it
     m_actions.delegateTo(nullptr);
     m_initialized = false;
 }
 
 
-bool UserInterface::drawn(const PanelEntry& e) const
+bool UserInterface::drawn(const Panel& p) const
 {
-    return e.info.slot == DockSlot::Toolbar || !m_documents->empty();
+    return p.m_info.slot == DockSlot::Toolbar || !m_projects->empty();
 }
 
 void UserInterface::releaseGpu()
 {
-    for (auto e = m_panels.rbegin(); e != m_panels.rend(); ++e) e->panel->releaseGpu();
+    for (auto p = m_panels.rbegin(); p != m_panels.rend(); ++p) (*p)->releaseGpu();
     m_intro.releaseGpu();
     m_canvas.releaseGpu();   // after every view of it
 }
@@ -207,7 +206,7 @@ bool UserInterface::restoreGpu(GpuDevice& gpu)
 {
     const bool ok = m_canvas.restoreGpu(gpu);   // before every view of it
     m_intro.restoreGpu(gpu);
-    for (PanelEntry& e : m_panels) e.panel->restoreGpu();
+    for (const auto& p : m_panels) p->restoreGpu();
     return ok;
 }
 
@@ -216,47 +215,47 @@ Clock::Seconds UserInterface::nextFrameIn() const
     // Imports wake the loop when they finish; a stroke changes nothing while the pen rests.
     // A closed panel needs no frames (each knows it's closed).
     Clock::Seconds next = std::min(m_canvas.nextFrameIn(), m_notices.nextFrameIn());
-    if (m_documents)
-        for (const auto& d : m_documents->all())
+    if (m_projects)
+        for (const auto& d : m_projects->all())
             if (!d->workspace().historySettled()) next = std::min(next, kFrameNow);   // until it is
-    for (const PanelEntry& e : m_panels)
-        if (drawn(e)) next = std::min(next, e.panel->nextFrameIn());
+    for (const auto& p : m_panels)
+        if (drawn(*p)) next = std::min(next, p->nextFrameIn());
     return next;
 }
 
 void UserInterface::renderGpu(WGPUCommandEncoder enc)
 {
     m_canvas.beginFrame();   // first: the output's tiles, for every view of them
-    for (const PanelEntry& e : m_panels)
-        if (drawn(e)) e.panel->renderGpu(enc);
+    for (const auto& p : m_panels)
+        if (drawn(*p)) p->renderGpu(enc);
     m_canvas.renderThumbnails(enc);   // last: the least urgent
 }
 
 void UserInterface::draw()
 {
     takeInbox();
-    applyDocumentRequests();   // last frame's (its pictures are shown now): before anything draws
-    if (m_documents->empty() && m_importer.ready()) m_documentActions.run(Actions::DocNew);   // an image lands in a new one
+    applyProjectRequests();   // last frame's (its pictures are shown now): before anything draws
+    if (m_projects->empty() && m_importer.ready()) m_projectActions.run(Actions::ProjectNew);   // an image lands in a new one
     const ImageImporter::Polled polled = m_importer.poll(m_actions);
     for (const ImageImporter::Imported& i : polled.imported)
         if (std::holds_alternative<ImageImporter::InGraph>(i.placement))
             m_actions.run(Actions::SelectionSet, selectionArgs(NodeSelection::only(i.node)));
-    for (const std::string& why : polled.failed) m_notices.post("Couldn't import " + why);
+    for (const std::string& error : polled.failed) m_notices.post("Couldn't import " + error);
     if (m_canvas.outOfMemory() && !m_toldOutOfMemory) m_notices.post("Out of GPU memory: parts of the picture can't be shown");
     m_toldOutOfMemory = m_canvas.outOfMemory();
     m_owner.beginFrame();
     if (!m_owner.typing()) m_actions.dispatch(*m_input, m_owner.keyboard());   // the frame's shortcuts, all of them, before the panels
-    applyDocumentRequests();   // a key's (Ctrl+N): nothing is drawn yet
+    applyProjectRequests();   // a key's (Ctrl+N): nothing is drawn yet
     drawMenuBar();
 
-    // Bars under the menu bar, then the dockspace takes the rest (with no document open, the
+    // Bars under the menu bar, then the dockspace takes the rest (with no project open, the
     // intro does). Then everything else, Edit panels before Show panels (DrawPhase).
-    for (PanelEntry* e : m_drawOrder)
-        if (e->info.slot == DockSlot::Toolbar) e->panel->draw();
-    if (m_documents->empty()) m_intro.draw(m_actions);
+    for (Panel* p : m_drawOrder)
+        if (p->m_info.slot == DockSlot::Toolbar) p->draw();
+    if (m_projects->empty()) m_intro.draw(m_actions);
     else m_dockspace.draw();
-    for (PanelEntry* e : m_drawOrder)
-        if (e->info.slot != DockSlot::Toolbar && drawn(*e)) e->panel->draw();
+    for (Panel* p : m_drawOrder)
+        if (p->m_info.slot != DockSlot::Toolbar && drawn(*p)) p->draw();
 
     dispatchDrops();   // after the panels: their windows and rects are this frame's
     drawConfirm();
@@ -268,11 +267,11 @@ void UserInterface::draw()
 
 void UserInterface::settleHistories()
 {
-    // The active document first; the others after, on what's left.
-    if (m_documents->empty()) return;
+    // The active project first; the others after, on what's left.
+    if (m_projects->empty()) return;
     const Deadline until = Deadline::in(kHistoryShare);
-    if (!m_documents->active().workspace().settleHistory(until)) return;
-    for (const auto& d : m_documents->all())
+    if (!m_projects->active().workspace().settleHistory(until)) return;
+    for (const auto& d : m_projects->all())
         if (!d->workspace().settleHistory(until)) return;
 }
 
@@ -281,7 +280,7 @@ void UserInterface::drawMenuBar()
     if (!ImGui::BeginMainMenuBar())
         return;
     if (ImGui::BeginMenu("File")) {
-        Widgets::actionMenuItem(m_actions, Actions::DocNew);
+        Widgets::actionMenuItem(m_actions, Actions::ProjectNew);
         Widgets::actionMenuItem(m_actions, Actions::FileOpen);
         ImGui::Separator();
         Widgets::actionMenuItem(m_actions, Actions::FileSave);
@@ -300,8 +299,8 @@ void UserInterface::drawMenuBar()
     }
     if (ImGui::BeginMenu("View")) {
         for (const bool floating : { false, true }) {   // the docked panels, then the floating ones
-            for (const PanelEntry& e : m_panels)
-                if ((e.info.slot == DockSlot::Floating) == floating) Widgets::actionMenuItem(m_actions, e.panel->toggleAction());
+            for (const auto& p : m_panels)
+                if ((p->m_info.slot == DockSlot::Floating) == floating) Widgets::actionMenuItem(m_actions, p->toggleAction());
             ImGui::Separator();
         }
         Widgets::actionMenuItem(m_actions, Actions::ViewResetLayout);
@@ -318,8 +317,8 @@ void UserInterface::dispatchDrops()
         ImGui::FindHoveredWindowEx(d.pos, false, &top, &underMoving);   // the window in front at that point
         Vec2 world;
         ImVec2 nodePos;
-        if (Document::isFileName(d.path))   // a project: opened, wherever it lands
-            m_actions.run(Actions::DocOpen, { { DocArgs::kPath, std::move(d.path) } });
+        if (Project::isFileName(d.path))   // a project: opened, wherever it lands
+            m_actions.run(Actions::ProjectOpen, { { ProjectArgs::kPath, std::move(d.path) } });
         else if (m_canvasPanel->dropTarget(top, d.pos, world))
             m_importer.open(std::move(d.path), ImageImporter::OnCanvas{ world.x, world.y });
         else if (m_graphPanel->dropTarget(top, d.pos, nodePos))
@@ -330,14 +329,14 @@ void UserInterface::dispatchDrops()
     m_drops.clear();
 }
 
-void UserInterface::ask(DocumentId document, bool quitting)
+void UserInterface::ask(ProjectId project, bool quitting)
 {
-    m_confirm = Confirm{ .quitting = quitting, .document = document };
+    m_confirm = Confirm{ .quitting = quitting, .project = project };
 }
 
 void UserInterface::askNextBeforeQuit()
 {
-    for (const auto& d : m_documents->all())
+    for (const auto& d : m_projects->all())
         if (d->unsaved() && std::find(m_keptUnsaved.begin(), m_keptUnsaved.end(), d->id()) == m_keptUnsaved.end()) {
             ask(d->id(), true);
             return;
@@ -350,9 +349,9 @@ void UserInterface::answered(bool saved)
 {
     const Confirm was = *m_saving;
     m_saving.reset();
-    if (!saved) stopAsking();   // why is told (a notice), or the dialog was cancelled
+    if (!saved) stopAsking();   // the error is told (a notice), or the dialog was cancelled
     else if (was.quitting) askNextBeforeQuit();
-    else m_actions.run(Actions::DocClose, { { DocArgs::kDocument, was.document } });
+    else m_actions.run(Actions::ProjectClose, { { ProjectArgs::kProject, was.project } });
 }
 
 void UserInterface::stopAsking()
@@ -367,7 +366,7 @@ void UserInterface::drawConfirm()
 {
     constexpr const char* kPopup = "Unsaved changes##confirm";
     if (!m_confirm) return;
-    const Document* d = m_documents->find(m_confirm->document);
+    const Project* d = m_projects->find(m_confirm->project);
     if (!d) {
         stopAsking();
         return;
@@ -379,35 +378,24 @@ void UserInterface::drawConfirm()
     char text[256];
     std::snprintf(text, sizeof text, "Save changes to %s before %s?", d->name().c_str(), m_confirm->quitting ? "quitting" : "closing");
     ImGui::TextUnformatted(text);
-    ImGui::Spacing();
+    Widgets::sectionGap();
 
-    // Three alike, centred under the text.
-    const char* labels[] = { "Yes", "No", "Cancel" };
-    const float pad = Style::metrics().framePadding, gap = ImGui::GetStyle().ItemSpacing.x;
-    float w = 0.0f;
-    for (const char* l : labels) w = std::max(w, std::round(ImGui::CalcTextSize(l).x + pad * 4.0f));
-    const float row = 3.0f * w + 2.0f * gap;
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (ImGui::GetContentRegionAvail().x - row) * 0.5f));
-    int answer = -1;
-    for (int i = 0; i < 3; ++i) {
-        if (i) ImGui::SameLine();
-        if (Widgets::button(labels[i], w)) answer = i;
-    }
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) answer = 2;
+    int answer = Widgets::buttonRow({ "Yes", "No", "Cancel" });   // alike, centred under the text
+    if (m_actions.pressed(Actions::DialogCancel, *m_input)) answer = 2;
 
     const Confirm confirm = *m_confirm;
     switch (answer) {
     case 0:   // saved first (asked where, if it has no file yet): answered() goes on once it is
         m_confirm.reset();
         m_saving = confirm;
-        if (!m_actions.run(Actions::FileSave, { { DocArgs::kDocument, confirm.document } })) answered(false);   // can't now (an edit going on)
+        if (!m_actions.run(Actions::FileSave, { { ProjectArgs::kProject, confirm.project } })) answered(false);   // can't now (an edit going on)
         break;
     case 1:
         m_confirm.reset();
         if (!confirm.quitting) {
-            m_actions.run(Actions::DocClose, { { DocArgs::kDocument, confirm.document }, { DocArgs::kDiscard, true } });
+            m_actions.run(Actions::ProjectClose, { { ProjectArgs::kProject, confirm.project }, { ProjectArgs::kDiscard, true } });
         } else {
-            m_keptUnsaved.push_back(confirm.document);
+            m_keptUnsaved.push_back(confirm.project);
             askNextBeforeQuit();   // the next one's question in this one's place
         }
         break;

@@ -1,4 +1,4 @@
-#include "document/history.hpp"
+#include "project/history.hpp"
 
 #include <doctest/doctest.h>
 

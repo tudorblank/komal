@@ -1,11 +1,11 @@
-#include "canvas-panel.hpp"
+#include "ui/panels/canvas/canvas-panel.hpp"
 #include "ui/input-owner.hpp"
-#include "document/document-actions.hpp"
+#include "project/project-actions.hpp"
 #include "ui/render/painter.hpp"
 #include "ui/style/ui-style.hpp"
 #include "ui/panels/canvas/canvas-engine.hpp"
 #include "ui/panels/canvas/imgui-texture.hpp"
-#include "document/workspace.hpp"
+#include "project/workspace.hpp"
 #include "ui/navigation.hpp"
 #include "ui/tools/tool-manager.hpp"
 #include "ui/widgets/widgets.hpp"
@@ -32,26 +32,26 @@ PanelInfo CanvasPanel::info() const { return { Actions::ViewCanvas, "Canvas", Do
 
 bool CanvasPanel::init()
 {
-    if (ui().documents.empty()) return ui().canvas.ready();   // a canvas is made as one is shown
-    show(ui().documents.active().id());
+    if (ui().projects.empty()) return ui().canvas.ready();   // a canvas is made as one is shown
+    show(ui().projects.active().id());
     return m_canvas && m_canvas->ready;
 }
 
-CanvasPanel::Canvas* CanvasPanel::canvasOf(DocumentId id)
+CanvasPanel::Canvas* CanvasPanel::canvasOf(ProjectId id)
 {
     for (const auto& c : m_canvases)
-        if (c->document == id) return c.get();
+        if (c->project == id) return c.get();
     return nullptr;
 }
 
-void CanvasPanel::show(DocumentId id)
+void CanvasPanel::show(ProjectId id)
 {
     m_canvas = canvasOf(id);
     if (m_canvas) return;
     // New: made from the engine's pictures of it (it's the active one now).
     auto made = std::make_unique<Canvas>();
     Canvas& c = *made;
-    c.document  = id;
+    c.project  = id;
     c.workspace = &ui().workspace();
     c.preview   = &ui().canvas.preview();
     m_canvases.push_back(std::move(made));
@@ -81,16 +81,16 @@ bool CanvasPanel::makeGpu(Canvas& c)
     return c.ready;
 }
 
-void CanvasPanel::documentsChanged(const DocumentsEvent& e)
+void CanvasPanel::projectsChanged(const ProjectsEvent& e)
 {
     switch (e.type) {
-    case DocumentsEvent::Type::Opened:
+    case ProjectsEvent::Type::Opened:
         break;   // its canvas is made once it's shown
-    case DocumentsEvent::Type::Closing:
-        if (m_canvas && m_canvas->document == e.id) m_canvas = nullptr;
-        std::erase_if(m_canvases, [&](const auto& c) { return c->document == e.id; });
+    case ProjectsEvent::Type::Closing:
+        if (m_canvas && m_canvas->project == e.id) m_canvas = nullptr;
+        std::erase_if(m_canvases, [&](const auto& c) { return c->project == e.id; });
         break;
-    case DocumentsEvent::Type::Activated:
+    case ProjectsEvent::Type::Activated:
         show(e.id);
         break;
     }
@@ -128,7 +128,7 @@ void CanvasPanel::restoreGpu()
     m_canvas = nullptr;
     std::erase_if(m_canvases, [](const auto& c) { return !c->output; });   // never made (no GPU then): made as they're shown
     for (const auto& c : m_canvases) makeGpu(*c);
-    if (!ui().documents.empty()) show(ui().documents.active().id());
+    if (!ui().projects.empty()) show(ui().projects.active().id());
 }
 
 void CanvasPanel::shutdown()
@@ -139,7 +139,6 @@ void CanvasPanel::shutdown()
 
 void CanvasPanel::draw()
 {
-    m_visible = false;
     m_surface.hide();
     m_hasPointer = false;
     if (!isOpen()) {
@@ -155,7 +154,6 @@ void CanvasPanel::draw()
         const ImVec2 avail  = ImGui::GetContentRegionAvail();
         const ImVec2 fb     = ImGui::GetIO().DisplayFramebufferScale;   // HiDPI: render at native pixels
         if (avail.x >= 1.0f && avail.y >= 1.0f && view.resize(avail.x, avail.y, fb.x, fb.y)) {
-            m_visible = true;
             m_surface.show(ImGui::GetCurrentWindowRead(), origin, avail);
             tellSize({ avail.x, avail.y });   // before input: what it frames is this frame's size
 
@@ -171,12 +169,12 @@ void CanvasPanel::draw()
             drawHud(draw, origin);
         }
     }
-    if (!m_visible) tellSize({});   // collapsed, tabbed away
+    if (!m_surface.shown()) tellSize({});   // collapsed, tabbed away
 }
 
 void CanvasPanel::tellSize(Vec2 size)
 {
-    if (size != ui().workspace().canvasViewport()) ui().actions.run(Actions::CanvasViewport, { { DocArgs::kWidth, size.x }, { DocArgs::kHeight, size.y } });
+    if (size != ui().workspace().canvasViewport()) ui().actions.run(Actions::CanvasViewport, { { ProjectArgs::kWidth, size.x }, { ProjectArgs::kHeight, size.y } });
 }
 
 bool CanvasPanel::dropTarget(const ImGuiWindow* window, ImVec2 screen, Vec2& world) const
@@ -196,25 +194,26 @@ void CanvasPanel::handleInput(const ImVec2& origin)
     const bool active  = ImGui::IsItemActive();
 
     // Navigation that works whatever the tool.
-    if (hovered && (io.MouseWheel != 0.0f || io.MouseWheelH != 0.0f)) {
-        if (ui().input.mods & ModPrimary)
-            ui().actions.run(Actions::CanvasZoom, { { DocArgs::kFactor, std::pow(Navigation::kWheelZoomStep, io.MouseWheel) }, { DocArgs::kX, mouse.x }, { DocArgs::kY, mouse.y } });
+    const InputFrame& input = ui().input;
+    if (hovered && input.wheeled()) {
+        if (input.mods & ModPrimary)
+            ui().actions.run(Actions::CanvasZoom, { { ProjectArgs::kFactor, std::pow(Navigation::kWheelZoomStep, input.wheelY) }, { ProjectArgs::kX, mouse.x }, { ProjectArgs::kY, mouse.y } });
         else
-            ui().actions.run(Actions::CanvasPan, { { DocArgs::kDx, io.MouseWheelH * Navigation::kWheelPanStep }, { DocArgs::kDy, io.MouseWheel * Navigation::kWheelPanStep } });
+            ui().actions.run(Actions::CanvasPan, { { ProjectArgs::kDx, input.wheelX * Navigation::kWheelPanStep }, { ProjectArgs::kDy, input.wheelY * Navigation::kWheelPanStep } });
     }
     if (active && ImGui::IsMouseDown(ImGuiMouseButton_Middle) && (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f))
-        ui().actions.run(Actions::CanvasPan, { { DocArgs::kDx, io.MouseDelta.x }, { DocArgs::kDy, io.MouseDelta.y } });
+        ui().actions.run(Actions::CanvasPan, { { ProjectArgs::kDx, io.MouseDelta.x }, { ProjectArgs::kDy, io.MouseDelta.y } });
     m_hasPointer = hovered || active;
-    ui().tools.setSpringHand(m_hasPointer && !ui().owner.typing() && ui().input.isDown(Key::Space));
+    ui().tools.setSpringHand(m_hasPointer && !ui().owner.typing() && ui().actions.held(Actions::ToolHandHold, input));
     if (m_hasPointer) ui().owner.claim(ActionScope::Canvas, InputOwner::Claim::Pointer);   // [ ] brush size, ... next frame
 
     // The rest is the tool's: ImGui decides whether the pointer is ours, SDL gives every sample.
     Tool& tool = ui().tools.active();
     m_pointer.clear();
     if (hovered || active || tool.busy())   // busy: a stroke still gets its release outside the canvas
-        for (const PointerEvent& ev : ui().input.pointer)
+        for (const PointerEvent& ev : input.pointer)
             m_pointer.push_back({ ev, cam.screenToWorld({ ev.x - origin.x, ev.y - origin.y }) });
-    tool.canvasInput({ ui().workspace(), ui().actions, mouse, cam.screenToWorld(mouse), m_pointer, ui().input, hovered, active });
+    tool.canvasInput({ ui().workspace(), ui().actions, m_pointer, input, active });
 }
 
 void CanvasPanel::updateOutlines(Canvas& c)
@@ -284,6 +283,6 @@ void CanvasPanel::drawHud(const Painter& draw, const ImVec2& origin)
 
 void CanvasPanel::renderGpu(WGPUCommandEncoder enc)
 {
-    if (!m_canvas || !m_canvas->ready || !m_visible) return;
+    if (!m_canvas || !m_canvas->ready || !m_surface.shown()) return;
     m_canvas->view.render(enc, ui().canvas.budget(CanvasEngine::Work::Canvas));   // re-renders only when something changed
 }

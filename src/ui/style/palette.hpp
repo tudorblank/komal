@@ -1,9 +1,9 @@
 #pragma once
-// Every colour the app's look is made of, by its job: the one source of truth. Each is made from
-// the theme in use (theme.hpp, a theme file), with an alpha where it's see-through; no colour is
+// Every color the app's look is made of, by its job: the one source of truth. Each is made from
+// the theme in use (theme.hpp, a theme file), with an alpha where it's see-through; no color is
 // written out here or anywhere else. Components don't read these directly: their styles do
 // (ui-style.cpp for ImGui's own widgets and the app's controls, graph-style.cpp for the graph view,
-// Style::canvas() for the canvas engine). Change a job here, or a colour in a theme file, and
+// Style::canvas() for the canvas engine). Change a job here, or a color in a theme file, and
 // everything made of it follows.
 //
 //   const Palette& p = Palette::current();
@@ -11,9 +11,7 @@
 #include "base/color.hpp"
 
 #include <cstdint>
-#include <string>
 #include <string_view>
-#include <vector>
 
 struct Palette {
     // ---- panels: their surfaces and text (ImGui's theme is made of these too)
@@ -44,12 +42,11 @@ struct Palette {
     Color8 navHighlight;                // the window picked with Ctrl+Tab
     Color8 navDim;                      // ... and behind it
     Color8 modalDim;                    // behind a modal window
-    Color8 tabShown;                    // the document shown: its tab in the strip under the toolbar
+    Color8 tabShown;                    // the project shown: its tab in the strip under the Toolbox
     Color8 tabHot;                      // ... a tab there under the mouse
     Color8 tabShownText;
-    Color8 introBack;                   // the window while no document is open ...
+    Color8 introBack;                   // the window while no project is open ...
     Color8 introFace;                   // ... and the face on it
-    Color8 none;
 
     // ---- the accent: selections, focus, checked things, the parts a value covers
     Color8 accent;                      // #8CB4F5
@@ -65,13 +62,13 @@ struct Palette {
     Color8 toggleHot;
     Color8 checkMark;                   // drawn on the accent
 
-    // ---- colour boxes and markers: readable on any colour
+    // ---- color boxes and markers: readable on any color
     Color8 darkRim;                     // around a swatch, a marker's outer ring
     Color8 lightRim;                    // inside a swatch: a black one still shows
     Color8 marker;                      // a marker's inner ring
-    Color8 white;                       // the colour picker's square: white to the hue ...
+    Color8 white;                       // the color picker's square: white to the hue ...
     Color8 black;                       // ... and down to black
-    Color8 clear;
+    Color8 clear;                       // fully see-through (black, so a gradient to black stays black)
 
     // ---- behind everything
     Color8 windowBackground;            // the window, where no panel is (docking's empty space too)
@@ -80,10 +77,8 @@ struct Palette {
     // ---- pictures: behind their transparent parts
     Color8 canvasCheckerA;              // the canvas, at its origin
     Color8 canvasCheckerB;
-    float  canvasChecker = 8.0f;        // its squares, points (they keep their size on screen)
     Color8 pictureCheckerA;             // small pictures (navigator, thumbnails), at a corner
     Color8 pictureCheckerB;
-    float  pictureChecker = 8.0f;       // their squares, pixels
 
     // ---- marks over a picture
     Color8 viewOutline;                 // what the canvas shows, on a map of the picture
@@ -158,7 +153,6 @@ struct Palette {
 
     static const Palette& current();   // made from the theme in use
     static uint64_t revision();         // changes with the theme: what's made from the palette is made again
-    static const std::vector<std::string_view>& themes();   // the built-in ones, by name
-    // Uses a built-in theme (themes()); false (and why) if it can't be read: the one in use stays.
-    static bool useTheme(std::string_view name, std::string& why);
+    // Uses a built-in theme (theme.hpp's Theme::builtInNames()); false if it can't be read (logged): the one in use stays.
+    static bool useTheme(std::string_view name);
 };

@@ -32,7 +32,6 @@ public:
 
     SlotPages() = default;
     explicit SlotPages(const Config& config) : m_config(config) {}
-    void configure(const Config& config);   // before the first allocate()
 
     Slot allocate(WGPUDevice device);   // an invalid Slot if a new page couldn't be made
     void free(Slot s);                  // reused after the next recycle()
@@ -40,7 +39,6 @@ public:
     void recycle();                     // freed slots back in use, long-empty pages released: once a frame, before anything draws
     void release();                     // every page; the slots handed out must be dropped first
 
-    const Config& config() const { return m_config; }
     int slotsPerRow()  const { return m_config.pageSize / m_config.slotWidth; }
     int slotsPerPage() const { return slotsPerRow() * (m_config.pageSize / m_config.slotHeight); }
     int originX(Slot s) const { return (s.slot % slotsPerRow()) * m_config.slotWidth; }    // in its page, pixels

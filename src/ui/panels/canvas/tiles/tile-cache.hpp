@@ -16,14 +16,11 @@
 
 class TileCache {
 public:
-    enum class Kind : uint8_t { Output, Wet };   // what a node shows; its raw wet (a raster's own pixels)
-
     TileCache() = default;
     ~TileCache() { release(); }
     TileCache(const TileCache&) = delete;
     TileCache& operator=(const TileCache&) = delete;
 
-    std::shared_ptr<RasterTiles> get(const NodePtr& node, Kind kind);
     std::shared_ptr<RasterTiles> output(const NodePtr& node) { return get(node, Kind::Output); }
     std::shared_ptr<RasterTiles> wet(const NodePtr& node) { return get(node, Kind::Wet); }
     // Tiles of another source (a stroke's coverage) on the same pages; the caller keeps them.
@@ -40,6 +37,9 @@ public:
     bool   outOfMemory() const { return m_pages.full(); }   // a tile had no room on the GPU
 
 private:
+    enum class Kind : uint8_t { Output, Wet };   // what a node shows; its raw wet (a raster's own pixels)
+    std::shared_ptr<RasterTiles> get(const NodePtr& node, Kind kind);
+
     static constexpr Clock::Seconds kKeep{ 30.0 };   // an entry nobody holds, unused this long, goes
 
     struct Key {

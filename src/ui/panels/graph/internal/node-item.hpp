@@ -1,5 +1,5 @@
 #pragma once
-// A node as the graph draws it (not the document Node): every box, port and control, laid out
+// A node as the graph draws it (not the project Node): every box, port and control, laid out
 // in graph space. Drawing (painter) and hit testing (panel) both read it, so they always agree.
 //
 //   ┌ Title ─────────────┐   header + body: I/O and thumbnail
@@ -10,7 +10,7 @@
 //   └────────────────────┘
 //   ┌────────────────────┐   properties: its kind's settings (a Move's offset), or a layer stack (a port per layer;
 //   ○ eye thumb Layer .. │   a gap opens where a dragged link or layer would land). The master's artboards are
-//   │ v eye ■ Artboard 1 │   groups of its rows: a header (fold, eye, colour, name), its layers indented under it
+//   │ v eye ■ Artboard 1 │   groups of its rows: a header (fold, eye, color, name), its layers indented under it
 //   │  ○ eye thumb Layer │   with their ports
 //   ┆   drop here        ┆
 //   └────────────────────┘
@@ -49,10 +49,15 @@ struct SectionControl {                                                         
     NodeSignal signal;
     bool operator==(const SectionControl&) const = default;
 };
-struct ScaleControl {                                                                    // a signal channel's scale slider
+struct ScaleControl {                                                                    // a signal channel's scale slider: its track drags
     NodeSignal  signal;
     NodeChannel channel;
     bool operator==(const ScaleControl&) const = default;
+};
+struct ScaleValueControl {                                                               // ... its value: double-click types it
+    NodeSignal  signal;
+    NodeChannel channel;
+    bool operator==(const ScaleValueControl&) const = default;
 };
 struct OffsetControl {                                                                   // MoveSettings: the offset, 0 x / 1 y
     int axis;
@@ -78,12 +83,12 @@ struct ArtboardMuteControl {                                                    
     ArtboardId artboard;
     bool operator==(const ArtboardMuteControl&) const = default;
 };
-struct ArtboardColorControl {                                                            // ... its colour: the colour picker
+struct ArtboardColorControl {                                                            // ... its color: the color picker
     ArtboardId artboard;
     bool operator==(const ArtboardColorControl&) const = default;
 };
-using NodeItemControl = std::variant<TitleControl, LockControl, LockAlphaControl, SectionControl, ScaleControl, OffsetControl, LayerControl,
-                                     LayerMuteControl, ArtboardControl, ArtboardFoldControl, ArtboardMuteControl, ArtboardColorControl>;
+using NodeItemControl = std::variant<TitleControl, LockControl, LockAlphaControl, SectionControl, ScaleControl, ScaleValueControl, OffsetControl,
+                                     LayerControl, LayerMuteControl, ArtboardControl, ArtboardFoldControl, ArtboardMuteControl, ArtboardColorControl>;
 
 struct NodeItemWidget {
     NodeItemControl control;
@@ -128,7 +133,7 @@ struct NodeItemLayerRow {
     template <class T> const T* as() const { return std::get_if<T>(&kind); }
 };
 
-// Per-node view state the graph keeps (not part of the document).
+// Per-node view state the graph keeps (not part of the project).
 struct NodeItemState {
     bool expanded[kSignalCount] = {};   // by NodeSignal; collapsed until the user opens one
     std::vector<StackRowRef> selected;  // its stack's rows picked: what a drag moves together
@@ -167,10 +172,15 @@ struct NodeItem {
 // Lays `n` out into `out`, reusing its storage.
 void buildNodeItem(const Workspace& workspace, const Node& n, const NodeItemState& view, StackLayout stack, NodeItem& out);
 
+// The rows a drag carries, floating over `item`'s stack: top first, the pressed one's top at
+// `pressedTop`, each with where its layer's link ends.
+struct CarriedRow { ImRect rect; ImVec2 port; };
+std::vector<CarriedRow> carriedRows(const NodeItem& item, const std::vector<StackRowRef>& rows, size_t pressed, float pressedTop);
+
 // A layer row's parts, inside its rect: its eye, its thumbnail.
 ImRect layerEyeRect(const ImRect& row);
 ImRect layerThumbRect(const ImRect& row);
-// An artboard row's: its triangle, its eye, its colour.
+// An artboard row's: its triangle, its eye, its color.
 ImRect artboardFoldRect(const ImRect& row);
 ImRect artboardEyeRect(const ImRect& row);
 ImRect artboardColorRect(const ImRect& row);

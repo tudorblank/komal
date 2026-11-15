@@ -1,16 +1,5 @@
-#include "raster.hpp"
+#include "ui/panels/canvas/items/raster.hpp"
 #include "base/perf.hpp"
-
-#include <algorithm>
-
-void RasterItem::setOpacity(float opacity)
-{
-    opacity = std::clamp(opacity, 0.0f, 1.0f);
-    if (opacity == m_opacity) return;
-    m_opacity = opacity;
-    m_instancesDirty = true;
-    update();
-}
 
 void RasterItem::setSuppressed(bool suppressed)
 {
@@ -87,7 +76,7 @@ bool RasterItem::rebuildInstances(const CanvasFrame& frame, const TileRect& rang
                                       worldOf(L - 1, 2 * t.y + j), float(Tile::kSize << (L - 1)));
     });
     bool changed = false;
-    for (TileDrawList& d : m_draw) changed |= d.end(frame.pipelines, m_opacity);
+    for (TileDrawList& d : m_draw) changed |= d.end(frame.pipelines);
     return changed;
 }
 

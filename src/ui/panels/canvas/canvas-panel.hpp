@@ -22,8 +22,8 @@ class ToolManager;
 class Painter;
 struct ImGuiWindow;
 
-// The canvas window: one canvas per open document, the active document's shown (the documents'
-// tabs are their own strip: DocumentTabsPanel). A canvas is a CanvasScene seen through a CanvasView
+// The canvas window: one canvas per open project, the active project's shown (the projects'
+// tabs are their own strip: ProjectTabsPanel). A canvas is a CanvasScene seen through a CanvasView
 // (an offscreen target shown as an ImGui image). The scene holds the master output under overlays
 // (selected nodes' bounds); an edit in progress (a drag in the graph, a stroke) shows in its place
 // on the GPU (PreviewItem). The panel navigates (MMB / wheel / Space) and hands the mouse to the
@@ -41,11 +41,11 @@ struct ImGuiWindow;
 class CanvasPanel : public Panel {
 public:
     PanelInfo info() const override;
-    bool init() override;   // the active document's canvas, drawing the engine's tiles with its pipelines
+    bool init() override;   // the active project's canvas, drawing the engine's tiles with its pipelines
     void shutdown() override;
     void releaseGpu() override;
     void restoreGpu() override;
-    void documentsChanged(const DocumentsEvent& e) override;   // a canvas made as one is shown, gone as it closes
+    void projectsChanged(const ProjectsEvent& e) override;   // a canvas made as one is shown, gone as it closes
 
     void draw() override;   // window, input, image, overlays
     // The view renders if anything changed (the engine synced the tiles before).
@@ -53,12 +53,12 @@ public:
     Clock::Seconds nextFrameIn() const override { return busy() ? kFrameNow : kNoFrame; }
     // A file dropped at `screen` (`window` topmost): true if it lands on the canvas, with its world point.
     bool dropTarget(const ImGuiWindow* window, ImVec2 screen, Vec2& world) const;
-    bool busy() const { return m_visible && m_canvas && m_canvas->view.busy(); }   // still catching up: needs more frames
+    bool busy() const { return m_surface.shown() && m_canvas && m_canvas->view.busy(); }   // still catching up: needs more frames
 
 private:
-    // One document's canvas: made from the engine's pictures of it while it's active.
+    // One project's canvas: made from the engine's pictures of it while it's active.
     struct Canvas {
-        DocumentId       document = kNoDocument;
+        ProjectId       project = kNoProject;
         const Workspace* workspace = nullptr;
         CanvasScene  scene;
         CanvasView   view;
@@ -73,8 +73,8 @@ private:
         bool             ready = false;
     };
 
-    Canvas* canvasOf(DocumentId id);
-    void show(DocumentId id);    // the active one: its canvas, made if it's new
+    Canvas* canvasOf(ProjectId id);
+    void show(ProjectId id);     // the active one: its canvas, made if it's new
     bool makeGpu(Canvas& c);     // its scene and view on the engine's pipelines
     void onWorkspaceEvent(Canvas& c, const WorkspaceEvent& e);
     void tellSize(Vec2 size);    // the workspace hears its size when it changes ({0, 0}: not shown)
@@ -82,12 +82,11 @@ private:
     void updateOutlines(Canvas& c);   // the selected nodes' bounds and the edit's
     void drawHud(const Painter& draw, const ImVec2& origin);
 
-    std::vector<std::unique_ptr<Canvas>> m_canvases;   // the documents shown so far
+    std::vector<std::unique_ptr<Canvas>> m_canvases;   // the projects shown so far
     Canvas* m_canvas = nullptr;                        // the active one's
 
     std::vector<CanvasPointer> m_pointer;  // ... the part the canvas gets, in world space
 
-    PanelSurface m_surface;   // the picture, this frame
-    bool m_visible = false;   // false when closed, collapsed or tabbed away
+    PanelSurface m_surface;   // the picture, this frame (hidden: closed, collapsed or tabbed away)
     bool m_hasPointer = false;
 };

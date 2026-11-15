@@ -1,8 +1,6 @@
-#include "pipelines.hpp"
+#include "ui/panels/canvas/pipelines.hpp"
 #include "gpu/error-scope.hpp"
 #include "ui/panels/canvas/tiles/atlas.hpp"   // ChunkInstance layout
-#include "base/math.hpp"
-#include "ui/style/ui-style.hpp"
 
 #include <cstddef>
 #include <initializer_list>
@@ -77,7 +75,7 @@ WGPURenderPipeline makePipeline(const GpuHandles& ctx, const PipelineDesc& d)
 {
     const char* body = reinterpret_cast<const char*>(d.wgsl);
     const std::string wgsl = d.topology == kFullscreen ? std::string(reinterpret_cast<const char*>(kShaderFullscreen)) + body : std::string(body);
-    const GpuObject<WGPUShaderModule> module{ createShaderModule(ctx, wgsl.c_str(), d.label) };
+    const GpuObject<WGPUShaderModule> module{ createShaderModule(ctx.device, wgsl.c_str(), d.label) };
     if (!module) return nullptr;
 
     WGPUColorTargetState target{};
@@ -113,19 +111,6 @@ WGPURenderPipeline makePipeline(const GpuHandles& ctx, const PipelineDesc& d)
     return wgpuDeviceCreateRenderPipeline(ctx.device, &rpd);   // the layout and module go with this scope
 }
 
-}
-
-CheckerParams pictureChecker(float originX, float originY)
-{
-    CheckerParams c{};
-    const Style::CanvasStyle& style = Style::canvas();
-    const auto dark = style.pictureCheckerA.floats(), light = style.pictureCheckerB.floats();
-    for (size_t i = 0; i < 3; ++i) { c.colorA[i] = dark[i]; c.colorB[i] = light[i]; }
-    c.colorA[3] = c.colorB[3] = 1.0f;
-    c.origin[0] = originX;
-    c.origin[1] = originY;
-    c.cell      = style.pictureCheckerCell;
-    return c;
 }
 
 bool CanvasPipelines::create(const GpuHandles& context)
@@ -164,17 +149,16 @@ bool CanvasPipelines::create(const GpuHandles& context)
     ld.entries    = entries;
     atlasLayout.reset(wgpuDeviceCreateBindGroupLayout(ctx.device, &ld));
 
-    const WGPUVertexAttribute attribs[5] = {
+    const WGPUVertexAttribute attribs[4] = {
         { WGPUVertexFormat_Float32x2, offsetof(ChunkInstance, center),   0 },
         { WGPUVertexFormat_Float32x2, offsetof(ChunkInstance, scale),    1 },
         { WGPUVertexFormat_Float32x2, offsetof(ChunkInstance, uvOffset), 2 },
         { WGPUVertexFormat_Float32x2, offsetof(ChunkInstance, uvScale),  3 },
-        { WGPUVertexFormat_Float32,   offsetof(ChunkInstance, opacity),  4 },
     };
     WGPUVertexBufferLayout instances{};
     instances.arrayStride    = sizeof(ChunkInstance);
     instances.stepMode       = WGPUVertexStepMode_Instance;
-    instances.attributeCount = 5;
+    instances.attributeCount = 4;
     instances.attributes     = attribs;
     atlasPipeline.reset(makePipeline(ctx, { "texture.wgsl", kShaderTexture, { cameraLayout, atlasLayout }, &kPremultiplied, &instances }));
 

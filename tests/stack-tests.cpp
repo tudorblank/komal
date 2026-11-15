@@ -2,8 +2,8 @@
 // artboards (a group of its stack each, with a fill behind its layers).
 
 #include "helpers.hpp"
-#include "document/document-actions.hpp"
-#include "document/document.hpp"
+#include "project/project-actions.hpp"
+#include "project/project.hpp"
 
 namespace {
 
@@ -19,9 +19,9 @@ std::vector<NodeId> layerIds(const Workspace& p, NodeId compositor)
     return ids;
 }
 
-const CompositorSettings& stackOf(const Workspace& p, NodeId compositor)
+CompositorSettings stackOf(const Workspace& p, NodeId compositor)
 {
-    return static_cast<const CompositorNode*>(p.find(compositor))->stack();
+    return stackSettings(*p.find(compositor));
 }
 
 constexpr RGBA kRed{ 255, 0, 0, 255 }, kBlue{ 0, 0, 255, 255 };
@@ -188,7 +188,7 @@ TEST_CASE("an artboard fills its rect behind its layers, which still show past i
     CHECK(rendered(p, master, 1020, 10) == transparent());
     CHECK(rendered(p, master, 1200, 5) == transparent());
 
-    REQUIRE(p.undo());   // back to before the colour (the eye wasn't a step of its own)
+    REQUIRE(p.undo());   // back to before the color (the eye wasn't a step of its own)
     CHECK(p.artboard(id)->color.a == 0);
     CHECK(rendered(p, master, 1020, 10) == transparent());
     CHECK(rendered(p, master, 1200, 5) == kRed);
@@ -226,10 +226,23 @@ TEST_CASE("artboards refuse what doesn't fit")
     CHECK_FALSE(p.moveStackRows(comp, { { s.paint }, {}, id, 0 }));   // only the master has artboards
 }
 
+TEST_CASE("an artboard's name never comes back, nor does its id: deleted ones included")
+{
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
+    const ArtboardId one = p.addArtboard({ 0, 0, 9, 9 });
+    const ArtboardId two = p.addArtboard({ 20, 0, 29, 9 });
+    CHECK(p.artboard(two)->name == "Artboard 2");
+    REQUIRE(p.deleteArtboard(one));
+    const ArtboardId three = p.addArtboard({ 40, 0, 49, 9 });
+    CHECK(three != one);
+    CHECK(p.artboard(three)->name == "Artboard 3");   // not a second "Artboard 2"
+}
+
 TEST_CASE("the stack's actions: mute, move rows, artboards, each one undo step")
 {
-    Document document;
-    Workspace& p = document.workspace();
+    Project project;
+    Workspace& p = project.workspace();
     NodeId a = kNoNodeId, b = kNoNodeId;
     p.init([&](Workspace& seeded) {
         TileGrid one, two;
@@ -238,24 +251,24 @@ TEST_CASE("the stack's actions: mute, move rows, artboards, each one undo step")
         a = seeded.importTiles(one, "", {});
         b = seeded.importTiles(two, "", {});   // [a b]
     });
-    ActionRegistry& actions = document.actions();
+    ActionRegistry& actions = project.actions();
     const NodeId master = p.master().id();
-    using namespace DocArgs;
+    using namespace ProjectArgs;
 
     REQUIRE(actions.run(Actions::LayerMute, { { kNode, master }, { kLayer, b }, { kOn, true } }));
     CHECK(rendered(p, master, 0, 0) == kRed);
     const ActionResult made = actions.run(Actions::ArtboardAdd, { { kMinX, 0 }, { kMinY, 0 }, { kMaxX, 9 }, { kMaxY, 9 } });
     REQUIRE(made);
-    const ArtboardId board{ uint32_t(made.made) };
+    const ArtboardId board = made.madeAs<ArtboardId>();
     REQUIRE(actions.run(Actions::LayersMove, { { kNode, master }, { kLayers, std::vector<NodeId>{ a, b } }, { kIntoArtboard, board },
-                                               { kLayerTo, size_t(0) } }));
+                                               { kPlaceAt, size_t(0) } }));
     CHECK(stackOf(p, master).groups == std::vector<StackGroup>{ { board, 0, 2 } });
     REQUIRE(actions.run(Actions::ArtboardSet, { { kArtboard, board }, { kColor, Color8{ 0, 255, 0, 255 } }, { kName, std::string("Cover") } }));
     CHECK(p.artboard(board)->name == "Cover");
     CHECK(rendered(p, master, 5, 5) == RGBA{ 0, 255, 0, 255 });
     CHECK(rendered(p, master, 0, 0) == kRed);   // its layer over its fill
     CHECK_FALSE(actions.run(Actions::LayersMove, { { kNode, master }, { kLayers, std::vector<NodeId>{} },
-                                                   { kArtboards, std::vector<ArtboardId>{ board } }, { kLayerTo, size_t(0) } }));   // already there
+                                                   { kArtboards, std::vector<ArtboardId>{ board } }, { kPlaceAt, size_t(0) } }));   // already there
 
     // Undone one by one, back to the start.
     for (int i = 0; i < 4; ++i) REQUIRE(actions.run(Actions::EditUndo));
@@ -307,8 +320,8 @@ TEST_CASE("rows removed from a stack: layers unlinked, artboards gone, one undo 
 
 TEST_CASE("a lifted link lands at a place in a stack")
 {
-    Document document;
-    Workspace& p = document.workspace();
+    Project project;
+    Workspace& p = project.workspace();
     NodeId a = kNoNodeId, b = kNoNodeId;
     p.init([&](Workspace& seeded) {
         TileGrid one, two;
@@ -317,10 +330,10 @@ TEST_CASE("a lifted link lands at a place in a stack")
         a = seeded.importTiles(one, "", {});
         b = seeded.importTiles(two, "", {});   // [a b]
     });
-    ActionRegistry& actions = document.actions();
+    ActionRegistry& actions = project.actions();
     const NodeId master = p.master().id();
-    using namespace DocArgs;
-    const ArtboardId board{ uint32_t(actions.run(Actions::ArtboardAdd, { { kMinX, 0 }, { kMinY, 0 }, { kMaxX, 9 }, { kMaxY, 9 } }).made) };
+    using namespace ProjectArgs;
+    const ArtboardId board = actions.run(Actions::ArtboardAdd, { { kMinX, 0 }, { kMinY, 0 }, { kMaxX, 9 }, { kMaxY, 9 } }).madeAs<ArtboardId>();
     // b lifted off its row and dropped into the artboard, on its own stack.
     REQUIRE(actions.beginGesture(Actions::LinkMove, { { kSource, b }, { kFrom, master }, { kSlot, InputSlot::stackLayer(1) } }));
     REQUIRE(actions.endGesture(Actions::LinkMove, { { kTo, master }, { kToSlot, InputSlot::newLayer(0) }, { kIntoArtboard, board },

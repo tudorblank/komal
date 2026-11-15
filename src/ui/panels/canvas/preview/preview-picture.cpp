@@ -1,4 +1,5 @@
 #include "ui/panels/canvas/preview/preview-picture.hpp"
+#include "ui/panels/canvas/items/checker.hpp"
 #include "ui/panels/canvas/preview/preview.hpp"
 #include "gpu/render-pass.hpp"
 
@@ -8,7 +9,7 @@
 PreviewPicture::Result PreviewPicture::render(const Preview& preview, NodeId node, uint32_t maxW, uint32_t maxH, const CanvasPipelines& p,
                                               WGPUCommandEncoder enc, const Deadline& budget)
 {
-    m_retired.reset();   // a frame later: nothing draws it any more
+    m_retired.release();   // a frame later: nothing draws it any more
     if (maxW == 0 || maxH == 0 || !m_renderer.plan(preview, node)) return Result::NotReached;
     const BoundsI b = m_renderer.bounds();
     if (b.empty()) return Result::Empty;
@@ -63,7 +64,7 @@ void PreviewPicture::release()
     m_resultGroup.reset();
     m_groupView = nullptr;
     m_checker.release();
-    m_texture.reset();
-    m_retired.reset();
+    m_texture.release();
+    m_retired.release();
     m_has = false;
 }

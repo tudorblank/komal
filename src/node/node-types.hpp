@@ -59,9 +59,10 @@ public:
     static std::shared_ptr<ReferenceNode> create();
     NodeType type() const override { return NodeType::Reference; }
 
-    BoundsI wetBounds() const override { return input() ? input()->bounds() : BoundsI{}; }
-    void wetFootprint(TileSet& out) override { if (input()) input()->addFootprint(out); }
-    const Tile* fetchWet(int tx, int ty, RenderCtx& ctx) override { return input() ? input()->fetch(tx, ty, ctx) : nullptr; }
+    // Wet is the input as it is: what Dry reads.
+    BoundsI wetBounds() const override { return UnaryNode::dryBounds(); }
+    void wetFootprint(TileSet& out) override { UnaryNode::dryFootprint(out); }
+    const Tile* fetchWet(int tx, int ty, RenderCtx& ctx) override { return UnaryNode::fetchDry(tx, ty, ctx); }
 };
 
 // Shifts its input by whole pixels. Wet: the moved input; Dry: the input where it was.
@@ -73,11 +74,8 @@ public:
     static std::shared_ptr<MoveNode> create();
     NodeType type() const override { return NodeType::Move; }
 
-    int offsetX() const { return m_x; }
-    int offsetY() const { return m_y; }
-    TileSet setOffset(GraphKey, int x, int y);
     NodeSettings settings() const override { return MoveSettings{ m_x, m_y }; }
-    void setSettings(GraphKey key, const NodeSettings& s) override { if (const auto* m = std::get_if<MoveSettings>(&s)) setOffset(key, m->x, m->y); }
+    void setSettings(GraphKey, const NodeSettings& s) override;
 
     BoundsI wetBounds() const override { return input() ? input()->bounds().offsetBy(m_x, m_y) : BoundsI{}; }
     void wetFootprint(TileSet& out) override;
@@ -89,7 +87,7 @@ private:
 };
 
 // ============================ COMPOSITOR ============================
-// How a group of a stack shows (the document's: an artboard's rect and colour, and its eye).
+// How a group of a stack shows (the workspace's: an artboard's rect and color, and its eye).
 struct GroupLook {
     GroupKey key = kNoGroup;        // the StackGroup's
     BoundsI  fill;                  // filled with `color` behind its layers (empty: nothing)
@@ -111,11 +109,7 @@ public:
     const std::vector<NodePtr>& layers() const { return links().layers; }
     NodeSettings settings() const override { return m_settings; }
     void setSettings(GraphKey, const NodeSettings& s) override;   // kept to its rows: mutes of its layers, groups in range
-    const CompositorSettings& stack() const { return m_settings; }
-    bool muted(const Node& layer) const;
-    bool shows(size_t row) const { return row < m_shown.size() && m_shown[row]; }   // neither muted nor in a hidden group
     void setLooks(GraphKey, std::vector<GroupLook> looks);   // by group key; a group without one draws nothing of its own
-    const std::vector<GroupLook>& looks() const { return m_looks; }
 
     // What the composite draws, bottom first: a layer shown, or a group's fill.
     struct Drawn {
@@ -134,7 +128,6 @@ public:
 
     // Cache of the raw composite (the master keeps one: the canvas reads it tile by tile).
     void enableCache(GraphKey, bool on);
-    bool cacheEnabled() const { return m_cacheOn; }
 
     void evictRawTile(int tx, int ty) override;
 

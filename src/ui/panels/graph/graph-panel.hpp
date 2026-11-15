@@ -2,7 +2,7 @@
 
 #include "base/clock.hpp"
 #include "command/actions.hpp"
-#include "document/node-selection.hpp"
+#include "project/node-selection.hpp"
 #include "ui/panels/graph/internal/camera.hpp"
 #include "ui/panels/graph/internal/hit.hpp"
 #include "ui/panels/graph/minimap.hpp"
@@ -13,7 +13,6 @@
 #include "ui/panels/panel-surface.hpp"
 
 #include <array>
-#include <functional>
 #include <memory>
 #include <variant>
 #include <vector>
@@ -33,7 +32,7 @@ public:
     PanelInfo info() const override;
     bool init() override;   // node thumbnails: the canvas engine's
     void shutdown() override;
-    void documentsChanged(const DocumentsEvent& e) override;   // a graph per document: made as it's shown, gone as it closes
+    void projectsChanged(const ProjectsEvent& e) override;   // a graph per project: made as it's shown, gone as it closes
     void draw() override;
     Clock::Seconds nextFrameIn() const override;
     // A file dropped at `screen` (`window` topmost): true if it lands on the graph, with the
@@ -54,11 +53,19 @@ private:
     struct MoveNodes  { ImVec2 delta; };                                   // node.drag, graph units
     struct PressEmpty { NodeSelection::Set base; };                        // a click on nothing, or RubberBand once it moves
     struct RubberBand { NodeSelection::Set base; };                        // what Ctrl / Shift keep selected
+    struct LinkTarget {
+        bool      valid = false;
+        NodeId    node = kNoNodeId;
+        InputSlot slot;
+        StackGap  place;              // into a stack: where (kind Link), else none
+        ImVec2    pos;                // screen
+    };
     struct LinkDrag {
         NodeId    node;                    // the end that stays put
         bool      fromOutput = true;       // that end is an output: looking for an input
         InputSlot slot{};                  // ... or that input
         bool      pickedUp = false;        // lifted off an input (link.move)
+        LinkTarget target{};               // where it would land, this frame
         NodeId    gapStack = kNoNodeId;    // the stack it would land in: a gap opens there next frame
         StackGap  gap{};
     };
@@ -76,17 +83,10 @@ private:
     struct MinimapDrag {};
     using Drag = std::variant<std::monostate, PressNode, MoveNodes, PressEmpty, RubberBand, LinkDrag, ScaleDrag, OffsetDrag,
                               LayerDrag, MinimapDrag>;
-    struct LinkTarget {
-        bool      valid = false;
-        NodeId    node = kNoNodeId;
-        InputSlot slot;
-        StackGap  place;              // into a stack: where (kind Link), else none
-        ImVec2    pos;                // screen
-    };
 
-    // One document's graph: its scene, and how the panel last looked at it.
+    // One project's graph: its scene, and how the panel last looked at it.
     struct GraphView {
-        DocumentId  document = kNoDocument;
+        ProjectId   project = kNoProject;
         GraphScene  scene;
         GraphCamera camera;
         float       pinnedScroll = 0.0f;   // screen pixels, when the master is taller than the panel
@@ -96,7 +96,7 @@ private:
         ImVec2      framedSize;
         uint64_t    framedItems = 0;
     };
-    void show(DocumentId id);   // the active one's graph, made if it's new; what was derived from the last one goes
+    void show(ProjectId id);   // the active one's graph, made if it's new; what was derived from the last one goes
     GraphScene&        scene()        { return m_view->scene; }
     const GraphScene&  scene()  const { return m_view->scene; }
     GraphCamera&       camera()       { return m_view->camera; }
@@ -124,6 +124,7 @@ private:
     void       dropped(NodeId id, const StackPlace& place);   // into a folded artboard: it unfolds now
     bool       rowsPicked(NodeId* id = nullptr) const;     // a stack's rows are picked (whose)
     void       removePickedRows();                         // Del: the layers unlinked, the artboards gone
+    static ActionArgs rowArgs(NodeId id, const std::vector<StackRowRef>& rows);   // layers.remove / .move: id's rows, as layers and artboards
     StackRowRef rowRef(NodeId id, const NodeItemLayerRow& row) const;   // a layer row's node, or an artboard's key
     std::vector<StackRowRef> shownRows(NodeId id) const;               // the stack's rows as laid out, top first
     void pressRow(NodeId id, StackRowRef row, float grab);            // click, Ctrl, Shift: picks; starts a LayerDrag
@@ -141,7 +142,7 @@ private:
     float uiScale() const { return ui().host.uiScale; }
 
     PanelSurface m_surface;            // the graph, this frame
-    std::vector<std::unique_ptr<GraphView>> m_views;   // the documents shown so far
+    std::vector<std::unique_ptr<GraphView>> m_views;   // the projects shown so far
     GraphView*  m_view = nullptr;      // the active one's
     GraphCamera m_pinned;              // the master's space: 100%, its item in the top-right corner
     ImRect      m_pinnedRect;          // the master on screen
@@ -157,7 +158,7 @@ private:
     // interaction
     Press  m_press;
     Drag   m_drag;
-    bool   m_canvasActive = false;
+    bool   m_buttonActive = false;   // the panel's button (the whole graph) is held
     int    m_hoveredLink = -1;    // last frame's, for the insert button
     bool   m_rightDown = false;       // a right press on the panel is in progress
     bool   m_rightZooming = false;    // ... held or dragged: it zooms, no menu on release

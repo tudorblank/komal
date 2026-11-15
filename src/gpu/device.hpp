@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <functional>
 #include <string>
-#include <vector>
 
 // One frame's swapchain image and the encoder everything records into (acquire() to present()).
 // The surface pass is a GpuRenderPass on `view`
@@ -55,7 +54,6 @@ private:
     
     std::string m_adapterInfo;
     WGPUPresentMode m_presentMode = WGPUPresentMode_Fifo;
-    std::vector<WGPUPresentMode> m_supportedModes;
     uint32_t m_frameLatency = 1;   // swapchain images queued ahead of the display
     
     std::atomic<bool> m_lost{ false };

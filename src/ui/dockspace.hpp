@@ -6,18 +6,22 @@
 #include "ui/panels/panel-base.hpp"
 
 #include <absl/container/flat_hash_map.h>
+#include <memory>
 #include <vector>
 
 class Dockspace {
 public:
-    void addPanel(const PanelInfo& panel);   // once per panel: where it starts, whether its area grows
+    using Panels = std::vector<std::unique_ptr<Panel>>;
+    // Where each starts (Panel::placed()), whether its area grows. Once, with every panel added;
+    // the list outlives the dockspace's use of it.
+    void follow(const Panels& panels);
     void draw();                         // before the windows that dock into it
     void reset() { m_reset = true; }     // back to the default layout, next draw
 
 private:
     void buildDefault(unsigned int id, float w, float h);
 
-    std::vector<PanelInfo>    m_panels;
+    const Panels*             m_panels = nullptr;
     std::vector<unsigned int> m_growing;   // the window ids of panels whose areas grow with the window (Center, Bottom)
     absl::flat_hash_map<unsigned int, float> m_shares;   // dock split -> its first child's share
     bool m_reset = false;

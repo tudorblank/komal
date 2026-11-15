@@ -1,7 +1,7 @@
 #include "ui/panels/graph/internal/painter.hpp"
 #include "ui/style/ui-style.hpp"
 #include "base/math.hpp"
-#include "document/workspace.hpp"
+#include "project/workspace.hpp"
 #include "ui/render/skins.hpp"
 #include "ui/panels/graph/internal/layout.hpp"
 #include "ui/style/graph-style.hpp"
@@ -12,12 +12,15 @@
 #include <cmath>
 #include <cstdio>
 #include <span>
+#include <string>
 
 using namespace GraphLayout;
 using namespace GraphStyle;
 
 namespace {
 
+ImU32 withAlpha(ImU32 color, uint8_t alpha) { return (color & ~IM_COL32_A_MASK) | (ImU32(alpha) << IM_COL32_A_SHIFT); }
+uint8_t alphaOf(ImU32 color) { return uint8_t((color >> IM_COL32_A_SHIFT) & 0xFF); }
 
 // Font sizes are baked in steps that grow with the size, rounded up so text is never
 // rendered from a smaller bake than the screen needs.
@@ -25,6 +28,29 @@ float quantizedSize(float px)
 {
     const float step = px < 12.0f ? 0.5f : px < 24.0f ? 1.0f : px < 48.0f ? 2.0f : 4.0f;
     return std::ceil(px / step - 0.01f) * step;
+}
+
+// Text at `size` graph units, baked at quantized sizes and scaled to fit (a smooth zoom would
+// bake a new size every frame). `font`: g.font when null.
+void drawText(const GraphPaint& g, ImVec2 graphPos, float size, ImU32 color, const char* text, const char* end = nullptr, ImFont* font = nullptr)
+{
+    const float px = size * g.scale();
+    if (px < 3.5f) return;   // unreadable: leave it out
+    const float q = quantizedSize(px);
+    g.draw.scaledText(font ? font : g.font, q, px, g.at(graphPos), color, text, end);
+}
+
+float textWidth(const GraphPaint& g, float size, const char* text, const char* end = nullptr, ImFont* font = nullptr)   // graph units
+{
+    return (font ? font : g.font)->CalcTextSizeA(size, FLT_MAX, 0.0f, text, end).x;
+}
+
+std::string elide(const GraphPaint& g, const std::string& text, float size, float maxWidth)
+{
+    if (textWidth(g, size, text.c_str()) <= maxWidth) return text;
+    std::string s = text;
+    while (!s.empty() && textWidth(g, size, (s + "...").c_str()) > maxWidth) s.pop_back();
+    return s + "...";
 }
 
 void textCentered(const GraphPaint& g, const ImRect& r, float size, ImU32 color, const char* text)
@@ -134,35 +160,14 @@ void drawThumb(const GraphPaint& g, const ImRect& r, NodeId id, NodeThumbnails& 
 
 }
 
-// ---------------------------------------------------------------- text
-
-void drawText(const GraphPaint& g, ImVec2 graphPos, float size, ImU32 color, const char* text, const char* end, ImFont* font)
-{
-    const float px = size * g.scale();
-    if (px < 3.5f) return;   // unreadable: leave it out
-    const float q = quantizedSize(px);
-    g.draw.scaledText(font ? font : g.font, q, px, g.at(graphPos), color, text, end);
-}
-
-float textWidth(const GraphPaint& g, float size, const char* text, const char* end, ImFont* font)
-{
-    return (font ? font : g.font)->CalcTextSizeA(size, FLT_MAX, 0.0f, text, end).x;
-}
-
-std::string elide(const GraphPaint& g, const std::string& text, float size, float maxWidth)
-{
-    if (textWidth(g, size, text.c_str()) <= maxWidth) return text;
-    std::string s = text;
-    while (!s.empty() && textWidth(g, size, (s + "...").c_str()) > maxWidth) s.pop_back();
-    return s + "...";
-}
-
 // ---------------------------------------------------------------- nodes
 
 ImU32 headerColor(const Workspace& workspace, const Node& n)
 {
     return workspace.isMaster(n.id()) ? colors().headerOutput : kindHeader(n.type());
 }
+
+namespace {
 
 void paintPort(const GraphPaint& g, ImVec2 graphPos, ImU32 color, bool connected, bool hovered, bool placeholder)
 {
@@ -173,6 +178,8 @@ void paintPort(const GraphPaint& g, ImVec2 graphPos, ImU32 color, bool connected
     g.draw.fillCircle(c, r + g.px(1.5f), colors().portRing);
     g.draw.fillCircle(c, r, color);
     if (!connected) g.draw.fillCircle(c, r * 0.5f, colors().body);   // hollow: nothing linked
+}
+
 }
 
 void paintNode(const GraphPaint& g, const Workspace& workspace, const Node& n, const NodeItem& item,
@@ -219,10 +226,10 @@ void paintNode(const GraphPaint& g, const Workspace& workspace, const Node& n, c
         const ImRect& io = *item.ioRow;
         if (item.output()) {
             const float w = textWidth(g, kSmallText, "Output");
-            textInRow(g, io.Max.x - kPad - 4.0f - w, io, kSmallText, colors().dimText, "Output");
+            textInRow(g, io.Max.x - kPad - kIoLabelInset - w, io, kSmallText, colors().dimText, "Output");
         }
         if (item.input(InputSlot::input()))
-            textInRow(g, io.Min.x + kPad + 4.0f, io, kSmallText, colors().dimText, "Input");
+            textInRow(g, io.Min.x + kPad + kIoLabelInset, io, kSmallText, colors().dimText, "Input");
     }
     if (item.thumb) drawThumb(g, *item.thumb, id, thumbs, kText);
 
@@ -247,6 +254,7 @@ void paintNode(const GraphPaint& g, const Workspace& workspace, const Node& n, c
 
     // ---- layer stack
     const std::vector<NodePtr>& layers = n.links().layers;
+    const CompositorSettings stack = item.layers.empty() ? CompositorSettings{} : stackSettings(n);   // read once, not per row
     for (const NodeItemLayerRow& row : item.layers) {
         const ImVec2 a = g.at(row.rect.Min), b = g.at(row.rect.Max);
         if (const auto* gap = row.as<NodeItemLayerRow::Gap>()) {   // room where the dragged link or rows land, or the line
@@ -267,7 +275,7 @@ void paintNode(const GraphPaint& g, const Workspace& workspace, const Node& n, c
             const Node& l = *layers[layer->index];
             const bool eyeHot = widgetHovered(LayerMuteControl{ layer->index });
             paintLayerRow(g, l, row.rect, thumbs, { .hot = eyeHot || widgetHovered(LayerControl{ layer->index }), .selected = row.selected,
-                                                    .muted = stackSettings(n).mutes(l.id()), .eyeHot = eyeHot });
+                                                    .muted = stack.mutes(l.id()), .eyeHot = eyeHot });
         } else if (const auto* board = row.as<NodeItemLayerRow::Artboard>()) {
             const ArtboardId k = board->key;
             const bool parts[3] = { widgetHovered(ArtboardFoldControl{ k }), widgetHovered(ArtboardMuteControl{ k }), widgetHovered(ArtboardColorControl{ k }) };
@@ -287,16 +295,16 @@ void paintNode(const GraphPaint& g, const Workspace& workspace, const Node& n, c
     // ---- signals
     for (const NodeItemSectionRow& sec : item.sections) {
         const bool hot = widgetHovered(SectionControl{ sec.signal });
-        drawArrow(g, ImVec2(sec.rect.Min.x + 12.0f, sec.rect.GetCenter().y), 7.0f, sec.expanded, hot ? colors().title : colors().dimText);
-        textInRow(g, sec.rect.Min.x + 21.0f, sec.rect, kText, hot ? colors().title : colors().text, signalLabel(sec.signal));
-        if (Node::gainByte(scaleOf(sec.signal, NodeChannel::A)) == 0) {
+        drawArrow(g, ImVec2(sec.rect.Min.x + kSectionArrowX, sec.rect.GetCenter().y), kArrowSize, sec.expanded, hot ? colors().title : colors().dimText);
+        textInRow(g, sec.rect.Min.x + kSectionLabelX, sec.rect, kText, hot ? colors().title : colors().text, signalLabel(sec.signal));
+        if (!Node::signalOn(scaleOf(sec.signal, NodeChannel::A))) {
             const float w = textWidth(g, kSmallText, "off");
             textInRow(g, sec.rect.Max.x - kPad - w, sec.rect, kSmallText, colors().dimText, "off");
         }
     }
     for (const NodeItemChannelRow& row : item.channels) {
         const float v   = scaleOf(row.signal, row.channel);
-        const bool  hot = widgetHovered(ScaleControl{ row.signal, row.channel });
+        const bool  hot = widgetHovered(ScaleControl{ row.signal, row.channel }) || widgetHovered(ScaleValueControl{ row.signal, row.channel });
         const float cy  = g.at(row.track.GetCenter()).y;
         const float x0  = g.at(row.track.Min).x, x1 = g.at(row.track.Max).x;
         const float xv  = x0 + (x1 - x0) * v;
@@ -305,8 +313,8 @@ void paintNode(const GraphPaint& g, const Workspace& workspace, const Node& n, c
         char buf[8];
         std::snprintf(buf, sizeof buf, "%d", int(std::lround(v * 100.0f)));
         const float w = textWidth(g, kSmallText, buf, nullptr, g.numberFont);
-        textInRow(g, row.rect.Max.x - 20.0f - w, row.rect, kSmallText, colors().text, buf, g.numberFont);
-        textInRow(g, row.rect.Max.x - 13.0f, row.rect, kSmallText, colors().channel[int(row.channel)], channelLabel(row.channel));
+        textInRow(g, row.rect.Max.x - kChannelValueX - w, row.rect, kSmallText, colors().text, buf, g.numberFont);
+        textInRow(g, row.rect.Max.x - kChannelLetterX, row.rect, kSmallText, colors().channel[int(row.channel)], channelLabel(row.channel));
     }
 
 }
@@ -337,12 +345,12 @@ void paintLayerRow(const GraphPaint& g, const Node& layer, const ImRect& rect, N
     drawThumb(g, thumb, layer.id(), thumbs, kSmallText);
 
     // Blend mode chip: the node system composites Normal (over) only, for now.
-    const ImRect chip(rect.Max.x - 52.0f, rect.GetCenter().y - 8.0f, rect.Max.x - 6.0f, rect.GetCenter().y + 8.0f);
+    const ImRect chip(rect.Max.x - (kRowPad + kChipW), rect.GetCenter().y - kChipHalfH, rect.Max.x - kRowPad, rect.GetCenter().y + kChipHalfH);
     draw.strokeRect(g.at(chip.Min), g.at(chip.Max), look.selected ? colors().selectedEdge : colors().chipEdge, 2.0f * s, bw);
     textCentered(g, chip, kSmallText, look.selected ? colors().selectedText : colors().dimText, "Normal");
 
-    const float nameX = thumb.Max.x + 6.0f;
-    const std::string name = elide(g, layer.label(), kSmallText, chip.Min.x - 4.0f - nameX);
+    const float nameX = thumb.Max.x + kRowNameGap;
+    const std::string name = elide(g, layer.label(), kSmallText, chip.Min.x - kChipGap - nameX);
     textInRow(g, nameX, rect, kSmallText, look.selected ? colors().selectedText : look.muted ? colors().dimText : colors().text, name.c_str());
 }
 
@@ -352,10 +360,10 @@ void paintArtboardRow(const GraphPaint& g, const Artboard* board, const ImRect& 
     if (!board) return;
     const float s = g.scale();
     const ImRect fold = artboardFoldRect(rect);
-    drawArrow(g, fold.GetCenter(), 7.0f, !look.folded, look.foldHot ? colors().title : colors().dimText);
+    drawArrow(g, fold.GetCenter(), kArrowSize, !look.folded, look.foldHot ? colors().title : colors().dimText);
     drawEye(g, artboardEyeRect(rect), board->visible, look.eyeHot);
 
-    // Its colour: over a 2x2 checkerboard where it's see-through.
+    // Its color: over a 2x2 checkerboard where it's see-through.
     const ImRect sw = artboardColorRect(rect);
     const ImVec2 a = g.at(sw.Min), b = g.at(sw.Max), m((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
     const float r = 2.0f * s;
@@ -367,8 +375,8 @@ void paintArtboardRow(const GraphPaint& g, const Artboard* board, const ImRect& 
     g.draw.fillRect(a, b, board->color.packed(), r);
     g.draw.strokeRect(a, b, look.colorHot ? colors().borderHover : colors().border, r, g.px(1.0f));
 
-    const float nameX = sw.Max.x + 7.0f;
-    const std::string name = elide(g, board->name, kText, rect.Max.x - 6.0f - nameX);
+    const float nameX = sw.Max.x + kArtboardNameGap;
+    const std::string name = elide(g, board->name, kText, rect.Max.x - kRowPad - nameX);
     const ImU32 ink = look.selected ? colors().selectedText : board->visible ? colors().title : colors().dimText;
     textInRow(g, nameX, rect, kText, ink, name.c_str());
 }
@@ -477,7 +485,7 @@ void paintFadingLink(const GraphPaint& g, const LinkCurve& c, ImU32 color, bool 
     };
 
     const float dash = g.px(8.0f), gap = g.px(5.0f);
-    const int alpha = int((color >> IM_COL32_A_SHIFT) & 0xFF);
+    const int alpha = alphaOf(color);
     ImVec2 poly[kSteps + 2];
     for (float d0 = 0.0f; d0 < total; d0 += dash + gap) {
         const float d1 = std::min(d0 + dash, total);
@@ -487,14 +495,14 @@ void paintFadingLink(const GraphPaint& g, const LinkCurve& c, ImU32 color, bool 
             if (along[i] > d0 && along[i] < d1) poly[n++] = pts[i];
         poly[n++] = at(d1);
         const float t = (d0 + d1) * 0.5f / total;   // 0 at the source, 1 at the master
-        const int a = int(float(alpha) * (1.0f - 0.7f * t));
+        const int a = int(float(alpha) * (1.0f - kMasterLinkFade * t));
         g.draw.polyline(std::span<const ImVec2>(poly, size_t(n)), withAlpha(color, uint8_t(a)), w);
     }
 }
 
 void paintInsertButton(const GraphPaint& g, ImVec2 p, bool hovered)
 {
-    const float r = g.px(9.0f);
+    const float r = g.px(kInsertRadius);
     g.draw.fillCircle(p, r + g.px(1.0f), colors().portRing);
     g.draw.fillCircle(p, r, hovered ? colors().accent : colors().insertFill);
     g.draw.strokeCircle(p, r, colors().insertRim, g.px(1.5f));

@@ -2,8 +2,8 @@
 #include "input/pointer-capture.hpp"
 #include "ui/tools/tool-base.hpp"
 
-// Pans the canvas with LMB or the pen's tip (also held Space from any tool), following every
-// pointer sample. Its properties zoom and fit.
+// Pans the canvas with LMB or the pen's tip (also from any tool, while tool.handHold is held),
+// following every pointer sample. Its properties zoom and fit.
 class HandTool : public Tool {
 public:
     const char* name() const override { return "Hand"; }

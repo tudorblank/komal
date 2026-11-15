@@ -1,17 +1,17 @@
 #pragma once
 // Raster tiles as compact binary, and back: one tile's content, or a set of tiles (each its tile
-// coordinates and its content). The one way tiles become bytes: a .komal file's rasters use it,
-// and history can keep tiles this way instead of as snapshots.
+// coordinates and its content). The one way tiles become bytes: a .komal file's rasters, and
+// cold tiles (TilePool::cool).
 //
 //   ByteWriter w;
-//   encodeTiles(raster.tiles(), w);            // every tile, its (tx, ty) and its pixels
+//   encodeTiles(grid, w);                      // every tile, its (tx, ty) and its pixels
 //   ByteReader r(w.bytes());
 //   TileGrid back;
 //   if (!decodeTiles(r, back)) ...             // damaged: nothing trusted, `back` to be thrown away
 //
 // A tile is written in the smallest of four forms (its first byte says which):
-//   empty    no pixels (what a history delta writes for a tile that went)
-//   solid    one colour everywhere: 4 bytes
+//   empty    no pixels
+//   solid    one color everywhere: 4 bytes
 //   packed   each row through PNG's predictive filters (none, sub, up, average, paeth: the one
 //            that predicts it best), then zstd: gradients and photos become small numbers
 //   raw      the pixels as they are, when packing wouldn't make them smaller
@@ -25,6 +25,7 @@
 // One tile's content: what's after its coordinates in a set.
 void encodeTile(const Tile& tile, ByteWriter& out);
 bool decodeTile(ByteReader& in, Tile& out);   // false: damaged (`out` holds whatever got through)
+bool decodeRawTile(ByteReader& in, Tile& out);   // the raw form's pixels alone (no form byte: version 1 files)
 
 // Every tile of a grid, coordinates and content. A grid decoded is filled with what's read (on top
 // of what it holds); false: damaged, a duplicate tile, or one out of the world.

@@ -5,7 +5,7 @@
 
 #include <cstdint>
 
-// Inclusive pixel bounds, like BoundsI. Its colour and width are the canvas style's for what it
+// Inclusive pixel bounds, like BoundsI. Its color and width are the canvas style's for what it
 // marks, read as it draws.
 class OutlineItem : public CanvasItem {
 public:

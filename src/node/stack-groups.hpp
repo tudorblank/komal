@@ -1,7 +1,7 @@
 #pragma once
 // A stack's groups: runs of its rows that belong together (the master's artboards). The one place
 // their rules live: what the top level of a stack is, and how groups follow rows coming, going
-// and moving. The compositor keeps its groups with these; the document moves rows and the graph
+// and moving. The compositor keeps its groups with these; the workspace moves rows and the graph
 // lays them out from the same walk (entries), so all three always agree.
 //
 //   rows (bottom first)   0  1  2  3  4
@@ -12,7 +12,7 @@
 #include <cstdint>
 #include <vector>
 
-enum class GroupKey : uint32_t {};   // whose the group is (the document's: an artboard's id); its own type
+enum class GroupKey : uint32_t {};   // whose the group is (the workspace's: an artboard's id); its own type
 constexpr GroupKey kNoGroup{};
 
 // [begin, end), bottom first; an empty one sits at `begin`.

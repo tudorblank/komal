@@ -4,8 +4,8 @@
 // with checked arguments, dispatched from shortcuts, and logged by kind.
 //
 // A registry can hand on what it doesn't have (delegateTo): the interface's holds the app's own
-// actions and hands the document's to the active document's registry, which runs, logs and
-// undoes them. Keys for those are bound here, by id, so they stay whichever document is active.
+// actions and hands the project's to the active project's registry, which runs, logs and
+// undoes them. Keys for those are bound here, by id, so they stay whichever project is active.
 
 #include "base/clock.hpp"
 #include "command/action.hpp"
@@ -30,7 +30,7 @@ struct ActionLogEntry {
     ActionId    id;
     std::string args;            // as written
     Status      status = Status::Done;
-    std::string why;             // refused for its arguments: what was wrong
+    std::string error;           // refused: what was wrong (its arguments, or the handler's reason)
 };
 
 class ActionRegistry {
@@ -61,7 +61,7 @@ public:
     void cancelGesture(ActionId id);
     bool inGesture(ActionId id) const;
 
-    // Called around every DocumentEdit and Gesture that's an undo step: open before it runs (or
+    // Called around every ProjectEdit and Gesture that's an undo step: open before it runs (or
     // begins), close after it ran (or ended, was cancelled, or refused to begin).
     void setUndoSteps(std::function<void(const Action&)> open, std::function<void()> close);
 
@@ -74,6 +74,12 @@ public:
     // end, and is cancelled).
     void endFrame(bool interacting);
 
+    // A polled action's keys (Action::polled), read by whoever uses it: one went down this frame
+    // (exact modifiers; again with the key repeat if it repeats), or one is down now (whatever
+    // modifiers: the spring-loaded hand).
+    bool pressed(ActionId id, const InputFrame& input) const;
+    bool held(ActionId id, const InputFrame& input) const;
+
     std::string shortcutLabel(ActionId id) const;   // "Ctrl+Shift+Z", else its mouse way ("" if neither)
     // Help text that names keys as they're bound: its parts in order, an action as its
     // shortcutLabel(), PrimaryKey as the platform's command modifier ("Ctrl", "Cmd").
@@ -84,9 +90,9 @@ public:
 private:
     static constexpr size_t kLogCapacity = 2000;
 
-    std::string whyNot(const Action& action) const;   // empty: it may be added
-    void record(const Action& a, const ActionArgs& args, ActionLogEntry::Status status, std::string why = {});
-    // Else refused, with why: arguments against `specs`, the payload against `payload`.
+    std::string malformed(const Action& action) const;   // what's wrong with it (empty: it may be added)
+    void record(const Action& a, const ActionArgs& args, ActionLogEntry::Status status, std::string error = {});
+    // Else refused, and the error says what went wrong: arguments against `specs`, the payload against `payload`.
     bool argsFit(const Action& a, std::span<const ArgSpec> specs, const std::type_info* payload, const ActionArgs& args);
     bool isStep(const Action& a) const;
     void openStep(const Action& a)  { if (isStep(a) && m_openStep) m_openStep(a); }
@@ -95,6 +101,7 @@ private:
     void flushPending();
 
     const Action* own(ActionId id) const;   // this registry's only
+    template<class F> bool anyKey(ActionId id, F&& f) const;   // f(shortcut) for its keys, here or delegated: any true
     ActionRegistry* handler(ActionId id);   // which one has it: this, the delegate, or null
 
     std::vector<Action> m_actions;                       // in the order they were added (menus, dispatch)
@@ -112,4 +119,3 @@ private:
 };
 
 std::string shortcutLabel(const Shortcut& s);   // Cmd on macOS
-std::string modifiersLabel(uint8_t mods);       // "Ctrl+Shift+" (KeyMod flags; Cmd on macOS)

@@ -21,21 +21,23 @@ enum class ActionScope : uint8_t {
 
 enum class ActionKind : uint8_t {
     Unset,          // every action says which it is
-    DocumentEdit,
+    ProjectEdit,
     Gesture,
     AppState,
     Interface,
 };
 const char* actionKindName(ActionKind kind);   // "edit", "gesture", "app", "interface"
 
-// What running an action did: done or refused, what it made (a new node's id), and, refused, why
+// What running an action did: done or refused, what it made (a new node's id), and, refused, the error
 // if it can say (a file that couldn't be opened): logged with it, for the caller to show.
 struct ActionResult {
     bool    done = false;
     int64_t made = 0;
-    std::string why{};
+    std::string error{};
     explicit operator bool() const { return done; }
-    static ActionResult refused(std::string why) { return { false, 0, std::move(why) }; }
+    template<class Id> requires std::is_enum_v<Id>
+    Id madeAs() const { return Id(made); }   // `made` as the id type it is
+    static ActionResult refused(std::string error) { return { false, 0, std::move(error) }; }
 };
 
 // A handler: takes the arguments (or none), returns an ActionResult, a bool (done), or nothing (done).
@@ -81,7 +83,8 @@ struct Action {
     ActionScope scope = ActionScope::Global;
     bool repeats  = false;               // fires again while its keys are held (the OS's key repeat)
     bool coalesce = false;               // AppState: runs in one interaction (a slider drag, a held key) log once
-    bool undoStep = true;                // DocumentEdit / Gesture: one undo step (off: undo, redo, history jumps)
+    bool undoStep = true;                // ProjectEdit / Gesture: one undo step (off: undo, redo, history jumps)
+    bool polled   = false;               // only keys, no handler: read where used (ActionRegistry::pressed / held)
     std::function<bool()> enabled{};     // null: always
     std::function<bool()> checked{};     // a toggle, shown with a check mark (null: not one)
     ActionHandler run{};                 // a command: everything at once

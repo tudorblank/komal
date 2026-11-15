@@ -29,7 +29,7 @@ private:
     void endStroke(ActionRegistry& actions);
 
     const ToolColors& m_colors;   // the tool manager's
-    BrushParams m_params;          // colour and mode are filled in when a stroke starts
+    BrushParams m_params;          // color and mode are filled in when a stroke starts
     std::vector<StrokePoint> m_points;   // this frame's path
     bool m_erase = false;
     PointerCapture m_stroke;     // the press a stroke follows

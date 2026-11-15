@@ -1,12 +1,12 @@
 // A workspace saved as a .komal file and opened again: the same workspace, to the byte (its pixels
 // as the raster holds them, never an image format), nothing to undo; a file that isn't one, or
-// doesn't hold together, refused with why and never half-opened.
+// doesn't hold together, refused with an error and never half-opened.
 
 #include "helpers.hpp"
 #include "base/bytes.hpp"
 #include "base/file.hpp"
-#include "document/documents.hpp"
-#include "document/documents-actions.hpp"
+#include "project/projects-manager.hpp"
+#include "project/projects-manager-actions.hpp"
 #include "raster/tile-codec.hpp"
 
 #include <cstdio>
@@ -62,8 +62,7 @@ std::vector<uint8_t> asVersion1(const std::vector<uint8_t>& v2)
         w.u32(tag);
         const size_t at = w.reserveU64();
         const size_t start = w.size();
-        constexpr uint32_t kTile = uint32_t('T') | uint32_t('I') << 8 | uint32_t('L') << 16 | uint32_t('E') << 24;
-        if (tag == kTile) {
+        if (tag == WorkspaceFile::kTilesChunk) {
             w.u32(c.u32());   // its node
             TileGrid tiles;
             REQUIRE(decodeTiles(c, tiles));
@@ -112,11 +111,11 @@ TEST_CASE("a workspace saved and opened: the same, to the byte, with nothing to 
     furnish(s.workspace, s.paint, s.background);
     const std::vector<uint8_t> bytes = encodeWorkspace(s.workspace.saved());
 
-    std::string why;
-    const std::optional<WorkspaceFile> file = decodeWorkspace(bytes, why);
-    REQUIRE_MESSAGE(file, why);
+    std::string error;
+    const std::optional<WorkspaceFile> file = decodeWorkspace(bytes, error);
+    REQUIRE_MESSAGE(file, error);
     Workspace opened;
-    REQUIRE_MESSAGE(opened.open(*file, why), why);
+    REQUIRE_MESSAGE(opened.open(*file, error), error);
 
     CHECK(encodeWorkspace(opened.saved()) == bytes);   // everything it keeps, kept
     CHECK(opened.history().size() == 1);                // nothing to undo
@@ -147,126 +146,152 @@ TEST_CASE("pixels are the tiles' own bytes: what's saved is what's read")
         fillPixel(g, -1, -1, RGBA{ 1, 2, 3, 4 });   // a tile of its own, on the other side of 0
         raster = w.importTiles(g, "", {});
     });
-    std::string why;
-    const std::optional<WorkspaceFile> file = decodeWorkspace(encodeWorkspace(p.saved()), why);
+    std::string error;
+    const std::optional<WorkspaceFile> file = decodeWorkspace(encodeWorkspace(p.saved()), error);
     REQUIRE(file);
     REQUIRE(file->rasters.size() == 1);
     CHECK(file->rasters[0].tiles.size() == 2);
     Workspace opened;
-    REQUIRE(opened.open(*file, why));
+    REQUIRE(opened.open(*file, error));
     for (int i = 0; i < 64; ++i) CHECK(pixelOf(opened, raster, i, i) == (RGBA{ uint8_t(i), uint8_t(i * 2), uint8_t(i * 3), 200 }));
     CHECK(pixelOf(opened, raster, -1, -1) == RGBA{ 1, 2, 3, 4 });
     CHECK(pixelOf(opened, raster, 5, 6).a == 0);
 }
 
-TEST_CASE("a file that isn't one, is cut short, or comes from a newer Komal is refused with why")
+TEST_CASE("a file that isn't one, is cut short, or comes from a newer Komal is refused with an error")
 {
     StarterWorkspace s;
     furnish(s.workspace, s.paint, s.background);
     const std::vector<uint8_t> bytes = encodeWorkspace(s.workspace.saved());
-    std::string why;
-    CHECK_FALSE(decodeWorkspace(std::vector<uint8_t>{ 'P', 'N', 'G' }, why));
-    CHECK(why == "not a Komal project");
+    std::string error;
+    CHECK_FALSE(decodeWorkspace(std::vector<uint8_t>{ 'P', 'N', 'G' }, error));
+    CHECK(error == "not a Komal project");
 
     std::vector<uint8_t> newer = bytes;
     newer[8] = uint8_t(WorkspaceFile::kVersion + 1);
-    CHECK_FALSE(decodeWorkspace(newer, why));
-    CHECK(why == "made by a newer Komal");
+    CHECK_FALSE(decodeWorkspace(newer, error));
+    CHECK(error == "made by a newer Komal");
 
     // Cut anywhere: refused, never read past its end.
     for (size_t n = 0; n < bytes.size(); n += 1 + n / 7) {
         CAPTURE(n);
-        CHECK_FALSE(decodeWorkspace(std::span(bytes).first(n), why));
+        CHECK_FALSE(decodeWorkspace(std::span(bytes).first(n), error));
     }
 
     // A chunk it doesn't know (a newer writer's, same version): skipped.
     std::vector<uint8_t> extra = bytes;
     const uint8_t chunk[] = { 'X', 'T', 'R', 'A', 3, 0, 0, 0, 0, 0, 0, 0, 7, 7, 7 };
     extra.insert(extra.end(), std::begin(chunk), std::end(chunk));
-    const std::optional<WorkspaceFile> withExtra = decodeWorkspace(extra, why);
+    const std::optional<WorkspaceFile> withExtra = decodeWorkspace(extra, error);
     REQUIRE(withExtra);
     Workspace opened;
-    REQUIRE(opened.open(*withExtra, why));
+    REQUIRE(opened.open(*withExtra, error));
     CHECK(encodeWorkspace(opened.saved()) == bytes);
 }
 
 TEST_CASE("a file that doesn't hold together is refused: a link to nothing, a cycle, artboards astray")
 {
     StarterWorkspace s;
-    std::string why;
+    std::string error;
 
     WorkspaceFile toNothing = s.workspace.saved();
-    toNothing.nodes.back().input = NodeId{ 999 };
-    CHECK_FALSE(decodeWorkspace(encodeWorkspace(toNothing), why));
-    CHECK(why == "damaged: a link");
+    toNothing.nodes.back().record.input = NodeId{ 999 };
+    CHECK_FALSE(decodeWorkspace(encodeWorkspace(toNothing), error));
+    CHECK(error == "damaged: a link");
 
     // Two moves feeding each other: each id is there, but connect() never allows the loop.
     WorkspaceFile loop = s.workspace.saved();
     const NodeId a{ loop.nextNode }, b{ loop.nextNode + 1 };
     loop.nextNode += 2;
-    WorkspaceFile::Node m;
+    WorkspaceFile::SavedNode m;
     m.type = NodeType::Move;
-    m.settings = MoveSettings{};
-    for (auto& row : m.scale) for (float& v : row) v = 1.0f;
-    m.id = a; m.input = b; m.label = "A";
+    m.record.settings = MoveSettings{};
+    for (auto& row : m.record.scale) for (float& v : row) v = 1.0f;
+    m.id = a; m.record.input = b; m.record.label = "A";
     loop.nodes.push_back(m);
-    m.id = b; m.input = a; m.label = "B";
+    m.id = b; m.record.input = a; m.record.label = "B";
     loop.nodes.push_back(m);
-    const std::optional<WorkspaceFile> decoded = decodeWorkspace(encodeWorkspace(loop), why);
+    const std::optional<WorkspaceFile> decoded = decodeWorkspace(encodeWorkspace(loop), error);
     REQUIRE(decoded);   // the bytes are fine ...
     Workspace opened;
-    CHECK_FALSE(opened.open(*decoded, why));   // ... the graph isn't
-    CHECK(why == "damaged: a link that can't be");
+    CHECK_FALSE(opened.open(*decoded, error));   // ... the graph isn't
+    CHECK(error == "damaged: a link that can't be");
 
     WorkspaceFile astray = s.workspace.saved();
     astray.lastArtboard = ArtboardId{ 1 };
     astray.artboards.push_back({ ArtboardId{ 1 }, "Lost", { 0, 0, 9, 9 }, {}, true });   // in no group of the master
-    const std::optional<WorkspaceFile> lost = decodeWorkspace(encodeWorkspace(astray), why);
+    const std::optional<WorkspaceFile> lost = decodeWorkspace(encodeWorkspace(astray), error);
     REQUIRE(lost);
     Workspace stray;
-    CHECK_FALSE(stray.open(*lost, why));
-    CHECK(why == "damaged: artboards and the master's stack disagree");
+    CHECK_FALSE(stray.open(*lost, error));
+    CHECK(error == "damaged: artboards and the master's stack disagree");
 }
 
-TEST_CASE("documents save to their file and open from one: named after it, saved, nothing to undo")
+TEST_CASE("a value an edit would refuse is a damaged file: a name, a signal, an offset, an artboard")
+{
+    StarterWorkspace s;
+    Workspace& p = s.workspace;
+    REQUIRE(p.addNode(NodeType::Move, 0.0f, 0.0f, {}) != kNoNodeId);   // last
+    REQUIRE(p.addArtboard({ 0, 0, 9, 9 }) != kNoArtboard);
+    const auto refused = [&](const auto& damage, const char* expected) {
+        WorkspaceFile f = p.saved();
+        damage(f);
+        std::string error;
+        CHECK_FALSE(decodeWorkspace(encodeWorkspace(f), error));
+        CHECK(error == expected);
+    };
+    refused([](WorkspaceFile& f) { f.nodes.back().record.label.clear(); }, "damaged: a node's name");
+    refused([](WorkspaceFile& f) { f.nodes.back().record.scale[0][0] = 1.5f; }, "damaged: a node's signal");
+    refused([](WorkspaceFile& f) { f.nodes.back().record.settings = MoveSettings{ TileUtils::kWorldLimit + 1, 0 }; }, "damaged: a node");
+    refused([](WorkspaceFile& f) { f.artboards.back().rect = { 5, 5, 4, 4 }; }, "damaged: artboards");   // empty
+    refused([](WorkspaceFile& f) { f.artboards.back().rect.maxX = TileUtils::kWorldLimit + 1; }, "damaged: artboards");
+
+    std::string error;   // untouched, it opens
+    const std::optional<WorkspaceFile> fine = decodeWorkspace(encodeWorkspace(p.saved()), error);
+    REQUIRE_MESSAGE(fine, error);
+    Workspace opened;
+    CHECK_MESSAGE(opened.open(*fine, error), error);
+}
+
+TEST_CASE("projects save to their file and open from one: named after it, saved, nothing to undo")
 {
     const std::string path = scratchFile("round trip ü.komal");
     std::filesystem::remove(std::filesystem::path(std::u8string(path.begin(), path.end())));
-    Documents docs;
+    ProjectsManager projects;
     ActionRegistry actions;
-    registerDocumentsActions(actions, docs);
+    registerProjectsManagerActions(actions, projects);
 
-    Document& doc = docs.create();
-    REQUIRE(doc.actions().run(Actions::NodeAdd, { { DocArgs::kType, "raster" }, { DocArgs::kX, 0.0f }, { DocArgs::kY, 0.0f } }));
-    CHECK(doc.unsaved());
-    const ActionResult noFile = actions.run(Actions::DocSave);
+    Project& project = projects.create();
+    REQUIRE(project.actions().run(Actions::NodeAdd, { { ProjectArgs::kType, "raster" }, { ProjectArgs::kX, 0.0f }, { ProjectArgs::kY, 0.0f } }));
+    CHECK(project.unsaved());
+    const ActionResult noFile = actions.run(Actions::ProjectSave);
     CHECK_FALSE(noFile);
-    CHECK(noFile.why == "no file to save to");
+    CHECK(noFile.error == "no file to save to");
 
     const std::string without = path.substr(0, path.size() - 6);   // the extension: added
-    REQUIRE(actions.run(Actions::DocSave, { { DocArgs::kPath, without } }));
-    CHECK(doc.path() == path);
-    CHECK(doc.name() == "round trip ü");
-    CHECK_FALSE(doc.unsaved());
+    REQUIRE(actions.run(Actions::ProjectSave, { { ProjectArgs::kPath, without } }));
+    CHECK(project.path() == path);
+    CHECK(project.name() == "round trip ü");
+    CHECK_FALSE(project.unsaved());
 
-    // Open in another set of documents (another app): the same, saved, nothing to undo.
-    Documents other;
+    // Open in another set of projects (another app): the same, saved, nothing to undo.
+    ProjectsManager other;
     ActionRegistry otherActions;
-    registerDocumentsActions(otherActions, other);
-    const ActionResult opened = otherActions.run(Actions::DocOpen, { { DocArgs::kPath, path } });
-    REQUIRE_MESSAGE(opened, opened.why);
+    registerProjectsManagerActions(otherActions, other);
+    const ActionResult opened = otherActions.run(Actions::ProjectOpen, { { ProjectArgs::kPath, path } });
+    REQUIRE_MESSAGE(opened, opened.error);
     CHECK(other.size() == 1);
     CHECK(other.active().name() == "round trip ü");
     CHECK_FALSE(other.active().unsaved());
     CHECK(other.active().workspace().history().size() == 1);
     CHECK(other.active().workspace().nodes().size() == 2);
     // Opened again: that one, not a second.
-    CHECK(otherActions.run(Actions::DocOpen, { { DocArgs::kPath, path } }).made == opened.made);
+    CHECK(otherActions.run(Actions::ProjectOpen, { { ProjectArgs::kPath, path } }).made == opened.made);
     CHECK(other.size() == 1);
 
-    const ActionResult missing = otherActions.run(Actions::DocOpen, { { DocArgs::kPath, scratchFile("nothing here.komal") } });
+    const ActionResult missing = otherActions.run(Actions::ProjectOpen, { { ProjectArgs::kPath, scratchFile("nothing here.komal") } });
     CHECK_FALSE(missing);
-    CHECK_FALSE(missing.why.empty());
+    CHECK_FALSE(missing.error.empty());
     CHECK(other.size() == 1);
 }
 
@@ -279,10 +304,10 @@ TEST_CASE("tiles are compressed (raster/tile-codec); a version 1 file, raw tiles
     std::printf(".komal of the starter workspace: %zu bytes raw (version 1), %zu compressed\n", v1.size(), v2.size());
     CHECK(v2.size() * 4 < v1.size());
 
-    std::string why;
-    const std::optional<WorkspaceFile> old = decodeWorkspace(v1, why);
-    REQUIRE_MESSAGE(old, why);
+    std::string error;
+    const std::optional<WorkspaceFile> old = decodeWorkspace(v1, error);
+    REQUIRE_MESSAGE(old, error);
     Workspace opened;
-    REQUIRE_MESSAGE(opened.open(*old, why), why);
+    REQUIRE_MESSAGE(opened.open(*old, error), error);
     CHECK(encodeWorkspace(opened.saved()) == v2);   // the same workspace: saved again, as version 2
 }

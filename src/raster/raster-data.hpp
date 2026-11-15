@@ -53,7 +53,6 @@ public:
         assert(!m_pendingEdits);
         return m_bounds;
     }
-    TileReader reader() const { return m_grid.reader(); }
     template<class F> void forEachTile(F&& f) const { m_grid.forEachRead(std::forward<F>(f)); }
     size_t tileCount() const { assert(!m_pendingEdits); return m_grid.size(); }
     size_t bytes() const { return m_grid.bytes(); }   // the memory its pixels take (history apart)
@@ -131,29 +130,9 @@ inline void tilesFromImage(TileGrid& out, const FlatImage& image, int imageX, in
     });
 }
 
-// out = the source shifted by (shiftX, shiftY), over `destArea`. False (out clear) if nothing contributes.
-inline bool gatherFromTiles(Tile& out, TileReader& source, const TileSpan& destArea, int shiftX, int shiftY)
-{
-    out.clear();
-    const BoundsI sourceRegion = destArea.worldBounds().offsetBy(-shiftX, -shiftY);
-    bool any = false;
-    {
-        Tile::BulkWrite w(out, Tile::BulkWrite::Trusted);   // committed tiles are already canonical
-        forEachTileSpan(sourceRegion, [&](const TileSpan& piece) {   // up to 4 source tiles
-            if (const Tile* src = source.get(piece.tx, piece.ty)) {
-                copySpanShifted(w.data(), *src, piece, destArea, shiftX, shiftY);
-                w.markChanged();
-                any = true;
-            }
-        });
-    }   // closing the writer marks the stats stale
-    return any;
-}
-
 // === RASTER EDITOR === //
-// One edit session on a raster, opened only by the raster itself (recordEdit, flip). Edits are
-// tracked per tile; commit() frees tiles that became empty, updates bounds and the revision, and
-// reports what changed.
+// One edit session on a raster, opened only by RasterData::edit(). Edits are tracked per tile;
+// commit() frees tiles that became empty, updates bounds and the revision, and reports what changed.
 class RasterEditor {
     friend class RasterData;
     explicit RasterEditor(RasterData& r) : m_r(r)
@@ -174,28 +153,7 @@ public:
         m_r.m_editor = nullptr;
     }
 
-    // --- wipe
-    void clearAll()
-    {
-        m_r.m_grid.forEachRead([&](int tx, int ty, const Tile&) { m_touched.insert(TileUtils::packKey(tx, ty)); });
-        m_r.m_grid.clear();
-        m_lastTouched = kNoKey;
-        m_r.m_pendingEdits = !m_touched.empty();
-    }
-
-    // --- per pixel
-    bool setPixel(int x, int y, RGBA color)
-    {
-        assert(TileUtils::inWorld(x) && TileUtils::inWorld(y));
-        const int lx = TileUtils::worldToLocal(x), ly = TileUtils::worldToLocal(y);
-        return editTile(TileUtils::worldToTile(x), TileUtils::worldToTile(y), color.a != 0,   // invisible pixels only erase
-                        [&](Tile& t) { return t.setPx(lx, ly, color); });
-    }
-    bool erasePixel(int x, int y) { return setPixel(x, y, transparent()); }
-
     // --- whole tile
-    bool fillTile(int tx, int ty, RGBA color)
-    { return editTile(tx, ty, color.a != 0, [&](Tile& t) { return TileEdit::fill(t, color); }); }
     bool eraseTile(int tx, int ty)
     { return editExisting(tx, ty, [](Tile& t) { return TileEdit::clear(t); }); }
 
@@ -210,58 +168,6 @@ public:
     void applyTileGrid(const TileGrid& grid, CompositeParams params)
     {
         grid.forEachRead([&](int tx, int ty, const Tile& source) { applyTile(tx, ty, source, params); });
-    }
-
-    // --- rectangles / images
-    void clearRegion(const BoundsI& area)
-    {
-        if (area.empty()) return;
-        assert(TileUtils::inWorld(area.minX) && TileUtils::inWorld(area.maxX) &&
-               TileUtils::inWorld(area.minY) && TileUtils::inWorld(area.maxY));
-        forEachTileSpan(area, [&](const TileSpan& piece) {
-            editExisting(piece.tx, piece.ty, [&](Tile& t) {
-                return piece.isWholeTile() ? TileEdit::clear(t) : TileEdit::clearRect(t, piece);
-            });
-        });
-    }
-    void blit(const FlatImage& image, int imageX, int imageY, CompositeParams params,
-              const BoundsI* cropToImageRect = nullptr)
-    {
-        assert(params.mode != CompositeMode::Replace);
-        assert(TileUtils::inWorld(imageX) && TileUtils::inWorld(imageY));
-        assert(image.width > 0 && image.height > 0);
-        assert(image.rgba.size() == size_t(image.width) * size_t(image.height) * sizeof(RGBA));
-
-        BoundsI imagePart{ 0, 0, image.width - 1, image.height - 1 };
-        if (cropToImageRect) imagePart = imagePart.intersect(*cropToImageRect);
-        if (imagePart.empty()) return;
-
-        auto scratch = std::make_unique<Tile>();   // 16 KB: heap, not stack
-        forEachTileSpan(imagePart.offsetBy(imageX, imageY), [&](const TileSpan& piece) {
-            gatherFromImage(*scratch, image, piece, imageX, imageY);
-            applyTile(piece.tx, piece.ty, *scratch, params);
-        });
-    }
-    void paste(TileReader& source, const BoundsI& sourceArea, int shiftX, int shiftY, CompositeParams params)
-    {
-        if (sourceArea.empty()) return;
-        assert(params.mode != CompositeMode::Replace);
-        assert(TileUtils::inWorld(shiftX) && TileUtils::inWorld(shiftY));
-
-        // Whole-tile shift: source tiles line up with destination tiles.
-        const bool wholeTiles = ((shiftX | shiftY) & TileUtils::kTileMask) == 0;
-        const int  dtx = shiftX >> TileUtils::kTileShift, dty = shiftY >> TileUtils::kTileShift;
-
-        auto scratch = std::make_unique<Tile>();
-        forEachTileSpan(sourceArea.offsetBy(shiftX, shiftY), [&](const TileSpan& piece) {
-            if (wholeTiles && piece.isWholeTile()) {
-                if (const Tile* src = source.get(piece.tx - dtx, piece.ty - dty))
-                    applyTile(piece.tx, piece.ty, *src, params);
-                return;
-            }
-            if (gatherFromTiles(*scratch, source, piece, shiftX, shiftY))
-                applyTile(piece.tx, piece.ty, *scratch, params);
-        });
     }
 
     // --- commit
@@ -309,7 +215,6 @@ public:
 
         EditSummary out{ std::move(m_touched), m_r.m_bounds != before, m_r.m_revision };
         m_touched.clear();
-        m_lastTouched = kNoKey;
         m_r.m_pendingEdits = false;
         return out;
     }
@@ -317,15 +222,13 @@ public:
 private:
     RasterData& m_r;
     TileSet     m_touched;
-    TileKey     m_lastTouched = kNoKey;   // skips the set lookup for runs of edits in one tile
 
     template<class F> bool runEdit(int tx, int ty, Tile& t, F&& f)
     {
         const TileKey k = TileUtils::packKey(tx, ty);
-        const bool firstTouch = k != m_lastTouched && m_touched.insert(k).second;
+        const bool firstTouch = m_touched.insert(k).second;
         const bool changed = f(t);
-        if (changed) m_lastTouched = k;
-        else if (firstTouch) m_touched.erase(k);   // no-op edit: leave no trace
+        if (!changed && firstTouch) m_touched.erase(k);   // no-op edit: leave no trace
         m_r.m_pendingEdits = !m_touched.empty();
         return changed;
     }
@@ -346,17 +249,6 @@ private:
     template<class F> bool editTile(int tx, int ty, bool mayCreate, F&& f)
     { return mayCreate ? editOrCreate(tx, ty, f) : editExisting(tx, ty, f); }
 };
-
-// Copies `rect` of `src` into `out` (tile-aligned, same coordinates).
-inline void lift(TileReader& src, const BoundsI& rect, TileGrid& out)
-{
-    if (rect.empty()) return;
-    auto scratch = std::make_unique<Tile>();
-    forEachTileSpan(rect, [&](const TileSpan& d) {
-        if (gatherFromTiles(*scratch, src, d, 0, 0))
-            out.writeOrCreateTile(d.tx, d.ty).copyFrom(*scratch);
-    });
-}
 
 // ---- RasterData: edits and history
 

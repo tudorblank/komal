@@ -20,10 +20,20 @@ constexpr size_t kRawBytes = kRowBytes * Tile::kSize;   // 16 KB
 constexpr size_t kFiltered = (kRowBytes + 1) * Tile::kSize;   // each row: its filter, its bytes
 constexpr int    kLevel    = 3;                          // zstd's default: fast both ways, small
 
-struct CCtxFree { void operator()(ZSTD_CCtx* c) const { ZSTD_freeCCtx(c); } };
-struct DCtxFree { void operator()(ZSTD_DCtx* c) const { ZSTD_freeDCtx(c); } };
-using Compressor   = std::unique_ptr<ZSTD_CCtx, CCtxFree>;
-using Decompressor = std::unique_ptr<ZSTD_DCtx, DCtxFree>;
+// Reused by every call: tiles are coded on the main thread only.
+struct Scratch {
+    struct CCtxFree { void operator()(ZSTD_CCtx* c) const { ZSTD_freeCCtx(c); } };
+    struct DCtxFree { void operator()(ZSTD_DCtx* c) const { ZSTD_freeDCtx(c); } };
+    std::unique_ptr<ZSTD_CCtx, CCtxFree> cctx{ ZSTD_createCCtx() };
+    std::unique_ptr<ZSTD_DCtx, DCtxFree> dctx{ ZSTD_createDCtx() };
+    std::array<uint8_t, kFiltered> filtered;
+    std::array<uint8_t, ZSTD_COMPRESSBOUND(kFiltered)> packed;
+};
+Scratch& scratch()
+{
+    static Scratch s;
+    return s;
+}
 
 uint8_t paeth(int a, int b, int c)
 {
@@ -84,12 +94,11 @@ bool unfilterRows(const uint8_t* in, uint8_t* px)
     return true;
 }
 
-// A tile coordinate inside the world, checked as one (its pixel coordinate could overflow).
-bool tileInWorld(int t) { return t >= -(TileUtils::kWorldLimit >> TileUtils::kTileShift) && t <= (TileUtils::kWorldLimit >> TileUtils::kTileShift); }
-
 const uint8_t* bytesOf(const Tile& t) { return reinterpret_cast<const uint8_t*>(t.getReadAll()); }
 
-void encodeWith(ZSTD_CCtx* cctx, const Tile& tile, ByteWriter& out)
+}
+
+void encodeTile(const Tile& tile, ByteWriter& out)
 {
     tile.settle();
     if (tile.isEmpty()) {
@@ -102,40 +111,32 @@ void encodeWith(ZSTD_CCtx* cctx, const Tile& tile, ByteWriter& out)
         out.raw({ reinterpret_cast<const uint8_t*>(px), sizeof(RGBA) });
         return;
     }
-    std::array<uint8_t, kFiltered> filtered;
-    filterRows(bytesOf(tile), filtered.data());
-    std::vector<uint8_t> packed(ZSTD_compressBound(kFiltered));
-    const size_t n = ZSTD_compressCCtx(cctx, packed.data(), packed.size(), filtered.data(), filtered.size(), kLevel);
+    Scratch& s = scratch();
+    filterRows(bytesOf(tile), s.filtered.data());
+    const size_t n = ZSTD_compressCCtx(s.cctx.get(), s.packed.data(), s.packed.size(), s.filtered.data(), s.filtered.size(), kLevel);
     if (!ZSTD_isError(n) && n + 4 < kRawBytes) {
         out.u8(uint8_t(Form::Packed));
         out.u32(uint32_t(n));
-        out.raw({ packed.data(), n });
+        out.raw({ s.packed.data(), n });
         return;
     }
     out.u8(uint8_t(Form::Raw));
     out.raw({ bytesOf(tile), kRawBytes });
 }
 
-bool decodeWith(ZSTD_DCtx* dctx, ByteReader& in, Tile& out)
+bool decodeTile(ByteReader& in, Tile& out)
 {
-    const auto put = [&](const uint8_t* bytes) {
-        Tile::BulkWrite w(out, Tile::BulkWrite::Untrusted);   // from outside: made canonical
-        std::memcpy(w.data(), bytes, kRawBytes);
-        w.markChanged();
-    };
     switch (Form(in.u8())) {
-    case Form::Empty: {
-        static const uint8_t kNothing[kRawBytes] = {};
-        put(kNothing);
+    case Form::Empty:
+        out.clear();
         break;
-    }
     case Form::Solid: {
         const std::span<const uint8_t> c = in.raw(sizeof(RGBA));
         if (!in.ok()) return false;
-        Tile::BulkWrite w(out, Tile::BulkWrite::Untrusted);
-        RGBA colour;
-        std::memcpy(&colour, c.data(), sizeof colour);
-        std::fill(w.data(), w.data() + Tile::kPixels, colour);
+        Tile::BulkWrite w(out, Tile::BulkWrite::Untrusted);   // from outside: made canonical
+        RGBA color;
+        std::memcpy(&color, c.data(), sizeof color);
+        std::fill(w.data(), w.data() + Tile::kPixels, color);
         w.markChanged();
         break;
     }
@@ -144,20 +145,16 @@ bool decodeWith(ZSTD_DCtx* dctx, ByteReader& in, Tile& out)
         if (!in.ok() || n > ZSTD_compressBound(kFiltered)) return false;
         const std::span<const uint8_t> packed = in.raw(n);
         if (!in.ok()) return false;
-        std::array<uint8_t, kFiltered> filtered;
-        const size_t got = ZSTD_decompressDCtx(dctx, filtered.data(), filtered.size(), packed.data(), packed.size());
+        Scratch& s = scratch();
+        const size_t got = ZSTD_decompressDCtx(s.dctx.get(), s.filtered.data(), s.filtered.size(), packed.data(), packed.size());
         if (ZSTD_isError(got) || got != kFiltered) return false;
-        std::array<uint8_t, kRawBytes> px;
-        if (!unfilterRows(filtered.data(), px.data())) return false;
-        put(px.data());
+        Tile::BulkWrite w(out, Tile::BulkWrite::Untrusted);
+        w.markChanged();   // even if it stops halfway: what got through is made canonical
+        if (!unfilterRows(s.filtered.data(), reinterpret_cast<uint8_t*>(w.data()))) return false;
         break;
     }
-    case Form::Raw: {
-        const std::span<const uint8_t> px = in.raw(kRawBytes);
-        if (!in.ok()) return false;
-        put(px.data());
-        break;
-    }
+    case Form::Raw:
+        return decodeRawTile(in, out);
     default:
         return false;
     }
@@ -165,18 +162,17 @@ bool decodeWith(ZSTD_DCtx* dctx, ByteReader& in, Tile& out)
     return in.ok();
 }
 
-}
-
-void encodeTile(const Tile& tile, ByteWriter& out)
+bool decodeRawTile(ByteReader& in, Tile& out)
 {
-    const Compressor cctx(ZSTD_createCCtx());
-    encodeWith(cctx.get(), tile, out);
-}
-
-bool decodeTile(ByteReader& in, Tile& out)
-{
-    const Decompressor dctx(ZSTD_createDCtx());
-    return decodeWith(dctx.get(), in, out);
+    const std::span<const uint8_t> px = in.raw(kRawBytes);
+    if (!in.ok()) return false;
+    {
+        Tile::BulkWrite w(out, Tile::BulkWrite::Untrusted);   // from outside: made canonical
+        std::memcpy(w.data(), px.data(), kRawBytes);
+        w.markChanged();
+    }
+    out.settle();
+    return true;
 }
 
 void encodeTiles(const TileGrid& tiles, ByteWriter& out)
@@ -186,12 +182,11 @@ void encodeTiles(const TileGrid& tiles, ByteWriter& out)
     all.reserve(tiles.size());
     tiles.forEachRead([&](int tx, int ty, const Tile& t) { all.push_back({ tx, ty, &t }); });
     std::sort(all.begin(), all.end(), [](const At& a, const At& b) { return a.ty != b.ty ? a.ty < b.ty : a.tx < b.tx; });
-    const Compressor cctx(ZSTD_createCCtx());   // one for the whole set
     out.u32(uint32_t(all.size()));
     for (const At& a : all) {
         out.i32(a.tx);
         out.i32(a.ty);
-        encodeWith(cctx.get(), *a.tile, out);
+        encodeTile(*a.tile, out);
     }
 }
 
@@ -199,13 +194,12 @@ bool decodeTiles(ByteReader& in, TileGrid& out)
 {
     const uint32_t count = in.u32();
     if (!in.ok() || count > in.left() / 9) return false;   // each one: its coordinates and at least its form
-    const Decompressor dctx(ZSTD_createDCtx());
     for (uint32_t i = 0; i < count; ++i) {
         const int tx = in.i32(), ty = in.i32();
-        if (!in.ok() || !tileInWorld(tx) || !tileInWorld(ty)) return false;
+        if (!in.ok() || !TileUtils::tileInWorld(tx) || !TileUtils::tileInWorld(ty)) return false;
         if (out.getReadTile(tx, ty)) return false;   // twice
         Tile& tile = out.writeOrCreateTile(tx, ty);
-        if (!decodeWith(dctx.get(), in, tile)) return false;
+        if (!decodeTile(in, tile)) return false;
         if (tile.isEmpty()) out.freeTile(tx, ty);
     }
     return in.ok();

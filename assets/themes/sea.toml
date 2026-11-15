@@ -1,0 +1,55 @@
+# Sea: an extra theme, read from disk (not one of Komal's own).
+#
+# Extra themes are .toml files in the themes/ folder beside the Komal program. The file's name
+# without ".toml" is how you pick it: this one is  komal --theme sea
+# Every key must be there; colours are "#RRGGBB". A broken file is logged and the theme in use stays.
+# Komal's own themes (main-dark, main-light) live in src/ui/style/default-themes.cpp.
+
+name = "Sea"
+
+# The ramp: 24 steps the surfaces, lines and text are made of, dark to light. Each comment is
+# what the step is used for. This is main-dark, tinted blue.
+ramp = [
+    "#08090F",   #  0  rims: grabs, node borders, ports
+    "#0B0D14",   #  1  the window, behind every panel
+    "#0E1017",   #  2  title and menu bars, tabs
+    "#10121A",   #  3  the canvas and the graph's, a node's slider track
+    "#12141D",   #  4  a panel
+    "#161A23",   #  5  popups, notices, a node's insets
+    "#1A1D28",   #  6  fields, table headers
+    "#1E222D",   #  7  buttons, a node's body, a selected row
+    "#222834",   #  8  borders, a field under the mouse
+    "#262C3A",   #  9  a button under the mouse, a node's rows, a slider's track
+    "#2D3443",   # 10  a button held, a scrollbar
+    "#323949",   # 11  a picture not loaded yet
+    "#394154",   # 12  a scrollbar under the mouse
+    "#404A5E",   # 13  a scrollbar held, a resize grip
+    "#4B566D",   # 14  a toggle's edge
+    "#54617A",   # 15  a node's border under the mouse
+    "#5E6D88",   # 16  dim text, icons off
+    "#7081A1",   # 17  a toggle under the mouse
+    "#7C8FB2",   # 18  a node's dim text, mask ports
+    "#A4BDEA",   # 19  a slider's grab
+    "#AFC9F9",   # 20  text
+    "#B9D5FF",   # 21  a node's title
+    "#C0DDFF",   # 22  icons on
+    "#CCEBFF",   # 23  the front: a grab under the mouse; faint lines and glows (with an alpha)
+]
+
+shadow = "#000000"   # under and behind things, with an alpha
+
+# Colours by family: a slot, like a terminal theme's "red".
+[hues]
+accent     = "#3CC8C8"   # selections, focus, checked things
+accentDeep = "#2A8C8C"   # a slider's filled part
+red        = "#D64848"   # outlines on maps, notices
+rose       = "#EC7070"   # the R channel
+green      = "#7ACE7A"   # the G channel
+blue       = "#7698F0"   # the B channel
+maroon     = "#642424"   # the master node's title bar
+orange     = "#FFA028"   # the raster the canvas paints into
+yellow     = "#C7C729"   # image ports and links
+wine       = "#83314A"   # a Raster node's title bar
+ocean      = "#246283"   # a Reference node's title bar
+violet     = "#5C3A8C"   # a Move node's title bar
+teal       = "#1D725E"   # a Compositor node's title bar

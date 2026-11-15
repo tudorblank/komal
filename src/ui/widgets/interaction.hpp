@@ -1,7 +1,7 @@
 #pragma once
 // How the widgets take the mouse and the keyboard, shared by their files (not for panels: they
 // use widgets.hpp): where a control's item and box go on its row, a slider's travel, and the one
-// field being typed into. No colours and no drawing: that's each control's skin (ui/render).
+// field being typed into. No colors and no drawing: that's each control's skin (ui/render).
 
 #include "ui/style/ui-style.hpp"
 #include "ui/widgets/widgets.hpp"
@@ -63,6 +63,25 @@ struct Range {
     float toT(float x) const { return log ? std::log(x / min) / std::log(max / min) : (x - min) / (max - min); }
     float fromT(float t) const { return log ? min * std::pow(max / min, t) : min + (max - min) * t; }
 };
+
+// A value slider's item: the mouse sets `v` along the track, a double-click resets it.
+struct ValueTrack {
+    Track track;
+    Range range;
+    bool  changed;
+    float at(float x) const { return std::round(track.x0 + (track.x1 - track.x0) * std::clamp(range.toT(x), 0.0f, 1.0f)); }   // x's place
+};
+inline ValueTrack valueTrack(const char* id, float& v, float min, float max, float width, float margin, bool logarithmic, float defaultValue)
+{
+    ValueTrack r{ {}, Range(min, max, logarithmic), false };
+    float t = 0.0f;
+    if (trackItem(id, width, t, r.track, margin)) {
+        const float nv = std::clamp(r.range.fromT(t), min, max);
+        if (nv != v) { v = nv; r.changed = true; }
+    }
+    r.changed |= resetOnDoubleClick(v, min, max, defaultValue);
+    return r;
+}
 
 // The value being typed: one field at a time.
 struct TextEdit {

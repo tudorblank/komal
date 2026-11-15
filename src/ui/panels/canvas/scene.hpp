@@ -1,14 +1,13 @@
 #pragma once
 // The canvas as a scene of items, like QGraphicsScene / QGraphicsItem:
 //   CanvasScene   owns the items; they draw with the engine's CanvasPipelines
-//   CanvasItem    one thing on the canvas, with z order and visibility (item.hpp)
+//   CanvasItem    one thing on the canvas, with z order and visibility (canvas-item.hpp)
 //   CanvasView    a camera + render target looking at a scene (view.hpp)
 // A view re-renders only when an item, the camera or the size changed.
 //
 //   OutlineItem* o = scene.addItem<OutlineItem>(OutlineItem::Kind::Selection);   // owned by the scene
 
 #include "ui/panels/canvas/canvas-item.hpp"
-#include "ui/style/ui-style.hpp"
 
 #include <cstdint>
 #include <memory>

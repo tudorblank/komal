@@ -1,8 +1,17 @@
-#include "node-types.hpp"
+#include "node/node-types.hpp"
 
 #include <algorithm>
 #include <cstring>
 #include <utility>
+
+namespace {
+
+void addTiles(const BoundsI& b, TileSet& out)
+{
+    forEachTileSpan(b, [&](const TileSpan& s) { out.insert(TileUtils::packKey(s.tx, s.ty)); });
+}
+
+}
 
 // ============================ RASTER ROOT ============================
 std::shared_ptr<RasterRootNode> RasterRootNode::create(RasterData& r)
@@ -36,7 +45,7 @@ void RasterRootNode::publish(const EditSummary& s)
 {
     if (s.touched.empty()) return;
     if (s.boundsChanged) invalidateBounds();
-    emitDirty(s.touched, Evict::All);
+    emitDirty(s.touched, Evict::Raw);
 }
 
 // ============================ ONE INPUT ============================
@@ -50,11 +59,13 @@ std::shared_ptr<MoveNode> MoveNode::create()
     return std::make_shared<MoveNode>(Private{});
 }
 
-TileSet MoveNode::setOffset(GraphKey, int x, int y)
+void MoveNode::setSettings(GraphKey, const NodeSettings& s)
 {
-    assert(TileUtils::inWorld(x) && TileUtils::inWorld(y));
-    if (x == m_x && y == m_y) return {};
-    return change([&] { m_x = x; m_y = y; });
+    const auto* m = std::get_if<MoveSettings>(&s);
+    if (!m) return;
+    assert(TileUtils::inWorld(m->x) && TileUtils::inWorld(m->y));
+    if (m->x == m_x && m->y == m_y) return;
+    change([&] { m_x = m->x; m_y = m->y; });
 }
 
 void MoveNode::wetFootprint(TileSet& out)
@@ -69,9 +80,7 @@ void MoveNode::mapInputTiles(const TileSet& in, TileSet& out) const
 {
     for (TileKey k : in) {
         const auto t = TileUtils::unpackKey(k);
-        const int x0 = TileUtils::tileToWorld(t.x) + m_x, y0 = TileUtils::tileToWorld(t.y) + m_y;
-        forEachTileSpan(BoundsI{ x0, y0, x0 + Tile::kSize - 1, y0 + Tile::kSize - 1 },
-                        [&](const TileSpan& s) { out.insert(TileUtils::packKey(s.tx, s.ty)); });
+        addTiles(TileSpan::wholeTile(t.x, t.y).worldBounds().offsetBy(m_x, m_y), out);
     }
 }
 
@@ -109,21 +118,11 @@ const GroupLook* lookOf(const std::vector<GroupLook>& looks, GroupKey key)
     return nullptr;
 }
 
-void addTiles(const BoundsI& b, TileSet& out)
-{
-    forEachTileSpan(b, [&](const TileSpan& s) { out.insert(TileUtils::packKey(s.tx, s.ty)); });
-}
-
 }
 
 std::shared_ptr<CompositorNode> CompositorNode::create()
 {
     return std::make_shared<CompositorNode>(Private{});
-}
-
-bool CompositorNode::muted(const Node& layer) const
-{
-    return m_settings.mutes(layer.id());
 }
 
 void CompositorNode::setSettings(GraphKey, const NodeSettings& s)
@@ -178,7 +177,7 @@ void CompositorNode::refresh()
     const std::vector<NodePtr>& rows = layers();
     m_shown.assign(rows.size(), 1);
     for (size_t i = 0; i < rows.size(); ++i)
-        if (muted(*rows[i])) m_shown[i] = 0;
+        if (m_settings.mutes(rows[i]->id())) m_shown[i] = 0;
     for (const StackGroup& g : m_settings.groups)
         if (const GroupLook* l = lookOf(m_looks, g.key); l && l->hidden)
             for (uint32_t i = g.begin; i < g.end && i < rows.size(); ++i) m_shown[i] = 0;
@@ -216,7 +215,7 @@ void CompositorNode::changeDrawing(const std::function<void()>& mutate)
     };
     fillsOnly(drawnWas, m_drawn);
     fillsOnly(m_drawn, drawnWas);
-    changeKnown(std::move(dirty), Bounds::Recompute, Evict::All, [] {});
+    changeKnown(dirty, Bounds::Recompute, Evict::Raw, [] {});
 }
 
 BoundsI CompositorNode::wetBounds() const
@@ -281,13 +280,12 @@ const Tile* CompositorNode::composeTile(int tx, int ty, RenderCtx& ctx)
         Tile::BulkWrite w(acc, Tile::BulkWrite::Trusted);
         RGBA* d = w.data();
         for (auto it = m_drawn.rbegin(); it != m_drawn.rend() && opaque < Tile::kPixels; ++it) {
-            if (it->row < 0) {   // a fill: its colour where its rect covers the tile
-                if (!TileUtils::tileOverlaps(it->fill, tx, ty)) continue;
-                const int wx = TileUtils::tileToWorld(tx), wy = TileUtils::tileToWorld(ty);
-                const int lx0 = std::max(0, it->fill.minX - wx), lx1 = std::min(Tile::kSize - 1, it->fill.maxX - wx);
-                const int ly0 = std::max(0, it->fill.minY - wy), ly1 = std::min(Tile::kSize - 1, it->fill.maxY - wy);
-                for (int ly = ly0; ly <= ly1; ++ly)
-                    for (int lx = lx0; lx <= lx1; ++lx) {
+            if (it->row < 0) {   // a fill: its color where its rect covers the tile
+                const TileSpan tile = TileSpan::wholeTile(tx, ty);
+                const BoundsI part = it->fill.intersect(tile.worldBounds()).offsetBy(-tile.tileWX, -tile.tileWY);
+                if (part.empty()) continue;
+                for (int ly = part.minY; ly <= part.maxY; ++ly)
+                    for (int lx = part.minX; lx <= part.maxX; ++lx) {
                         RGBA& px = d[ly * Tile::kSize + lx];
                         if (px.a == 255) continue;
                         px = over(it->color, px);   // what's accumulated sits on top of the fill

@@ -83,10 +83,13 @@ void scaleDockTree(ImGuiDockNode* node, ImVec2 size, const DockShares& shares, c
 
 }
 
-void Dockspace::addPanel(const PanelInfo& panel)
+void Dockspace::follow(const Panels& panels)
 {
-    m_panels.push_back(panel);
-    if (panel.slot == DockSlot::Center || panel.slot == DockSlot::Bottom) m_growing.push_back(ImHashStr(panel.title));   // a window's id: its title, hashed
+    m_panels = &panels;
+    m_growing.clear();
+    for (const auto& p : panels)
+        if (p->placed().slot == DockSlot::Center || p->placed().slot == DockSlot::Bottom)
+            m_growing.push_back(ImHashStr(p->title()));   // a window's id: its title, hashed
 }
 
 void Dockspace::draw()
@@ -114,7 +117,7 @@ void Dockspace::buildDefault(unsigned int id, float w, float h)
     ImGui::DockBuilderSetNodeSize(id, ImVec2(w, h));
 
     // Center over Bottom | the side column: RightTop over RightMiddle over RightLower over
-    // RightBottom. Panels sharing a slot are tabs, in the order they were added; the toolbar is
+    // RightBottom. Panels sharing a slot are tabs, in the order they were added; the bars are
     // above, floating panels float.
     ImGuiID center = id;
     ImGuiID right = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.22f, nullptr, &center);
@@ -123,7 +126,8 @@ void Dockspace::buildDefault(unsigned int id, float w, float h)
     const ImGuiID bottom = ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.45f, nullptr, &right);
     const ImGuiID under  = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.48f, nullptr, &center);
 
-    for (const PanelInfo& p : m_panels) {
+    for (const auto& panel : *m_panels) {
+        const PanelInfo& p = panel->placed();
         ImGuiID node = 0;
         switch (p.slot) {
         case DockSlot::Center:      node = center; break;

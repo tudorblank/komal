@@ -30,7 +30,7 @@ constexpr RGBA canonical(RGBA c)
 constexpr uint8_t mul255(int v, int f) { return uint8_t((v * f + 127) / 255); }
 constexpr RGBA scale(RGBA c, int f) { return { mul255(c.r, f), mul255(c.g, f), mul255(c.b, f), mul255(c.a, f) }; }
 
-// A straight colour as a pixel: the one way colour is premultiplied (the GPU's previews start
+// A straight color as a pixel: the one way color is premultiplied (the GPU's previews start
 // from this too, so both agree to the byte).
 constexpr RGBA premultiply(Color8 c) { return { mul255(c.r, c.a), mul255(c.g, c.a), mul255(c.b, c.a), c.a }; }
 
@@ -88,14 +88,16 @@ using TileSet = absl::flat_hash_set<TileKey>;
 template<class V> using PageMap = absl::flat_hash_map<PageKey, V>;
 
 namespace TileUtils {
-    // world limit: keeps every coordinate computation far from int overflow
-    constexpr int  kWorldLimit = 1 << 29;
-    constexpr bool inWorld(int v) { return v >= -kWorldLimit && v <= kWorldLimit; }
-
     // tile
     constexpr int kTileShift = 6;
     constexpr int kTileDim   = 1 << kTileShift;   // 64
     constexpr int kTileMask  = kTileDim - 1;
+
+    // world limit: keeps every coordinate computation far from int overflow
+    constexpr int  kWorldLimit = 1 << 29;
+    constexpr bool inWorld(int v) { return v >= -kWorldLimit && v <= kWorldLimit; }
+    constexpr bool tileInWorld(int t) { return t >= -(kWorldLimit >> kTileShift) && t <= (kWorldLimit >> kTileShift); }
+    inline int clampToWorld(float w) { return int(std::clamp(std::floor(w), float(-kWorldLimit), float(kWorldLimit))); }   // any float
 
     // page
     constexpr int kPageShift = 4;
@@ -122,12 +124,8 @@ namespace TileUtils {
     }
 
     // the tile holding world coordinate w, for any float (clamped to the world)
-    inline int worldToTileClamped(float w)
-    {
-        return worldToTile(int(std::clamp(std::floor(w), float(-kWorldLimit), float(kWorldLimit))));
-    }
+    inline int worldToTileClamped(float w) { return worldToTile(clampToWorld(w)); }
 }
-constexpr TileKey kNoKey = TileUtils::packKey(INT_MIN, INT_MIN);   // no tile is this far out
 
 // f(key) for every key of `set` inside `r`, walking whichever of the two is smaller.
 // f may return bool: false stops the walk.
@@ -182,7 +180,6 @@ public:
     { return unsigned(lx) < unsigned(kSize) && unsigned(ly) < unsigned(kSize); }
 
     // write (whole tile)
-    RGBA* getWriteAll() { m_statsStale = true; return m_px; }
     void normalizeAll()
     {
         for (RGBA& p : m_px) p = canonical(p);
@@ -240,7 +237,6 @@ public:
     int  count()            const { return stats().count; }
     int  opaqueCount()      const { return stats().opaque; }
     bool isEmpty()          const { return count() == 0; }
-    bool isFull()           const { return count() == kPixels; }
     bool isFullyOpaque()    const { return opaqueCount() == kPixels; }
 
 private:
@@ -341,8 +337,9 @@ namespace TileEdit {
         if (area.empty()) return false;
 
         const RGBA* srcPixels = src.getReadAll();
-        const RGBA* dstPixels = dst.getReadAll();
-        RGBA* dstWritable = nullptr;   // taken on the first real change
+        Tile::BulkWrite w(dst, Tile::BulkWrite::Trusted);   // blends of canonical pixels stay canonical
+        RGBA* d = w.data();
+        bool changed = false;
 
         for (int y = area.minY; y <= area.maxY; ++y)
         for (int x = area.minX; x <= area.maxX; ++x) {
@@ -351,49 +348,19 @@ namespace TileEdit {
             if (p.opacity != 255) source = scale(source, p.opacity);
             if (source.a == 0) continue;
 
-            const RGBA result = blendPixel(dstPixels[i], source, p.mode);
-            if (result == dstPixels[i]) continue;
-
-            if (!dstWritable) dstWritable = dst.getWriteAll();
-            dstWritable[i] = result;
+            const RGBA result = blendPixel(d[i], source, p.mode);
+            if (result == d[i]) continue;
+            d[i] = result;
+            changed = true;
         }
-        return dstWritable != nullptr;
+        if (changed) w.markChanged();
+        return changed;
     }
 
     inline bool clear(Tile& tile)
     {
         if (tile.isEmpty()) return false;
         tile.clear();   // also resets stats to "empty", which is exact
-        return true;
-    }
-    inline bool clearRect(Tile& tile, const TileSpan& area)
-    {
-        const RGBA* pixels = tile.getReadAll();
-        const int rowWidth = area.lx1 - area.lx0 + 1;
-
-        bool hasContent = false;
-        for (int y = area.ly0; y <= area.ly1 && !hasContent; ++y)
-            for (int x = area.lx0; x <= area.lx1; ++x)
-                if (pixels[y * Tile::kSize + x].a != 0) { hasContent = true; break; }
-        if (!hasContent) return false;
-
-        RGBA* writable = tile.getWriteAll();
-        for (int y = area.ly0; y <= area.ly1; ++y)
-            std::memset(&writable[y * Tile::kSize + area.lx0], 0, size_t(rowWidth) * sizeof(RGBA));
-        return true;
-    }
-    inline bool fill(Tile& tile, RGBA color)
-    {
-        color = canonical(color);
-        if (color.a == 0) return clear(tile);
-
-        const RGBA* pixels = tile.getReadAll();
-        int i = 0;
-        while (i < Tile::kPixels && pixels[i] == color) ++i;
-        if (i == Tile::kPixels) return false;
-
-        RGBA* writable = tile.getWriteAll();
-        std::fill(writable, writable + Tile::kPixels, color);
         return true;
     }
     inline bool apply(Tile& dst, const Tile& src, CompositeParams p)

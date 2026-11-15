@@ -44,7 +44,6 @@ public:
         if (m_object) GpuRelease<T>::release(m_object);
         m_object = object;
     }
-    T get() const { return m_object; }
     operator T() const { return m_object; }
     explicit operator bool() const { return m_object != nullptr; }
 

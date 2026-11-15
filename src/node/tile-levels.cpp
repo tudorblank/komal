@@ -115,10 +115,7 @@ bool TileLevels::fold(const Deadline& budget, int level, TileKey key, const Buil
             src = m_levels[base].cpu.getReadTile(c.x, c.y);
         }
         if (src || dst) {   // nothing before and nothing now: nothing to write
-            if (!dst) {
-                dst = &lv.cpu.writeOrCreateTile(tx, ty);
-                dst->clear();
-            }
+            if (!dst) dst = &lv.cpu.writeOrCreateTile(tx, ty);   // a new tile: clear
             Tile::BulkWrite w(*dst, Tile::BulkWrite::Trusted);   // averages of premultiplied pixels stay premultiplied
             downsampleInto(w.data(), src, span, c.x - (tx << span), c.y - (ty << span));
             w.markChanged();

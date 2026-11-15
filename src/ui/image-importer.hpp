@@ -9,7 +9,7 @@
 // work wake the main loop, so nothing waits on frames meanwhile.
 
 #include "base/worker-pool.hpp"
-#include "document/image-load.hpp"
+#include "project/image-load.hpp"
 #include "node/node.hpp"
 #include "raster/tile-grid.hpp"
 
@@ -31,13 +31,13 @@ public:
     struct Imported { NodeId node; Placement placement; };
     struct Polled {
         std::vector<Imported>    imported;   // in the order they were asked for
-        std::vector<std::string> failed;     // why each that failed did ("photo.png: unknown format")
+        std::vector<std::string> failed;     // what went wrong with each that failed ("photo.png: unknown format")
     };
 
     void open(std::string path);   // ToMaster
     void open(std::string path, Placement placement);
     Polled poll(ActionRegistry& actions);   // once per frame, main thread
-    bool ready() const;   // the next poll makes a node: a document has to be open for it
+    bool ready() const;   // the next poll makes a node: a project has to be open for it
 
 private:
     struct Request { std::string path; Placement placement; };

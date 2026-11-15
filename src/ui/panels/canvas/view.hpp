@@ -9,7 +9,6 @@ public:
     bool init(CanvasScene& scene);   // after scene.init()
     void shutdown();
 
-    CanvasScene&  scene()  { return *m_scene; }
     CanvasCamera& camera() { return m_camera; }
     const CanvasCamera& camera() const { return m_camera; }
 

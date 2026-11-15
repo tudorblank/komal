@@ -37,7 +37,6 @@ class TileGrid {
     };
     static constexpr PageKey pageKeyOf(int tx, int ty)
     { return PageKey(TileUtils::packKey(TileUtils::tileToPage(tx), TileUtils::tileToPage(ty))); }
-    static constexpr PageKey kNoPage = PageKey(kNoKey);   // no page is this far out
     static constexpr int pageSlotOf(int tx, int ty)
     { return TileUtils::tileToPageLocal(ty) * TileUtils::kPageDim + TileUtils::tileToPageLocal(tx); }
 
@@ -48,7 +47,6 @@ public:
     TileGrid& operator=(const TileGrid& o)
     {
         if (this != &o) {
-            ++m_epoch;
             m_pages = o.m_pages;   // before the pool: a page let go of needs its own
             m_pool  = o.m_pool;
             m_size  = o.m_size;
@@ -57,12 +55,10 @@ public:
     }
     // Moved from: empty, with a pool of its own again (usable like a new one).
     TileGrid(TileGrid&& o) noexcept : m_pool(std::exchange(o.m_pool, std::make_shared<TilePool>())),
-                                      m_pages(std::exchange(o.m_pages, {})), m_size(std::exchange(o.m_size, 0)) { ++o.m_epoch; }
+                                      m_pages(std::exchange(o.m_pages, {})), m_size(std::exchange(o.m_size, 0)) {}
     TileGrid& operator=(TileGrid&& o) noexcept
     {
         if (this != &o) {
-            ++m_epoch;
-            ++o.m_epoch;
             m_pages = std::exchange(o.m_pages, {});   // ours let go into our pool first
             m_pool  = std::exchange(o.m_pool, std::make_shared<TilePool>());
             m_size  = std::exchange(o.m_size, 0);
@@ -71,38 +67,7 @@ public:
     }
     ~TileGrid() { m_pages.clear(); }   // the pages let go of their tiles while the pool is there
 
-    // Cached reader: reads in the same page skip the hash lookup. Single-threaded; must not
-    // outlive a write to the grid (checked in debug).
-    class ReadAccessor {
-    public:
-        explicit ReadAccessor(const TileGrid& g) : m_g(&g), m_epoch(g.m_epoch) {}
-        const Tile* get(int tx, int ty)
-        {
-            assert(m_epoch == m_g->m_epoch && "accessor used after the grid was written to");
-            const PageKey k = pageKeyOf(tx, ty);
-            if (k != m_key) {
-                m_page = m_g->findPage(k);   // nullptr if missing; cached either way
-                m_key  = k;
-            }
-            if (!m_page) return nullptr;
-            const TileId id = m_page->slots[pageSlotOf(tx, ty)];
-            return id == kNoTileId ? nullptr : &m_g->m_pool->getRead(id);
-        }
-        RGBA pixel(int wx, int wy)
-        {
-            const Tile* t = get(TileUtils::worldToTile(wx), TileUtils::worldToTile(wy));
-            return t ? t->getReadPx(TileUtils::worldToLocal(wx), TileUtils::worldToLocal(wy)) : transparent();
-        }
-
-    private:
-        const TileGrid* m_g;
-        uint32_t    m_epoch;
-        PageKey     m_key  = kNoPage;
-        const Page* m_page = nullptr;
-    };
-    ReadAccessor reader() const { return ReadAccessor(*this); }
-
-    // one-off lookups
+    // read
     const Tile* getReadTile(int tx, int ty) const
     {
         const TileId id = tileIdAt(tx, ty);
@@ -114,7 +79,6 @@ public:
     // write: what's touched is its own first (copy-on-write)
     Tile* getWriteTile(int tx, int ty)
     {
-        ++m_epoch;
         Page* page = ownPage(pageKeyOf(tx, ty));
         if (!page) return nullptr;
         TileId& slot = page->slots[pageSlotOf(tx, ty)];
@@ -123,7 +87,6 @@ public:
     }
     Tile& writeOrCreateTile(int tx, int ty)
     {
-        ++m_epoch;
         Page& page = ownOrNewPage(pageKeyOf(tx, ty));
         TileId& slot = page.slots[pageSlotOf(tx, ty)];
         if (slot == kNoTileId) {
@@ -135,7 +98,6 @@ public:
     }
     bool freeTile(int tx, int ty)
     {
-        ++m_epoch;
         const PageKey pk = pageKeyOf(tx, ty);
         const Page* seen = findPage(pk);
         if (!seen || seen->slots[pageSlotOf(tx, ty)] == kNoTileId) return false;
@@ -150,7 +112,6 @@ public:
     }
     void clear()
     {
-        ++m_epoch;
         m_pages.clear();
         m_size = 0;
     }
@@ -168,22 +129,6 @@ public:
             }
         }
     }
-    template<class F> void forEachWrite(F&& f)
-    {
-        ++m_epoch;
-        for (auto& [pageKey, shared] : m_pages) {
-            if (shared.use_count() > 1) shared = std::make_shared<Page>(*shared);   // its own first
-            Page& page = *shared;
-            const TileUtils::KeyXY p = TileUtils::unpackKey(uint64_t(pageKey));
-            for (int s = 0; s < kPageSlots; ++s) {
-                if (page.slots[s] == kNoTileId) continue;
-                f(p.x * TileUtils::kPageDim + (s & TileUtils::kPageMask),
-                  p.y * TileUtils::kPageDim + (s >> TileUtils::kPageShift),
-                  m_pool->getWrite(ownTile(page.slots[s])));
-            }
-        }
-    }
-
     // ---- snapshots
     bool sharesPoolWith(const TileGrid& o) const { return m_pool == o.m_pool; }
     // The tiles where this and `other` (a snapshot of the same pool) aren't the same tile: there
@@ -251,7 +196,5 @@ private:
 
     std::shared_ptr<TilePool> m_pool;   // before the pages: they let go into it
     PageMap<std::shared_ptr<Page>> m_pages;
-    size_t   m_size = 0;     // tiles
-    uint32_t m_epoch = 0;    // bumped on any write access
+    size_t m_size = 0;   // tiles
 };
-using TileReader = TileGrid::ReadAccessor;

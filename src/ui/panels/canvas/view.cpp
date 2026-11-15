@@ -1,4 +1,4 @@
-#include "view.hpp"
+#include "ui/panels/canvas/view.hpp"
 #include "ui/style/ui-style.hpp"
 #include "base/perf.hpp"
 #include "gpu/render-pass.hpp"
@@ -17,7 +17,7 @@ bool CanvasView::init(CanvasScene& scene)
 void CanvasView::shutdown()
 {
     m_cameraUniform.release();
-    m_target.shutdown();
+    m_target.release();
 }
 
 bool CanvasView::resize(float width, float height, float pixelScaleX, float pixelScaleY)

@@ -16,8 +16,6 @@ public:
     PreviewItem(const Preview& preview, RasterItem& output) : m_preview(&preview), m_output(&output) {}   // the scene's
     ~PreviewItem() override { releaseGpu(); }
 
-    bool showing() const { return m_showing; }   // its picture takes the output's place
-
     bool prepare(CanvasFrame& frame) override;
     void drawGpu(WGPURenderPassEncoder pass, CanvasFrame& frame) override;
     void releaseGpu() override;

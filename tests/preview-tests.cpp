@@ -1,24 +1,18 @@
-// The edit in progress on the CPU (PreviewModel) against what the document becomes once it's
+// The edit in progress on the CPU (PreviewModel) against what the project becomes once it's
 // applied: the GPU preview renders from the model, so a rule the model gets wrong shows wrong
 // pictures. On random graphs: every node's bounds as the model says them under the edit, then as
-// the document has them after; and every node the edit changed must be one the plan reaches.
+// the project has them after; and every node the edit changed must be one the plan reaches.
 
-#include "document/preview-model.hpp"
+#include "project/preview-model.hpp"
 #include "helpers.hpp"
-
-#include <random>
 
 namespace {
 
-class Graphs {
+class Graphs : public RandomEdits {
 public:
-    explicit Graphs(uint32_t seed) : m_rng(seed) {}
+    using RandomEdits::RandomEdits;
 
-    int   pick(int n) { return std::uniform_int_distribution<int>(0, n - 1)(m_rng); }
-    float unit() { return std::uniform_real_distribution<float>(0.0f, 1.0f)(m_rng); }
-    NodeId any(const Workspace& p) { return p.nodes()[size_t(pick(int(p.nodes().size())))]->id(); }
-
-    // The starter project grown at random: rasters with pixels, Moves, stacks, references, masks,
+    // The starter workspace grown at random: rasters with pixels, Moves, stacks, references, masks,
     // muted layers, artboards.
     void grow(Workspace& p)
     {
@@ -29,24 +23,15 @@ public:
                     for (int x = 0; x < w; x += 2) fillPixel(g, x0 + x, y0 + y, RGBA{ 200, 10, 10, 255 });
             });
         }
-        for (int i = 0; i < 12; ++i) {
-            const NodeType type = NodeType(pick(4));
-            step(p, "Add", [&] { p.addNode(type, 0.0f, 0.0f, { .from = unit() < 0.6f ? any(p) : kNoNodeId, .into = kNoNodeId, .slot = {} }); });
-        }
-        for (int i = 0; i < 25; ++i) {
-            const NodeId from = any(p), to = any(p);
-            const InputSlot slots[] = { InputSlot::input(), InputSlot::newLayer(uint32_t(pick(3))),
-                                        InputSlot::mask(NodeSignal(pick(3)), NodeChannel(pick(4))) };
-            const InputSlot slot = slots[pick(3)];
-            if (p.canConnect(from, to, slot)) step(p, "Connect", [&] { p.connect(from, to, slot); });
-        }
+        for (int i = 0; i < 12; ++i) addNode(p, 0.0f, 0.0f, 0.6f);
+        for (int i = 0; i < 25; ++i) connect(p, false);
         for (const NodePtr& n : p.nodes())   // some offsets, so Moves move
             if (std::holds_alternative<MoveSettings>(n->settings()))
                 step(p, "Offset", [&] { p.setNodeSettings(n->id(), MoveSettings{ pick(200) - 100, pick(200) - 100 }); });
         // Layers muted where they are, and artboards on the master with a fill and layers in them.
         for (const NodePtr& n : p.nodes())
-            if (const auto* c = dynamic_cast<const CompositorNode*>(n.get()); c && !c->layers().empty() && unit() < 0.5f) {
-                const NodeId layer = c->layers()[size_t(pick(int(c->layers().size())))]->id();
+            if (const auto& layers = n->links().layers; n->ports().inputs == InputShape::Stack && !layers.empty() && unit() < 0.5f) {
+                const NodeId layer = layers[size_t(pick(int(layers.size())))]->id();
                 step(p, "Mute", [&] { p.setLayerMuted(n->id(), layer, true); });
             }
         for (int i = 0; i < 2; ++i) {
@@ -62,8 +47,6 @@ public:
             step(p, "Into", [&] { p.moveStackRows(p.master().id(), { { layer }, {}, id, 0 }); });
         }
     }
-
-    std::mt19937 m_rng;
 };
 
 std::vector<std::pair<NodeId, BoundsI>> boundsOf(const Workspace& p, const PreviewModel* model)
@@ -75,7 +58,7 @@ std::vector<std::pair<NodeId, BoundsI>> boundsOf(const Workspace& p, const Previ
 
 }
 
-TEST_CASE("the preview model's bounds are the document's once the edit is applied")
+TEST_CASE("the preview model's bounds are the project's once the edit is applied")
 {
     int made[3] = {};   // edits of each kind actually tried
     for (const uint32_t seed : { 11u, 12u, 13u, 14u, 15u, 16u, 17u, 18u }) {
@@ -87,7 +70,7 @@ TEST_CASE("the preview model's bounds are the document's once the edit is applie
             CAPTURE(seed);
             CAPTURE(round);
             const auto before = boundsOf(p, nullptr);
-            const NodeId target = g.any(p);
+            const NodeId target = g.anyNode(p);
             const int kind = g.pick(3);
             bool exact = true;   // a stroke that erases may leave less than it could cover
             if (kind == 0) {

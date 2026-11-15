@@ -1,5 +1,5 @@
 #include "ui/style/palette.hpp"
-#include "ui/style/theme.hpp"
+#include "ui/style/theme-list.hpp"
 
 namespace {
 
@@ -43,7 +43,6 @@ Palette make(const Theme& t)
     p.tabShownText       = r[22];
     p.introBack          = r[3];
     p.introFace          = r[8];
-    p.none               = t.shadow.withAlpha(0);
     // the accent: selections, focus, checked things, the parts a value covers
     p.accent             = t.accent;
     p.accentDim          = t.accentDeep;
@@ -56,13 +55,13 @@ Palette make(const Theme& t)
     p.toggleEdge         = r[14];
     p.toggleHot          = r[17];
     p.checkMark          = r[3];
-    // colour boxes and markers: readable on any colour
+    // color boxes and markers: readable on any color
     p.darkRim            = t.shadow.withAlpha(200);
-    p.lightRim           = Theme::kPureWhite.withAlpha(36);
-    p.marker             = Theme::kPureWhite;
-    p.white              = Theme::kPureWhite;
-    p.black              = Theme::kPureBlack;
-    p.clear              = Theme::kPureBlack.withAlpha(0);
+    p.lightRim           = kPureWhite.withAlpha(36);
+    p.marker             = kPureWhite;
+    p.white              = kPureWhite;
+    p.black              = kPureBlack;
+    p.clear              = kPureBlack.withAlpha(0);
     // behind everything
     p.windowBackground   = r[1];
     p.canvasBackground   = r[3];
@@ -142,11 +141,10 @@ Palette make(const Theme& t)
 
 const Palette& Palette::current() { return g_palette; }
 uint64_t Palette::revision() { return g_revision; }
-const std::vector<std::string_view>& Palette::themes() { return Theme::names(); }
 
-bool Palette::useTheme(std::string_view name, std::string& why)
+bool Palette::useTheme(std::string_view name)
 {
-    const std::optional<Theme> theme = Theme::load(name, why);
+    const std::optional<Theme> theme = ThemeList::read(name);
     if (!theme) return false;
     g_palette = make(*theme);
     ++g_revision;

@@ -15,7 +15,6 @@ public:
     explicit RasterItem(std::shared_ptr<RasterTiles> tiles) : m_tiles(std::move(tiles)) {}
     ~RasterItem() override { releaseGpu(); }
 
-    void setOpacity(float opacity);
     // Keeps catching up with the source but draws nothing (a preview shows it meanwhile).
     void setSuppressed(bool suppressed);
 
@@ -44,6 +43,5 @@ private:
     bool         m_computeDirty = true;      // tiles in range may be missing or stale
     int          m_drawLevel = 0;
     TileRect     m_drawnRange;
-    float        m_opacity = 1.0f;
     bool         m_suppressed = false;
 };

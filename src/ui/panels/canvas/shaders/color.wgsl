@@ -1,4 +1,4 @@
-// Solid-colour rectangles in world space.
+// Solid-color rectangles in world space.
 
 struct VertexOut {
     @builtin(position) clipPos : vec4f,

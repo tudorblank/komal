@@ -1,6 +1,6 @@
-#include "hand-tool.hpp"
-#include "document/document-actions.hpp"
-#include "document/workspace.hpp"
+#include "ui/tools/hand-tool.hpp"
+#include "project/project-actions.hpp"
+#include "project/workspace.hpp"
 #include "ui/widgets/widgets.hpp"
 
 #include <algorithm>
@@ -30,7 +30,7 @@ void HandTool::drawProperties(ToolContext& ctx)
     }
     // Zooms about the canvas's middle.
     const CanvasCamera& cam = ctx.workspace.canvasCamera();
-    const auto zoomTo = [&](float zoom) { ctx.actions.run(Actions::CanvasZoom, { { DocArgs::kFactor, zoom / cam.zoom } }); };
+    const auto zoomTo = [&](float zoom) { ctx.actions.run(Actions::CanvasZoom, { { ProjectArgs::kFactor, zoom / cam.zoom } }); };
 
     float percent = cam.zoom * 100.0f;
     if (Widgets::sliderRow("Zoom", percent, CanvasCamera::kMinZoom * 100.0f, CanvasCamera::kMaxZoom * 100.0f, "%.0f%%", true, 100.0f))
@@ -40,8 +40,8 @@ void HandTool::drawProperties(ToolContext& ctx)
     Widgets::sameRow();
     if (Widgets::button("Fit on screen")) ctx.actions.run(Actions::CanvasFrameAll);   // F on the canvas
 
-    ImGui::Spacing();
-    Widgets::hint(ctx.actions, { "LMB drag pan   Space: hand from any tool" });
+    Widgets::sectionGap();
+    Widgets::hint(ctx.actions, { "LMB drag pan   ", Actions::ToolHandHold, ": hand from any tool" });
     Widgets::hint(ctx.actions, { "MMB drag / wheel pan   ", PrimaryKey{}, "+wheel zoom" });
 }
 
@@ -56,7 +56,7 @@ void HandTool::canvasInput(const CanvasInput& in)
         case PointerCapture::Step::Moved:
         case PointerCapture::Step::Ended:
             if (ev.x != m_last.x || ev.y != m_last.y)
-                in.actions.run(Actions::CanvasPan, { { DocArgs::kDx, ev.x - m_last.x }, { DocArgs::kDy, ev.y - m_last.y } });
+                in.actions.run(Actions::CanvasPan, { { ProjectArgs::kDx, ev.x - m_last.x }, { ProjectArgs::kDy, ev.y - m_last.y } });
             m_last = { ev.x, ev.y };
             break;
         case PointerCapture::Step::Ignored: break;

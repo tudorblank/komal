@@ -16,7 +16,7 @@ class GpuRenderPass {
 public:
     enum class Load : uint8_t { Clear, Keep };   // what the target starts with: cleared, or as it was
 
-    // `clear`: the colour a Clear pass starts with (null: transparent).
+    // `clear`: the color a Clear pass starts with (null: transparent).
     GpuRenderPass(WGPUCommandEncoder encoder, WGPUTextureView target, Load load, const char* label, const float* clear = nullptr);
     ~GpuRenderPass();
     GpuRenderPass(const GpuRenderPass&) = delete;

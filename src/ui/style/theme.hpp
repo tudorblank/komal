@@ -1,35 +1,41 @@
 #pragma once
-// A theme: the colours the look is made of, read from a theme file (assets/themes/*.toml, baked
-// into the binary). Only the palette reads one (palette.cpp), giving each colour its jobs: the
-// file is where a colour's value lives, the palette is where its use does.
+// A theme: the colors the look is made of. Two kinds: Komal's own (defaults(), written in C++ in
+// theme.cpp) and extra ones (fromToml(), from .toml files). Which themes there are is the theme
+// list's (theme-list.hpp). Only the palette uses one (palette.cpp), giving each color its jobs:
+// the theme is where a color's value lives, the palette is where its use does.
 //
-//   std::string why;
-//   std::optional<Theme> t = Theme::load("main-dark", why);
+//   const Theme& dark = Theme::defaults()[0].theme;    // main-dark
+//   std::optional<Theme> t = Theme::fromToml(text);   // none: what was wrong is logged
 
 #include "base/color.hpp"
 
 #include <array>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
-#include <vector>
 
 struct Theme {
     static constexpr size_t kSteps = 24;
 
-    std::string name;                     // as the file says
-    std::array<Color8, kSteps> ramp{};   // the surfaces, lines and text: slots, any colour
+    std::string name;
+    std::array<Color8, kSteps> ramp{};    // the surfaces, lines and text: slots, any color
     Color8 shadow;                        // under and behind things
     Color8 accent, accentDeep;            // the hues: slots by family
     Color8 red, rose, green, blue, maroon, orange, yellow;
     Color8 wine, ocean, violet, teal;
 
-    // Colour maths, not a theme's: the colour picker's corners, a marker's inner ring.
-    static constexpr Color8 kPureWhite = grey8(255);
-    static constexpr Color8 kPureBlack = grey8(0);
+    // ---- Komal's own (main-dark, main-light): written in C++ in theme.cpp. Always there, never read
+    // from a file, never failing: a typo in one is a build error.
+    struct Default;
+    static std::span<const Default> defaults();   // main-dark first: the one Komal starts with
 
-    static const std::vector<std::string_view>& names();   // the built-in themes, by file name
-    static std::optional<Theme> load(std::string_view name, std::string& why);   // a built-in one
-    // From a theme file's text; every key must be there, each colour "#RRGGBB".
-    static std::optional<Theme> parse(std::string_view text, std::string& why);
+    // ---- An extra one: from a .toml file's text, every key, each color "#RRGGBB". Nothing if it
+    // can't, and logs what went wrong.
+    static std::optional<Theme> fromToml(std::string_view text);
+};
+
+struct Theme::Default {
+    std::string_view id;   // how it's asked for: "main-dark"
+    Theme theme;
 };

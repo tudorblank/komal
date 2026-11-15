@@ -1,10 +1,11 @@
 #include "ui/panels/canvas/node-thumbnails.hpp"
 #include "ui/panels/canvas/imgui-texture.hpp"
+#include "ui/panels/canvas/items/checker.hpp"
 #include "gpu/render-pass.hpp"
 #include "base/perf.hpp"
 #include "base/frames.hpp"
 #include "ui/panels/canvas/preview/preview.hpp"
-#include "document/workspace.hpp"
+#include "project/workspace.hpp"
 #include "base/math.hpp"
 
 #include <algorithm>
@@ -16,9 +17,9 @@ void NodeThumbnails::init(const CanvasPipelines* pipelines, TileCache& tiles, co
     m_tiles     = &tiles;
     m_preview   = &preview;
     if (m_pipelines)   // the pictures are rendered (or a preview's copied) into their slots, then sampled by ImGui
-        m_pages.configure({ .slotWidth = kWidth, .slotHeight = kHeight, .pageSize = kPageSize, .format = m_pipelines->ctx.targetFormat,
-                            .usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopyDst,
-                            .label = "Node Thumbnails" });
+        m_pages = SlotPages({ .slotWidth = kWidth, .slotHeight = kHeight, .pageSize = kPageSize, .format = m_pipelines->ctx.targetFormat,
+                              .usage = WGPUTextureUsage_TextureBinding | WGPUTextureUsage_RenderAttachment | WGPUTextureUsage_CopyDst,
+                              .label = "Node Thumbnails" });
 }
 
 void NodeThumbnails::shutdown()
@@ -132,22 +133,16 @@ bool NodeThumbnails::prepareRender(Thumb& t)
     const BoundsI& b = t.bounds;
     t.fit = fitInto(b, kWidth, kHeight);
 
-    // World -> the picture's viewport (as the preview's PreviewSpace::fitted maps it).
-    const float k = t.fit.scale;
-    const Mat4 viewProj = Mat4::ortho(float(t.fit.width), float(t.fit.height)) * Mat4::translateScale(-float(b.minX) * k, -float(b.minY) * k, k, k);
+    // World -> the picture's viewport, as the preview's maps it.
+    const PreviewSpace space = PreviewSpace::fitted(b, t.fit);
+    const Mat4 viewProj = space.camera.viewProj(space.viewW, space.viewH);
     t.camera.write(ctx.queue, viewProj.m, sizeof(viewProj.m));
 
     // In page pixels: the pattern starts at the picture's corner.
     const CheckerParams c = pictureChecker(float(m_pages.originX(t.slot)) + float(t.fit.x), float(m_pages.originY(t.slot)) + float(t.fit.y));
     t.checker.write(ctx.queue, &c, sizeof c);
 
-    const float size = float(Tile::kSize << t.level);
-    t.draw.begin(t.tiles->atlas(t.level));
-    for (TileKey key : t.tiles->footprint(t.level)) {
-        const auto [tx, ty] = TileUtils::unpackKey(key);
-        t.draw.add(key, float(tx) * size, float(ty) * size, size);   // empty tiles aren't in the atlas: skipped
-    }
-    t.draw.end(*m_pipelines, 1.0f);
+    t.tiles->drawLevel(t.draw, t.level, *m_pipelines);
     t.seen = t.tiles->revision(t.level);
     return true;
 }

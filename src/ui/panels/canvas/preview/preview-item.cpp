@@ -1,6 +1,6 @@
 #include "ui/panels/canvas/preview/preview-item.hpp"
 #include "ui/panels/canvas/preview/preview.hpp"
-#include "document/workspace.hpp"
+#include "project/workspace.hpp"
 #include "gpu/render-pass.hpp"
 
 bool PreviewItem::prepare(CanvasFrame& frame)

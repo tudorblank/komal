@@ -1,4 +1,4 @@
-#include "brush.hpp"
+#include "raster/brush.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -7,19 +7,14 @@ namespace {
 
 float smoothstep(float t) { t = std::clamp(t, 0.0f, 1.0f); return t * t * (3.0f - 2.0f * t); }
 
-int clampWorld(float v)
-{
-    return int(std::clamp(std::floor(v), float(-TileUtils::kWorldLimit), float(TileUtils::kWorldLimit)));
-}
-
 }
 
 void BrushStroke::begin(const BrushParams& params, StrokePoint at)
 {
     end();
     m_params = params;
-    m_params.diameter = std::max(params.diameter, 1.0f);
-    m_params.spacing  = std::max(params.spacing, 0.01f);
+    m_params.diameter = std::max(params.diameter, BrushParams::kMinDiameter);
+    m_params.spacing  = std::max(params.spacing, BrushParams::kMinSpacing);
     m_color = premultiply(params.color);
     m_flowK = unitToByte(m_params.flow);
     m_shapes.clear();
@@ -40,7 +35,7 @@ void BrushStroke::moveTo(StrokePoint to)
     // A dab every `step` pixels (following the dab size there); the remainder carries into the
     // next segment, so spacing stays even. Never over half a diameter apart: no gaps.
     const auto pressureAt = [&](float along) { return m_last.pressure + (to.pressure - m_last.pressure) * (along / dist); };
-    const auto stepAt = [&](float pressure) { return std::max(0.5f, std::min(m_params.spacing, 0.5f) * diameterAt(pressure)); };
+    const auto stepAt = [&](float pressure) { return std::max(0.5f, std::min(m_params.spacing, 0.5f) * diameterOf(sizeLevel(pressure))); };
     const float ux = dx / dist, uy = dy / dist;
     float at = 0.0f, since = m_sinceDab;
     for (;;) {
@@ -68,9 +63,9 @@ int BrushStroke::sizeLevel(float pressure) const
     return m_params.pressureSize ? std::clamp(int(pressure * kSizeLevels + 0.5f), 1, kSizeLevels) : kSizeLevels;
 }
 
-float BrushStroke::diameterAt(float pressure) const
+float BrushStroke::diameterOf(int level) const
 {
-    return std::max(1.0f, m_params.diameter * float(sizeLevel(pressure)) / kSizeLevels);
+    return std::max(BrushParams::kMinDiameter, m_params.diameter * float(level) / kSizeLevels);
 }
 
 float BrushStroke::coverage(float d, float diameter) const
@@ -91,7 +86,7 @@ const BrushStroke::DabShape& BrushStroke::dabShape(int level)
     if (slot) return *slot;
     slot = std::make_unique<DabShape>();
     DabShape& s = *slot;
-    const float diameter = std::max(1.0f, m_params.diameter * float(level) / kSizeLevels);
+    const float diameter = diameterOf(level);
     s.radius  = diameter * 0.5f + 0.5f;   // + half a pixel: the antialiased rim
     s.toIndex = float(kDabTable - 1) / (s.radius * s.radius);
     s.hardR2  = std::max(diameter * 0.5f, 0.5f) * std::max(diameter * 0.5f, 0.5f);
@@ -107,7 +102,8 @@ void BrushStroke::stampDab(float cx, float cy, float pressure)
     if (m_flowK == 0 || flowScale <= 0.0f) return;
     const DabShape& shape = dabShape(sizeLevel(pressure));
     const float r = shape.radius;
-    const BoundsI area{ clampWorld(cx - r), clampWorld(cy - r), clampWorld(cx + r), clampWorld(cy + r) };
+    const BoundsI area{ TileUtils::clampToWorld(cx - r), TileUtils::clampToWorld(cy - r),
+                        TileUtils::clampToWorld(cx + r), TileUtils::clampToWorld(cy + r) };
     const float r2 = r * r;
     const int hardK = int(float(m_flowK) * flowScale + 0.5f);
 
@@ -157,12 +153,12 @@ void BrushStroke::stampDab(float cx, float cy, float pressure)
 
 bool BrushStroke::composeTile(Tile& out, const Tile* original, int tx, int ty) const
 {
-    out.clear();
-    if (original) out.copyFrom(*original);
+    original ? out.copyFrom(*original) : out.clear();
     const Tile* cov = m_scratch.getReadTile(tx, ty);
     if (!cov) return !out.isEmpty();
+    if (m_params.keepAlpha && (m_params.mode == CompositeMode::Erase || !original)) return !out.isEmpty();   // nothing to recolor
 
-    // coverage -> stroke colour (for Erase only the alpha matters)
+    // coverage -> stroke color (for Erase only the alpha matters)
     Tile& colored = *m_colored;
     colored.clear();
     {
@@ -173,10 +169,9 @@ bool BrushStroke::composeTile(Tile& out, const Tile* original, int tx, int ty) c
             if (c[i].a) d[i] = scale(m_color, c[i].a);
         w.markChanged();
     }
-    if (m_params.keepAlpha && (m_params.mode == CompositeMode::Erase || !original)) return !out.isEmpty();
     TileEdit::apply(out, colored, { m_params.opacity, m_params.mode });
     if (m_params.keepAlpha) {
-        // Back to the original alpha, keeping the new colour: premultiplied, that rescales rgb.
+        // Back to the original alpha, keeping the new color: premultiplied, that rescales rgb.
         Tile::BulkWrite w(out, Tile::BulkWrite::Trusted);
         RGBA* d = w.data();
         const RGBA* o = original->getReadAll();
@@ -198,7 +193,7 @@ BoundsI BrushStroke::coverBounds(int tx, int ty) const
     const Tile* cov = m_scratch.getReadTile(tx, ty);
     if (!cov || m_params.keepAlpha || m_params.mode == CompositeMode::Erase) return b;   // adds nothing where nothing was
     const RGBA* c = cov->getReadAll();
-    for (int i = 0; i < Tile::kPixels; ++i)   // as composeTile: the colour scaled by coverage, then by opacity
+    for (int i = 0; i < Tile::kPixels; ++i)   // as composeTile: the color scaled by coverage, then by opacity
         if (c[i].a && mul255(mul255(m_color.a, c[i].a), m_params.opacity)) b.expand(i & TileUtils::kTileMask, i >> TileUtils::kTileShift);
     return b;
 }
